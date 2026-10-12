@@ -86,6 +86,7 @@
     "vitest": "^4.1.9"
   },
   "overrides": {
+    "@babel/core": "7.29.6",
     "@radix-ui/react-dialog": "1.1.15",
     "@radix-ui/react-dismissable-layer": "1.1.11",
     "@tanstack/devtools": "0.11.0",
@@ -117,6 +118,8 @@
     "@tanstack/start-storage-context": "1.166.23",
     "@tanstack/store": "0.9.3",
     "@tanstack/virtual-file-routes": "1.161.7",
+    "baseline-browser-mapping": "2.11.0",
+    "browserslist": "4.28.7",
     "seroval": "1.6.3"
   }
 }
