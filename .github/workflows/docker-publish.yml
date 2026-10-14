@@ -43,7 +43,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/clickhouse/librechat-admin-panel
+          images: ghcr.io/librechat-ai/librechat-admin-panel
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
