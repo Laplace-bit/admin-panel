@@ -173,7 +173,7 @@ export const SECTION_META: Record<string, t.SectionMeta> = {
   },
   mcpSettings: {
     titleKey: 'com_config_section_mcp_settings',
-    descriptionKey: 'com_config_section_mcp_settings_desc',
+    descriptionKey: 'com_config_mcp_settings_intro',
     tab: 'mcp',
     order: 20,
   },

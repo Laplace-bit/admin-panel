@@ -83,6 +83,23 @@ export function formatIssue(
   return { inline, summary };
 }
 
+/**
+ * A plain list's item an issue is about (`mcpSettings.allowedAddresses.0`):
+ * the list row shows the item's first problem ("Item 1: must include a
+ * port"), since the list control has no row per item. Entries of keyed
+ * collections show their issues in their own cards.
+ */
+function listItemOf(
+  issue: t.ConfigIssue,
+  path: string,
+): { listPath: string; index: number } | undefined {
+  if (issueCollection(issue)) return undefined;
+  const dot = path.lastIndexOf('.');
+  const segment = path.slice(dot + 1);
+  if (dot < 0 || !/^\d+$/.test(segment)) return undefined;
+  return { listPath: path.slice(0, dot), index: Number(segment) };
+}
+
 /** Per-path inline messages and a summary line per issue, for the errors map and the review. */
 export function describeIssues(
   issues: t.ConfigIssue[],
@@ -96,6 +113,13 @@ export function describeIssues(
     const { inline, summary } = formatIssue(issue, path, localize);
     fieldErrors[path] = fieldErrors[path] ? `${fieldErrors[path]}; ${inline}` : inline;
     if (!summaries.includes(summary)) summaries.push(summary);
+    const item = listItemOf(issue, path);
+    if (item && !fieldErrors[item.listPath]) {
+      fieldErrors[item.listPath] = localize('com_config_issue_list_item', {
+        n: item.index + 1,
+        message: issuePredicate(issue, localize),
+      });
+    }
   }
   return { fieldErrors, summaries };
 }

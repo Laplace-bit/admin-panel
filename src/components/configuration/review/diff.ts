@@ -539,31 +539,78 @@ function isWholeEntry(item: t.ChangeSummaryItem, kind: t.ChangeKind): boolean {
   return item.kind === kind && item.entryPath === item.path && item.collectionPath != null;
 }
 
+/** Keys that say where a record entry points, so a renamed MCP server edited in the same save is still matched. */
+const RECORD_ENTRY_ANCHORS = ['url', 'command'];
+
+function sharesAnchor(before: t.ConfigValue, after: t.ConfigValue): boolean {
+  if (!isConfigRecord(before) || !isConfigRecord(after)) return false;
+  return RECORD_ENTRY_ANCHORS.some((key) => {
+    const value = before[key];
+    return typeof value === 'string' && value !== '' && value === after[key];
+  });
+}
+
+/** The fields a renamed entry changes as well, as rows under its new name. */
+function renamedFieldChanges(
+  renamed: t.ChangeSummaryItem,
+  before: t.ConfigRecord,
+  after: t.ConfigRecord,
+): t.ChangeSummaryItem[] {
+  const beforeLeaves = flattenObject(before);
+  const afterLeaves = flattenObject(after);
+  const leaves = [...new Set([...Object.keys(beforeLeaves), ...Object.keys(afterLeaves)])];
+  return leaves
+    .filter((leaf) => !isConfigValueEqual(beforeLeaves[leaf], afterLeaves[leaf]))
+    .map((leaf) => {
+      const path = `${renamed.path}.${leaf}`;
+      return {
+        path,
+        kind: leafKind(beforeLeaves[leaf], afterLeaves[leaf]),
+        before: beforeLeaves[leaf],
+        after: afterLeaves[leaf],
+        sourcePath: renamed.sourcePath,
+        secret: isSecretPath(path) || undefined,
+        collectionPath: renamed.collectionPath,
+        entryPath: renamed.entryPath,
+        entryIdentity: renamed.entryIdentity,
+        previousIdentity: renamed.previousIdentity,
+      };
+    });
+}
+
 /**
- * A record entry removed and one added with the same value (an MCP server
+ * A record entry removed and one added in the same save (an MCP server
  * renamed: the old key's leaves are removed, the new key's written) read as
- * one rename.
+ * one rename: an added entry with the same value as a removed one, else one
+ * that still points where the removed one did (same URL or command), whose
+ * other changes are listed under it.
  */
 function pairRecordRenames(items: t.ChangeSummaryItem[]): t.ChangeSummaryItem[] {
   const removed = items.filter((item) => isWholeEntry(item, 'removed'));
   if (removed.length === 0) return items;
   const paired = new Set<t.ChangeSummaryItem>();
-  const result = items.map((item): t.ChangeSummaryItem => {
-    if (!isWholeEntry(item, 'added') || !isConfigRecord(item.after)) return item;
-    const match = removed.find(
+  const findMatch = (item: t.ChangeSummaryItem, matches: typeof isConfigValueEqual) =>
+    removed.find(
       (candidate) =>
         !paired.has(candidate) &&
         candidate.collectionPath === item.collectionPath &&
-        isConfigValueEqual(candidate.before, item.after),
+        matches(candidate.before, item.after),
     );
-    if (!match) return item;
+  const result = items.flatMap((item): t.ChangeSummaryItem[] => {
+    if (!isWholeEntry(item, 'added') || !isConfigRecord(item.after)) return [item];
+    const match = findMatch(item, isConfigValueEqual) ?? findMatch(item, sharesAnchor);
+    if (!match) return [item];
     paired.add(match);
-    return {
+    const renamed: t.ChangeSummaryItem = {
       ...item,
       kind: 'renamed',
       before: match.before,
       previousIdentity: match.entryIdentity,
     };
+    if (isConfigValueEqual(match.before, item.after) || !isConfigRecord(match.before)) {
+      return [renamed];
+    }
+    return [renamed, ...renamedFieldChanges(renamed, match.before, item.after)];
   });
   return result.filter((item) => !paired.has(item));
 }

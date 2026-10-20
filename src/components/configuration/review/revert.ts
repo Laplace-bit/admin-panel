@@ -201,6 +201,17 @@ export function planRevert(
       paths: [...pendingUnder(editedValues, source), ...pendingUnder(editedValues, previousPath)],
     };
   }
+  /** A field a renamed record entry also changed: the new key goes back to the old key's value. */
+  const isRenamedField =
+    item.kind !== 'renamed' &&
+    item.previousIdentity != null &&
+    item.entryPath != null &&
+    !INDEX_SEGMENT_RE.test(item.entryPath.slice(item.entryPath.lastIndexOf('.') + 1));
+  if (isRenamedField && item.path in editedValues) {
+    return item.before === undefined
+      ? { op: 'discard', paths: [item.path] }
+      : { op: 'set', path: item.path, value: item.before };
+  }
   if (!isPart && !isOrder && !isRename) {
     const paths = pendingUnder(editedValues, source);
     return {

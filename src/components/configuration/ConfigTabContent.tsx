@@ -73,6 +73,8 @@ export function ConfigTabContent({
   unknownSettings,
   valueLayers,
   visibilityEdits,
+  onHideField,
+  onUnhideField,
   visibleSectionIds,
   filterPaths,
   filterText,
@@ -263,6 +265,8 @@ export function ConfigTabContent({
       yamlBaseKeys: baseRecordKeys?.[dataKey],
       onValidationError,
       editSessionId,
+      onHideField,
+      onUnhideField,
     };
     const content = (
       <>

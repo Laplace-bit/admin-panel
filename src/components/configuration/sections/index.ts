@@ -11,8 +11,8 @@
 
 import type React from 'react';
 import type * as t from '@/types';
-import { McpServersRenderer } from './McpServersRenderer';
 import { CustomEndpointsRenderer } from './endpoints';
+import { McpServersRenderer } from './mcp';
 import { LangfuseRenderer } from './LangfuseRenderer';
 import { ProvidersRenderer } from './providers';
 import { ModelSpecsRenderer } from './specs';

@@ -1,0 +1,471 @@
+import { useMemo } from 'react';
+import { describe, it, expect, vi } from 'vitest';
+import { configSchema, PrincipalType } from 'librechat-data-provider';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
+import type * as t from '@/types';
+import {
+  flattenObject,
+  withScopeLayer,
+  createPathIndex,
+  deriveFieldValue,
+  createBaseLayers,
+} from '@/utils';
+import {
+  baseConfigFixture,
+  valuesDataFixture,
+  scopeConfigFixture,
+  FIXTURE_SCHEMA_PATHS,
+} from '@/test/layers';
+import { extractSchemaTree, getSchemaPathSet } from '@/server/config';
+import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
+import { RowFilterContext } from '@/contexts/RowFilterContext';
+import { usePendingConfigValues } from '@/hooks/config/layers';
+import { useConfigEdits } from '@/hooks/config/edits';
+import { McpServersRenderer } from '../Servers';
+
+vi.mock('@/hooks/useLocalize', () => ({
+  default: () => (key: string, options?: Record<string, string | number>) =>
+    options?.name != null ? `${key}:${options.name}` : key,
+  useLocalize: () => (key: string, options?: Record<string, string | number>) =>
+    options?.name != null ? `${key}:${options.name}` : key,
+}));
+
+const tree = extractSchemaTree(configSchema as t.ZodSchemaLike);
+const mcpFields = tree.find((field) => field.key === 'mcpServers')?.children ?? [];
+
+const YAML_SERVERS: t.ConfigRecord = {
+  github: {
+    type: 'http',
+    url: 'https://api.githubcopilot.com/mcp/',
+    headers: { Authorization: '{{PAT_TOKEN}}' },
+    timeout: 60000,
+    startup: false,
+    serverInstructions: true,
+  },
+  everything: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-everything'] },
+  cloudflare: { type: 'streamable-http', url: 'https://mcp.cloudflare.com/mcp' },
+};
+
+const DB_SERVERS: t.ConfigRecord = {
+  github: { timeout: 45000 },
+  acme: {
+    type: 'streamable-http',
+    url: 'https://mcp.acme.dev/mcp',
+    headers: { 'X-Team': 'docs' },
+    title: 'Acme Docs',
+  },
+};
+
+function baseData(extra: t.ConfigRecord = {}): t.BaseConfigData {
+  const yaml = { mcpServers: YAML_SERVERS };
+  const overrides = { mcpServers: { ...DB_SERVERS, ...extra } };
+  const merged: t.ConfigRecord = {
+    mcpServers: {
+      ...YAML_SERVERS,
+      github: { ...(YAML_SERVERS.github as t.ConfigRecord), timeout: 45000 },
+      acme: DB_SERVERS.acme,
+      ...extra,
+    },
+  };
+  return baseConfigFixture({
+    config: merged,
+    yamlConfig: yaml,
+    yamlPaths: Object.keys(flattenObject(yaml)),
+    dbOverrides: overrides,
+    schemaDefaults: {},
+  });
+}
+
+function layersFor(
+  scope: boolean,
+  scopeData?: Partial<t.ResolvedConfigData>,
+  extra?: t.ConfigRecord,
+): t.ValueLayers {
+  const base = createBaseLayers(baseData(extra), FIXTURE_SCHEMA_PATHS);
+  if (!scope) return base;
+  return withScopeLayer(
+    base,
+    { principalType: PrincipalType.ROLE, name: 'USER' },
+    scopeConfigFixture({
+      resolvedConfig: {},
+      changedPaths: [],
+      overrides: {},
+      tombstones: [],
+      ...scopeData,
+    }),
+    FIXTURE_SCHEMA_PATHS,
+  );
+}
+
+let edits: t.ConfigEditsState;
+
+function Harness({
+  scope = false,
+  scopeData,
+  filter = null,
+  showConfiguredOnly = false,
+  preset,
+  extra,
+}: {
+  scope?: boolean;
+  scopeData?: Partial<t.ResolvedConfigData>;
+  filter?: t.PathIndex | null;
+  showConfiguredOnly?: boolean;
+  preset?: t.FlatConfigMap;
+  extra?: t.ConfigRecord;
+}) {
+  const layers = useMemo(() => layersFor(scope, scopeData, extra), [scope, scopeData, extra]);
+  const config = layers.effective ?? {};
+  edits = useConfigEdits({
+    isEditingScope: scope,
+    flatBaseline: flattenObject(config),
+    scopeResolvedValues: scope ? flattenObject(config) : null,
+    baseActiveConfigValues: config,
+    schemaTree: tree,
+    schemaPathSet: getSchemaPathSet(),
+  });
+  const editedValues = preset ?? edits.editedValues;
+  const { visibilityEdits } = edits;
+  const shown = usePendingConfigValues(layers.effective, editedValues, layers);
+  const data = useMemo(
+    () => ({
+      ...valuesDataFixture(layers, editedValues),
+      configValues: shown,
+      visibilityEdits,
+    }),
+    [layers, editedValues, shown, visibilityEdits],
+  );
+  return (
+    <ConfigValuesProvider value={data}>
+      <RowFilterContext.Provider value={filter}>
+        <McpServersRenderer
+          fields={mcpFields}
+          parentPath="mcpServers"
+          parentValue={config.mcpServers}
+          getValue={(path, fallback) => deriveFieldValue(path, fallback, data)}
+          onChange={edits.handleFieldChange}
+          onDiscardField={edits.handleDiscardField}
+          onHideField={edits.handleHideField}
+          onUnhideField={edits.handleUnhideField}
+          editedValues={editedValues}
+          yamlBaseKeys={new Set(Object.keys(YAML_SERVERS))}
+          isEditingScope={scope}
+          showConfiguredOnly={showConfiguredOnly}
+          editSessionId={edits.editSessionId}
+        />
+      </RowFilterContext.Provider>
+    </ConfigValuesProvider>
+  );
+}
+
+function card(key: string): HTMLElement {
+  const element = document.querySelector<HTMLElement>(`[data-mcp-server="${key}"]`);
+  if (!element) throw new Error(`no card for ${key}`);
+  return element;
+}
+
+function expand(key: string) {
+  const toggle = card(key).querySelector<HTMLButtonElement>('button[aria-expanded]');
+  if (!toggle) throw new Error('no toggle');
+  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle);
+}
+
+/** Opens a group inside a card (Display, Behavior, …) by its title key. */
+function openGroup(key: string, title: string) {
+  const button = within(card(key)).getByRole('button', { name: new RegExp(title) });
+  if (button.getAttribute('aria-expanded') !== 'true') fireEvent.click(button);
+}
+
+function openMenu(key: string) {
+  const trigger = within(card(key)).getByRole('button', {
+    name: `com_config_mcp_actions:${key}`,
+  });
+  fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+}
+
+function menuItem(label: string): HTMLElement {
+  return screen.getByRole('menuitem', { name: new RegExp(label) });
+}
+
+describe('McpServersRenderer — provenance (MCP-5, MCP-14)', () => {
+  it('badges each server by its source and counts the overrides of a YAML server', () => {
+    render(<Harness />);
+    expect(within(card('github')).getByText('com_config_ui_state_yaml')).toBeInTheDocument();
+    expect(within(card('github')).getByText('com_config_mcp_overrides_admin')).toBeInTheDocument();
+    expect(within(card('acme')).getByText('com_config_ui_state_added')).toBeInTheDocument();
+    expect(within(card('cloudflare')).queryByText('com_config_mcp_overrides_admin')).toBeNull();
+  });
+
+  it('names a collapsed server by its title and its key', () => {
+    render(<Harness />);
+    const header = card('acme').querySelector('button[aria-expanded]')!;
+    expect(header).toHaveTextContent('Acme Docs');
+    expect(header).toHaveTextContent('acme');
+  });
+
+  it('offers Revert to librechat.yaml on an overridden field and marks it pending', () => {
+    render(<Harness />);
+    expand('github');
+    openGroup('github', 'com_config_mcp_group_behavior');
+    const revert = within(card('github')).getByRole('button', {
+      name: /com_config_values_revert_yaml_aria/,
+    });
+    fireEvent.click(revert);
+    expect(edits.editedValues).toEqual({ 'mcpServers.github.timeout': undefined });
+    expect(card('github').querySelector('#mcpServers-github-timeout')).toHaveValue(60000);
+  });
+});
+
+describe('McpServersRenderer — defaults and locks (MCP-1, MCP-5, MCP-6)', () => {
+  it('turning Show in chat menu on and back to Default leaves nothing to save', () => {
+    render(<Harness />);
+    expand('cloudflare');
+    openGroup('cloudflare', 'com_config_mcp_group_display');
+    const group = card('cloudflare').querySelector<HTMLElement>('#mcpServers-cloudflare-chatMenu')!;
+    fireEvent.click(within(group).getByText('com_config_ctl_on'));
+    expect(edits.editedValues).toEqual({ 'mcpServers.cloudflare.chatMenu': true });
+    fireEvent.click(within(group).getAllByRole('button')[0]);
+    expect(edits.isDirty).toBe(false);
+  });
+
+  it('keeps a YAML header key: its value can change, but it has no Delete', () => {
+    render(<Harness />);
+    expand('github');
+    const headers = card('github').querySelector('#mcpServers-github-headers')!;
+    expect(
+      within(headers as HTMLElement).queryByRole('button', { name: /Authorization/ }),
+    ).toBeNull();
+  });
+
+  it('shows a stdio server read-only: LibreChat applies no override to it (D10)', () => {
+    render(<Harness />);
+    expand('everything');
+    const everything = card('everything');
+    expect(everything.querySelector('input#mcpServers-everything-command')).toBeNull();
+    expect(everything.querySelector('#mcpServers-everything-command')).toHaveTextContent('npx');
+    expect(everything.querySelector('select#mcpServers-everything-type')).toBeNull();
+    expect(within(everything).getByText('com_config_mcp_process_read_only')).toBeInTheDocument();
+    expect(everything.querySelector('#mcpServers-everything-url')).toBeNull();
+    openGroup('everything', 'com_config_mcp_group_display');
+    expect(everything.querySelector('input#mcpServers-everything-title')).toBeNull();
+  });
+
+  it('locks the transport of a YAML server and shows an http type as written', () => {
+    render(<Harness />);
+    expand('github');
+    expect(card('github').querySelector('select#mcpServers-github-type')).toBeNull();
+    expect(card('github').querySelector('#mcpServers-github-type')).toHaveTextContent(
+      'com_config_mcp_transport_http',
+    );
+  });
+
+  it('offers the URL of a server that names no transport', () => {
+    render(<Harness extra={{ bare: { title: 'Bare' } }} />);
+    expand('bare');
+    expect(card('bare').querySelector('input#mcpServers-bare-url')).not.toBeNull();
+  });
+
+  it('hides fields the transport does not read (no Working directory on HTTP)', () => {
+    render(<Harness />);
+    expand('acme');
+    expect(card('acme').querySelector('#mcpServers-acme-cwd')).toBeNull();
+    expect(card('acme').querySelector('#mcpServers-acme-command')).toBeNull();
+  });
+});
+
+describe('McpServersRenderer — transport and auth switches (MCP-2, MCP-4)', () => {
+  it('asks before a switch removes saved fields, then removes them', () => {
+    render(<Harness />);
+    expand('acme');
+    fireEvent.change(card('acme').querySelector('select#mcpServers-acme-type')!, {
+      target: { value: 'websocket' },
+    });
+    expect(edits.editedValues).toEqual({});
+    fireEvent.click(
+      within(card('acme')).getByRole('button', { name: 'com_config_mcp_transport_switch_confirm' }),
+    );
+    expect(edits.editedValues).toEqual({
+      'mcpServers.acme.headers': undefined,
+      'mcpServers.acme.type': 'websocket',
+    });
+  });
+
+  it('starts an API key as the admin Bearer key, with a masked key input', () => {
+    render(<Harness />);
+    expand('acme');
+    openGroup('acme', 'com_config_mcp_group_auth');
+    fireEvent.click(within(card('acme')).getByText('com_config_mcp_auth_api_key'));
+    expect(edits.editedValues).toEqual({
+      'mcpServers.acme.apiKey.source': 'admin',
+      'mcpServers.acme.apiKey.authorization_type': 'bearer',
+    });
+    const key = card('acme').querySelector<HTMLInputElement>(
+      '#mcpServers-acme-apiKey-key input, input#mcpServers-acme-apiKey-key',
+    );
+    expect(key?.type).toBe('password');
+  });
+});
+
+describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
+  it('deletes a server the panel added from its menu, with Undo until Save', async () => {
+    render(<Harness />);
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_delete'));
+    });
+    expect(edits.editedValues).toEqual({ 'mcpServers.acme': undefined });
+    const ghost = document.querySelector('[data-mcp-deleted="acme"]') as HTMLElement;
+    expect(ghost).toBeInTheDocument();
+    fireEvent.click(within(ghost).getByRole('button'));
+    expect(edits.editedValues).toEqual({});
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(document.activeElement).toBe(
+      within(card('acme')).getByRole('button', { name: 'Acme Docs (acme)' }),
+    );
+  });
+
+  it('keeps a deletion listed when it comes back from outside the card (Discard → Undo)', () => {
+    render(<Harness preset={{ 'mcpServers.acme': undefined }} />);
+    expect(document.querySelector('[data-mcp-deleted="acme"]')).toBeInTheDocument();
+  });
+
+  it('cannot rename or delete a server librechat.yaml defines (D1)', () => {
+    render(<Harness />);
+    openMenu('github');
+    expect(menuItem('com_config_mcp_action_delete')).toHaveAttribute('aria-disabled', 'true');
+    expect(menuItem('com_config_mcp_action_rename')).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('renames a server as its fields under the new name plus removal of the old one', async () => {
+    render(<Harness />);
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:acme' });
+    fireEvent.change(input, { target: { value: 'acme-docs' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(edits.editedValues).toMatchObject({
+      'mcpServers.acme': undefined,
+      'mcpServers.acme-docs.url': 'https://mcp.acme.dev/mcp',
+      'mcpServers.acme-docs.title': 'Acme Docs',
+      'mcpServers.acme-docs.headers.X-Team': 'docs',
+    });
+    expect(document.querySelector('[data-mcp-deleted="acme"]')).toBeNull();
+    expect(
+      within(card('acme-docs')).getByText('com_config_mcp_renamed_from:acme'),
+    ).toBeInTheDocument();
+  });
+
+  it('rejects a rename onto an existing name and keeps the input open', async () => {
+    render(<Harness />);
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:acme' });
+    fireEvent.change(input, { target: { value: 'github' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByRole('alert')).toHaveTextContent('com_config_server_name_exists');
+    expect(edits.editedValues).toEqual({});
+  });
+
+  it('duplicates a server under a free name', async () => {
+    render(<Harness />);
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_duplicate'));
+    });
+    expect(edits.editedValues).toMatchObject({
+      'mcpServers.acme-copy.url': 'https://mcp.acme.dev/mcp',
+      'mcpServers.acme-copy.title': 'Acme Docs copy',
+    });
+  });
+});
+
+describe('McpServersRenderer — profiles (MCP-10)', () => {
+  it('lists every inherited server read-only until its fields are overridden', () => {
+    render(<Harness scope />);
+    for (const key of ['github', 'everything', 'cloudflare', 'acme']) {
+      expect(within(card(key)).getByText('com_config_ui_state_inherited')).toBeInTheDocument();
+    }
+    expand('cloudflare');
+    expect(card('cloudflare').querySelector('input#mcpServers-cloudflare-url')).toBeNull();
+    fireEvent.click(
+      within(card('cloudflare')).getByRole('button', { name: 'com_config_mcp_override_fields' }),
+    );
+    expect(card('cloudflare').querySelector('input#mcpServers-cloudflare-url')).not.toBeNull();
+  });
+
+  it('hides a server Base added for the profile, but not a librechat.yaml one', async () => {
+    render(<Harness scope />);
+    openMenu('github');
+    expect(menuItem('com_config_mcp_action_hide')).toHaveAttribute('aria-disabled', 'true');
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    });
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_hide'));
+    });
+    expect(edits.visibilityEdits).toEqual({ 'mcpServers.acme': 'hide' });
+  });
+
+  it('lists a server the profile hides, with Unhide', () => {
+    render(<Harness scope scopeData={{ tombstones: ['mcpServers.acme'] }} />);
+    const row = document.querySelector('[data-mcp-hidden="acme"]') as HTMLElement;
+    expect(row).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole('button', { name: 'com_config_mcp_unhide_a11y:acme' }));
+    expect(edits.visibilityEdits).toEqual({ 'mcpServers.acme': 'unhide' });
+    expect(document.querySelector('[data-mcp-hidden="acme"]')).toBeNull();
+    expect(within(card('acme')).getByText('com_config_ui_state_edited')).toBeInTheDocument();
+  });
+
+  it('with "Set values only", lists only the servers the profile changes', () => {
+    render(
+      <Harness
+        scope
+        showConfiguredOnly
+        scopeData={{ overrides: { mcpServers: { github: { timeout: 1000 } } } }}
+      />,
+    );
+    expect(card('github')).toBeInTheDocument();
+    expect(document.querySelector('[data-mcp-server="cloudflare"]')).toBeNull();
+  });
+});
+
+describe('McpServersRenderer — legacy dotted names', () => {
+  it('shows a dotted server read-only, without actions (the admin API drops dotted keys)', () => {
+    render(
+      <Harness extra={{ 'legacy.dotted': { type: 'sse', url: 'https://old.example.com' } }} />,
+    );
+    const dotted = card('legacy.dotted');
+    expect(within(dotted).queryByRole('button', { name: /com_config_mcp_actions/ })).toBeNull();
+    expand('legacy.dotted');
+    expect(within(dotted).getByText('com_config_mcp_dotted_name')).toBeInTheDocument();
+    expect(dotted.querySelector('input#mcpServers-legacy-dotted-url')).toBeNull();
+    expect(dotted.querySelector('#mcpServers-legacy-dotted-url')).toHaveTextContent(
+      'https://old.example.com',
+    );
+  });
+});
+
+describe('McpServersRenderer — Set values only (MCP-11)', () => {
+  it('shows only the fields and groups of a server that hold a value', () => {
+    render(<Harness showConfiguredOnly />);
+    expand('cloudflare');
+    const cloudflare = card('cloudflare');
+    expect(cloudflare.querySelector('#mcpServers-cloudflare-url')).not.toBeNull();
+    expect(cloudflare.querySelector('#mcpServers-cloudflare-headers')).toBeNull();
+    expect(within(cloudflare).queryByText('com_config_mcp_group_display')).toBeNull();
+    expect(within(cloudflare).queryByText('com_config_mcp_group_advanced')).toBeNull();
+  });
+});
+
+describe('McpServersRenderer — tab filter', () => {
+  it('lists only the servers the filter matches', () => {
+    render(<Harness filter={createPathIndex(['mcpServers.cloudflare.url'])} />);
+    expect(document.querySelector('[data-mcp-server="github"]')).toBeNull();
+    expect(card('cloudflare')).toBeInTheDocument();
+  });
+});

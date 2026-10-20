@@ -14,7 +14,7 @@ import {
 } from './edits';
 import { getKeyedCollection, getValueAtPath, planConfigChanges } from '@/utils';
 import { extractSchemaTree, getSchemaPathSet } from '@/server/config';
-import { issueDisplayPath, formatIssue } from './issues';
+import { issueDisplayPath, formatIssue, describeIssues } from './issues';
 import { summarizeChanges } from './summary';
 import { findSchemaField } from './controls';
 
@@ -377,6 +377,17 @@ describe('mergeIndexedArrayEdits', () => {
 });
 
 describe('issue display and summary', () => {
+  it("shows a plain list item's first problem on the list row", () => {
+    const issues: t.ConfigIssue[] = [
+      { path: 'mcpSettings.allowedAddresses.0', code: 'custom', message: 'must include a port' },
+      { path: 'mcpSettings.allowedAddresses.0', code: 'custom', message: 'is not private' },
+    ];
+    const { fieldErrors } = describeIssues(issues, [], (key, params) =>
+      key === 'com_config_issue_list_item' ? `Item ${params?.n}: ${params?.message}` : key,
+    );
+    expect(fieldErrors['mcpSettings.allowedAddresses']).toBe('Item 1: must include a port');
+  });
+
   const edit0 = captureCollectionEdit(custom, root);
   const collections: t.PendingCollection[] = [
     { collection: custom, items: [endpoints[1], endpoints[0], endpoints[2]], edit: edit0 },

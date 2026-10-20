@@ -17,8 +17,7 @@ import {
 import { isEnvReference, getValueAtPath, isConfigRecord, maskSecretValues } from '@/utils';
 import { getFieldMeta, labelForPath, describeField } from './meta';
 import { formatFieldValue } from './controls';
-import { inferTransportType } from './sections/mcp/validation';
-import { isMcpFieldShown } from './sections/mcpFieldMeta';
+import { isMcpFieldShown, transportOf } from './sections/mcp/transport';
 import { specSearchFields } from './sections/specs/params';
 import { getEntryTitle } from './fields/entries';
 
@@ -282,7 +281,7 @@ export function buildConfigSearchIndex(
 function entryFields(section: t.SchemaField, entry: t.ConfigValue): t.SchemaField[] {
   const fields = section.children ?? [];
   if (section.key !== 'mcpServers' || !isConfigRecord(entry)) return fields;
-  const transport = inferTransportType(entry);
+  const transport = transportOf(entry);
   return fields.filter((field) => isMcpFieldShown(field.key, transport));
 }
 

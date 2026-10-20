@@ -607,6 +607,10 @@ export function ConfigPage({
                           filterPaths={filterPaths}
                           valueLayers={layers.valueLayers}
                           visibilityEdits={edits.visibilityEdits}
+                          onHideField={permissions.canAssign ? edits.handleHideField : undefined}
+                          onUnhideField={
+                            permissions.canAssign ? edits.handleUnhideField : undefined
+                          }
                         />
                       </CollectionEditsContext.Provider>
                     </RevealTargetContext.Provider>

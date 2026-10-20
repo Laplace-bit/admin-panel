@@ -1,4 +1,5 @@
 import type * as t from '@/types';
+import { transportOf } from './transport';
 
 export const REQUIRED_BY_TRANSPORT: Record<string, Set<string>> = {
   stdio: new Set(['command', 'args']),
@@ -7,26 +8,6 @@ export const REQUIRED_BY_TRANSPORT: Record<string, Set<string>> = {
   http: new Set(['url']),
   websocket: new Set(['url']),
 };
-
-/**
- * YAML configs can omit `type` because each transport schema (except
- * streamable-http) defaults from the discriminating fields. Mirror the
- * backend's Zod union resolution order so the UI shows the effective type.
- */
-export function inferTransportType(values: Record<string, t.ConfigValue>): string {
-  if (typeof values.type === 'string' && values.type) return values.type;
-  if (typeof values.command === 'string' && values.command) return 'stdio';
-  if (typeof values.url === 'string' && values.url) {
-    try {
-      const protocol = new URL(values.url).protocol;
-      if (protocol === 'ws:' || protocol === 'wss:') return 'websocket';
-    } catch {
-      /* fall through */
-    }
-    return 'sse';
-  }
-  return '';
-}
 
 export function setLeaf(
   target: Record<string, t.ConfigValue>,
@@ -169,17 +150,9 @@ export function validateMcpCrossField(
   for (const entryKey of affected) {
     const entry = merged[entryKey];
     if (!isPlainObject(entry)) continue;
-    const rawType = typeof entry.type === 'string' ? entry.type : '';
-    /** When the user clears the field that was inferring transport on an inferred-stdio entry (no explicit `type`), `inferTransportType(entry)` collapses to '' and the validator would skip required-field checks. Fall back to the baseline's inference so a stdio-by-default server still trips the missing-command check after its discriminator gets cleared. */
-    const baselineEntry = isPlainObject(baseline[entryKey])
-      ? (baseline[entryKey] as Record<string, t.ConfigValue>)
-      : null;
-    const transportType =
-      rawType ||
-      inferTransportType(entry) ||
-      (baselineEntry ? inferTransportType(baselineEntry) : '');
-    const normalized = transportType === 'http' ? 'streamable-http' : transportType;
-    const required = REQUIRED_BY_TRANSPORT[normalized];
+    /** Clearing the field a type-less entry's transport is inferred from (a stdio `command`) leaves no transport: the saved entry's still applies, so the missing command is caught. */
+    const transport = transportOf(entry) || transportOf(baseline[entryKey]);
+    const required = REQUIRED_BY_TRANSPORT[transport];
     if (!required) continue;
     for (const field of required) {
       const v = entry[field];

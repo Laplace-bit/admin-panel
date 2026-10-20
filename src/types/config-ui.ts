@@ -119,6 +119,10 @@ export interface ConfigTabContentProps {
   valueLayers?: ValueLayers | null;
   /** Pending profile Hide/Unhide, shown on their rows before Save. */
   visibilityEdits?: Readonly<Record<string, VisibilityEdit>>;
+  /** See `FieldRendererProps.onHideField`. */
+  onHideField?: (path: string) => void;
+  /** See `FieldRendererProps.onUnhideField`. */
+  onUnhideField?: (path: string) => void;
   /** While the tab filter is active: the sections holding a match (WS5). */
   visibleSectionIds?: Set<string>;
   /** While the tab filter is active: the data paths that match; other rows are hidden (WS5). */
@@ -360,6 +364,10 @@ export interface FieldRendererProps {
   onValidationError?: (message: string) => void;
   /** See `SingleFieldRendererProps.editSessionId`. */
   editSessionId?: number;
+  /** In a profile: hides what the profile inherits at a path (a tombstone; SV-9, MCP-10). */
+  onHideField?: (path: string) => void;
+  /** In a profile: shows a hidden path again. */
+  onUnhideField?: (path: string) => void;
 }
 
 /** Where a save or import is written: base (all users) or one profile. */
