@@ -1,0 +1,368 @@
+import { useEffect, useRef } from 'react';
+import type * as t from '@/types';
+import { DecorativeIcon, KebabMenu } from '@/components/shared';
+import { useLocalize, useValuesScope } from '@/hooks';
+import { sourceLabel } from '../../values';
+import { describeIssue } from './issues';
+import { isUnserved } from './model';
+import { cn } from '@/utils';
+
+/** Two letters for the endpoint's monogram: initials of its words, else its first two characters. */
+function monogram(title: string): string {
+  const words = title.split(/[\s_-]+/).filter(Boolean);
+  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  return title.slice(0, 2).toUpperCase();
+}
+
+function Monogram({ title, muted }: { title: string; muted?: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        'flex size-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold',
+        muted
+          ? 'bg-(--settings-neutral-bg) text-(--cui-color-text-muted)'
+          : 'bg-(--settings-accent-bg) text-(--settings-accent-fg)',
+      )}
+    >
+      {monogram(title)}
+    </span>
+  );
+}
+
+/** A chip in a list row or the drawer header; `description` is read after the label. */
+export function Badge({
+  tone,
+  label,
+  description,
+  dot,
+}: {
+  tone: 'yaml' | 'override' | 'scope' | 'inherited' | 'added' | 'edited' | 'error' | 'warning';
+  label: string;
+  description?: string;
+  dot?: boolean;
+}) {
+  return (
+    <span className={cn('state-chip', `state-chip-${tone}`)} title={description}>
+      {dot && <span className="state-chip-dot" aria-hidden="true" />}
+      {label}
+      {description && <span className="sr-only">{`, ${description}`}</span>}
+    </span>
+  );
+}
+
+/**
+ * Where an endpoint comes from (CE-2): "librechat.yaml", "librechat.yaml +
+ * overrides", "Added in admin"; in a profile "Inherited from Base", "Base +
+ * Role: USER" or "Added in Role: USER".
+ */
+export function SourceBadge({ row }: { row: Pick<t.EndpointRow, 'origin' | 'overridden'> }) {
+  const localize = useLocalize();
+  const scope = useValuesScope();
+  const scopeName = scope ? sourceLabel('scope', localize, scope) : '';
+  switch (row.origin) {
+    case 'yaml':
+      return row.overridden ? (
+        <Badge
+          tone="override"
+          label={localize('com_config_ce_source_yaml_overrides')}
+          description={localize('com_config_ce_source_yaml_overrides_desc')}
+        />
+      ) : (
+        <Badge
+          tone="yaml"
+          label={localize('com_config_ce_source_yaml')}
+          description={localize('com_config_ce_source_yaml_desc')}
+        />
+      );
+    case 'admin':
+      return (
+        <Badge
+          tone="added"
+          label={localize('com_config_ce_source_admin')}
+          description={localize('com_config_ce_source_admin_desc')}
+        />
+      );
+    case 'inherited':
+      return row.overridden ? (
+        <Badge
+          tone="scope"
+          label={localize('com_config_ce_source_inherited_overrides', { scope: scopeName })}
+          description={localize('com_config_ce_source_inherited_overrides_desc', {
+            scope: scopeName,
+          })}
+        />
+      ) : (
+        <Badge
+          tone="inherited"
+          label={localize('com_config_ce_source_inherited')}
+          description={localize('com_config_ce_source_inherited_desc')}
+        />
+      );
+    default:
+      return (
+        <Badge
+          tone="added"
+          label={localize('com_config_ce_source_scope', { scope: scopeName })}
+          description={localize('com_config_ce_source_scope_desc', { scope: scopeName })}
+        />
+      );
+  }
+}
+
+/** "Incomplete – not served", "Needs attention" or nothing (CE-3). */
+export function StatusBadge({ issues }: { issues: t.EndpointIssue[] }) {
+  const localize = useLocalize();
+  const errors = issues.filter((issue) => issue.severity === 'error');
+  if (errors.length === 0) return null;
+  const summary = errors.map((issue) => describeIssue(issue, localize)).join(' ');
+  return isUnserved(errors) ? (
+    <Badge tone="error" label={localize('com_config_ce_status_unserved')} description={summary} />
+  ) : (
+    <Badge tone="error" label={localize('com_config_ce_status_invalid')} description={summary} />
+  );
+}
+
+/** "New" or "Edited" for an endpoint with unsaved changes. */
+function PendingBadge({ row }: { row: t.EndpointRow }) {
+  const localize = useLocalize();
+  if (row.isNew) {
+    return (
+      <Badge
+        tone="edited"
+        dot
+        label={localize('com_config_ce_state_new')}
+        description={localize('com_config_ce_state_new_desc')}
+      />
+    );
+  }
+  if (!row.edited) return null;
+  return (
+    <Badge
+      tone="edited"
+      dot
+      label={localize('com_config_ui_state_edited')}
+      description={localize('com_config_ui_state_edited_desc')}
+    />
+  );
+}
+
+function rowDetails(row: t.EndpointRow, localize: t.LocalizeFn): string {
+  const parts = [row.host ?? localize('com_config_ce_no_base_url')];
+  parts.push(localize('com_config_ce_models_count', { count: row.modelCount }));
+  if (row.fetchesModels) parts.push(localize('com_config_ce_models_fetched'));
+  return parts.join(' · ');
+}
+
+/** Whether a row can be deleted here: endpoints the layer beneath defines can't (D1). */
+export function isDeletable(row: Pick<t.EndpointRow, 'origin'>): boolean {
+  return row.origin === 'admin' || row.origin === 'scope';
+}
+
+/** A saved endpoint a pending edit removes: struck through, with Undo (D9). */
+function RemovalRow({
+  removal,
+  disabled,
+  onUndo,
+}: {
+  removal: t.EndpointRemoval;
+  disabled?: boolean;
+  onUndo: (removal: t.EndpointRemoval) => void;
+}) {
+  const localize = useLocalize();
+  return (
+    <li className="flex items-center gap-3 rounded-lg border border-dashed border-(--cui-color-stroke-default) px-3 py-2">
+      <Monogram title={removal.title} muted />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span
+          className="truncate text-sm text-(--cui-color-text-muted) line-through"
+          title={removal.title}
+        >
+          {removal.title}
+        </span>
+        <span className="text-xs text-(--cui-color-text-muted)">
+          {localize('com_config_ctl_entry_pending_delete')}
+        </span>
+      </span>
+      {!disabled && (
+        <button
+          type="button"
+          onClick={() => onUndo(removal)}
+          aria-label={localize('com_config_ctl_entry_undo_a11y', { name: removal.title })}
+          className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md border border-(--cui-color-stroke-default) bg-transparent px-2 py-1 text-xs text-(--cui-color-text-default) hover:bg-(--cui-color-background-hover)"
+        >
+          <DecorativeIcon name="history" size="sm" />
+          {localize('com_config_ctl_entry_undo')}
+        </button>
+      )}
+    </li>
+  );
+}
+
+/**
+ * One endpoint of the list. Its row is the target the table of contents,
+ * search and the review's "Go to field" reveal: while its editor is closed it
+ * reads as collapsed (a closed grid marker), and the reveal's `config:expand`
+ * opens the editor.
+ */
+function EndpointListRow({
+  row,
+  idPrefix,
+  isOpen,
+  disabled,
+  onOpen,
+  onReveal,
+  onDelete,
+  onRevert,
+}: t.EndpointListRowProps) {
+  const localize = useLocalize();
+  const rowRef = useRef<HTMLLIElement>(null);
+  const onRevealRef = useRef(onReveal);
+  onRevealRef.current = onReveal;
+  const detailsId = `${idPrefix}-${row.index}-details`;
+
+  useEffect(() => {
+    const element = rowRef.current;
+    if (!element) return;
+    const reveal = () => onRevealRef.current(row);
+    element.addEventListener('config:expand', reveal);
+    return () => element.removeEventListener('config:expand', reveal);
+  }, [row]);
+
+  const menu: t.KebabMenuItem[] = [
+    {
+      label: localize(disabled ? 'com_config_ce_action_view' : 'com_config_ce_action_edit'),
+      icon: 'pencil',
+      onClick: () => onOpen(row),
+    },
+  ];
+  if (!disabled && row.overridden) {
+    menu.push({
+      label: localize('com_config_ce_action_revert'),
+      icon: 'history',
+      onClick: () => onRevert(row),
+    });
+  }
+  if (!disabled) {
+    const deletable = isDeletable(row);
+    menu.push({
+      label: localize('com_config_ce_action_delete'),
+      icon: 'trash',
+      danger: deletable,
+      disabled: !deletable,
+      title: deletable
+        ? undefined
+        : localize(
+            row.origin === 'inherited'
+              ? 'com_config_ce_delete_locked_inherited'
+              : 'com_config_ce_delete_locked',
+          ),
+      onClick: () => onDelete(row),
+    });
+  }
+
+  return (
+    <li
+      ref={rowRef}
+      id={`${idPrefix}-${row.index}`}
+      data-endpoint-row={row.identity ?? ''}
+      className="group relative flex items-center gap-3 rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) px-3 py-2 transition-colors focus-within:border-(--cui-color-outline) hover:bg-(--cui-color-background-hover)"
+    >
+      {!isOpen && <span className="config-section-grid-closed" style={{ display: 'none' }} />}
+      <Monogram title={row.title} />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            aria-describedby={detailsId}
+            onClick={() => onOpen(row)}
+            className="max-w-full cursor-pointer truncate border-none bg-transparent p-0 text-left text-sm font-medium text-(--cui-color-text-default) outline-none after:absolute after:inset-0 after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:outline-(--cui-color-outline)"
+            title={row.title}
+          >
+            {row.title}
+          </button>
+          <SourceBadge row={row} />
+          <PendingBadge row={row} />
+          <StatusBadge issues={row.issues} />
+        </div>
+        <span
+          id={detailsId}
+          className="flex min-w-0 items-center gap-1 text-xs text-(--cui-color-text-muted)"
+        >
+          <span className="truncate" title={row.host ?? undefined}>
+            {rowDetails(row, localize)}
+          </span>
+          {row.fetchesModels && (
+            <span className="flex shrink-0">
+              <DecorativeIcon name="refresh" size="xs" />
+            </span>
+          )}
+        </span>
+      </div>
+      <div className="relative z-1 shrink-0">
+        <KebabMenu
+          items={menu}
+          ariaLabel={localize('com_config_ce_actions_a11y', { name: row.title })}
+        />
+      </div>
+    </li>
+  );
+}
+
+/**
+ * The custom endpoint list (WS10 CE-7): one compact row per endpoint with its
+ * monogram, name, host, model count (and whether the list is fetched), where
+ * it comes from, its status and an actions menu. Selecting a row opens the
+ * editor. Pending deletions stay listed with Undo until Save (D9).
+ */
+export function EndpointList({
+  rows,
+  removals,
+  openKey,
+  disabled,
+  onOpen,
+  onReveal,
+  onDelete,
+  onRevert,
+  onUndoRemoval,
+  idPrefix,
+}: t.EndpointListProps) {
+  const localize = useLocalize();
+  const items: Array<
+    { kind: 'row'; row: t.EndpointRow } | { kind: 'removed'; removal: t.EndpointRemoval }
+  > = rows.map((row) => ({ kind: 'row' as const, row }));
+  for (const removal of [...removals].sort((a, b) => a.index - b.index)) {
+    items.splice(Math.min(removal.index, items.length), 0, { kind: 'removed', removal });
+  }
+
+  return (
+    <ul
+      className="m-0 flex list-none flex-col gap-1.5 p-0"
+      aria-label={localize('com_config_ce_list_label')}
+    >
+      {items.map((item) =>
+        item.kind === 'removed' ? (
+          <RemovalRow
+            key={item.removal.key}
+            removal={item.removal}
+            disabled={disabled}
+            onUndo={onUndoRemoval}
+          />
+        ) : (
+          <EndpointListRow
+            key={item.row.key}
+            row={item.row}
+            idPrefix={idPrefix}
+            isOpen={item.row.key === openKey}
+            disabled={disabled}
+            onOpen={onOpen}
+            onReveal={onReveal}
+            onDelete={onDelete}
+            onRevert={onRevert}
+          />
+        ),
+      )}
+    </ul>
+  );
+}

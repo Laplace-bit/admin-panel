@@ -1,146 +1,395 @@
-import { useMemo, useState } from 'react';
+import { Button } from '@clickhouse/click-ui';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type * as t from '@/types';
-import { CreateCustomEndpointDialog } from '../CreateCustomEndpointDialog';
-import { ArrayObjectField } from '../../fields/ArrayObjectField';
-import { renderParamDefinitionFields } from './ParamDefinitions';
-import { useLocalize, useLowerEntryKeys } from '@/hooks';
-import { GroupedFieldRenderer } from './GroupedFields';
-import { DecorativeIcon } from '@/components/shared';
-import { isConfigRecord } from '@/utils';
+import { EndpointList, SourceBadge, StatusBadge, Badge, isDeletable } from './List';
+import { useLocalize, useValuesScope, useEndpointRows } from '@/hooks';
+import { RevealTargetContext } from '@/contexts/RevealTargetContext';
+import { RowFilterContext } from '@/contexts/RowFilterContext';
+import { isConfigRecord, isRowVisible } from '@/utils';
+import { SearchInput } from '@/components/shared';
+import { revealConfigPath } from '../../reveal';
+import { sourceLabel } from '../../values';
+import { EndpointCreator } from './Create';
+import { EndpointDrawer } from './Drawer';
+import { EndpointEditor } from './Editor';
+import { modelNames } from './model';
+import { Banner } from './Banner';
 
-/** Collection render overrides for custom endpoint nested fields. */
-const COLLECTION_RENDER_OVERRIDES: Record<string, t.CollectionRenderFields> = {
-  paramDefinitions: renderParamDefinitionFields,
-};
+/** Shown once the list is long enough that scanning it is slower than typing. */
+const FILTER_THRESHOLD = 6;
 
-/**
- * Custom `renderFields` function for custom endpoint entries.
- * Renders fields in semantic groups instead of a flat list.
- * Matches the `CollectionRenderFields` signature so it can be injected
- * into `ArrayObjectField` and `ObjectEntryCard`.
- */
-const LOCKED_NAME: ReadonlySet<string> = new Set(['name']);
-
-/**
- * `lockedNames`: endpoints the layer beneath defines (D1), whose name is
- * shown read-only; a name two entries share is left editable so the
- * duplicate can be fixed.
- */
-function makeGroupedEndpointFields(
-  disabled: boolean | undefined,
-  lockedNames: ReadonlySet<string>,
-): t.CollectionRenderFields {
-  return (fields, parentValue, parentPath, onChange, _addFieldTriggerRef, editSessionId) => (
-    <GroupedFieldRenderer
-      groupKey="custom"
-      fields={fields}
-      parentValue={parentValue}
-      parentPath={parentPath}
-      onChange={onChange}
-      disabled={disabled}
-      collectionRenderOverrides={COLLECTION_RENDER_OVERRIDES}
-      editSessionId={editSessionId}
-      lockedKeys={
-        isConfigRecord(parentValue) && lockedNames.has(String(parentValue.name))
-          ? LOCKED_NAME
-          : undefined
-      }
-    />
-  );
+function matchesFilter(row: t.EndpointRow, query: string): boolean {
+  if (query === '') return true;
+  const haystack = [row.title, row.host ?? '', ...modelNames(row.value)].join('\n').toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((word) => haystack.includes(word));
 }
 
-const NAME_SEPARATOR = '\u0000';
-
-/** A draft in the create dialog is a new entry: nothing in it is locked, so a taken name can be corrected. */
-const NO_LOCKED_NAMES: ReadonlySet<string> = new Set();
-
-/** Names the layer beneath defines that exactly one current entry carries, joined (a stable memo key). */
-function uniqueLowerNames(items: t.ConfigValue[], lowerNames: ReadonlySet<string>): string {
-  const counts = new Map<string, number>();
-  for (const item of items) {
-    if (!isConfigRecord(item) || typeof item.name !== 'string') continue;
-    counts.set(item.name, (counts.get(item.name) ?? 0) + 1);
+/** The first field inside an entry the tab filter matched (`baseURL`), to open the editor at. */
+function filterMatchIn(filter: t.PathIndex | null, entryPath: string): string | undefined {
+  if (!filter) return undefined;
+  const prefix = `${entryPath}.`;
+  for (const path of filter.paths) {
+    if (path.startsWith(prefix)) return path.slice(prefix.length);
   }
-  return [...lowerNames].filter((name) => counts.get(name) === 1).join(NAME_SEPARATOR);
+  return undefined;
 }
 
+/** `endpoints.custom.3.baseURL` → index 3 and field `baseURL`, for a path inside the list. */
+function locateEntry(path: string, listPath: string): { index: number; field?: string } | null {
+  if (!path.startsWith(`${listPath}.`)) return null;
+  const [segment, ...rest] = path.slice(listPath.length + 1).split('.');
+  if (!/^\d+$/.test(segment)) return null;
+  return { index: Number(segment), field: rest.length > 0 ? rest.join('.') : undefined };
+}
+
+/**
+ * Custom endpoints tab (WS10): a compact, filterable list of the endpoints
+ * with where each comes from and whether it is served, and an editor drawer
+ * per endpoint. Edits are staged on the page like every other setting and
+ * saved per endpoint by name. Endpoints librechat.yaml (or, in a profile,
+ * Base) defines can be overridden but not renamed or deleted (D1); in a
+ * profile they open read-only until "Override for <profile>" (CE-8).
+ */
 export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
   const { fields, parentPath, parentValue, getValue, onChange, disabled, editSessionId } = props;
   const localize = useLocalize();
-  const [createOpen, setCreateOpen] = useState(false);
-  const lowerNames = useLowerEntryKeys(`${parentPath}.custom`, 'name');
-  const customField = fields.find((f) => f.key === 'custom');
+  const scope = useValuesScope();
+  const rowFilter = useContext(RowFilterContext);
+  const revealTarget = useContext(RevealTargetContext);
   const path = `${parentPath}.custom`;
-  const parentObj =
-    parentValue && typeof parentValue === 'object' && !Array.isArray(parentValue)
-      ? (parentValue as Record<string, t.ConfigValue>)
-      : {};
-  const value = getValue(path, parentObj.custom ?? []);
-  const items = Array.isArray(value) ? value : [];
-  const lockedNames = uniqueLowerNames(items, lowerNames);
-  const renderGroupedEndpointFields = useMemo(
-    () =>
-      makeGroupedEndpointFields(
-        disabled,
-        lockedNames ? new Set(lockedNames.split(NAME_SEPARATOR)) : NO_LOCKED_NAMES,
-      ),
-    [disabled, lockedNames],
-  );
-  const renderDraftFields = useMemo(
-    () => makeGroupedEndpointFields(disabled, NO_LOCKED_NAMES),
-    [disabled],
+  const customField = fields.find((field) => field.key === 'custom');
+  const parentObj = isConfigRecord(parentValue) ? parentValue : {};
+  const listValue = getValue(path, parentObj.custom ?? []);
+  const items = useMemo(() => (Array.isArray(listValue) ? listValue : []), [listValue]);
+  const { rows, removals, lowerEntry } = useEndpointRows({ path, items });
+  const [query, setQuery] = useState('');
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [overriding, setOverriding] = useState<ReadonlySet<string>>(() => new Set());
+  const [revealField, setRevealField] = useState<string | undefined>();
+  const [openAfterCreate, setOpenAfterCreate] = useState<string | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const latestRef = useRef<t.ConfigRecord>({});
+  const lastRowIdRef = useRef('');
+  const createButtonRef = useRef<HTMLDivElement>(null);
+  const idPrefix = `section-${parentPath}-custom`;
+  const scopeName = scope ? sourceLabel('scope', localize, scope) : '';
+
+  const names = useMemo(() => rows.flatMap((row) => (row.identity ? [row.identity] : [])), [rows]);
+  const modelsOf = useMemo(() => {
+    const byName = new Map(rows.map((row) => [row.identity ?? '', modelNames(row.value)]));
+    return (endpoint: string): readonly string[] => byName.get(endpoint) ?? [];
+  }, [rows]);
+  const inheritedNames = useMemo(
+    () => rows.filter((row) => row.origin === 'inherited').map((row) => row.loadedName ?? ''),
+    [rows],
   );
 
+  useEffect(() => {
+    setOverriding(new Set());
+  }, [editSessionId]);
+
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  useEffect(() => {
+    if (!revealTarget) return;
+    const located = locateEntry(revealTarget, path);
+    const row = located ? rowsRef.current[located.index] : undefined;
+    if (!located || !row) return;
+    setCreating(false);
+    setOpenKey(row.key);
+    setRevealField(located.field);
+  }, [revealTarget, path]);
+
+  useEffect(() => {
+    if (!openAfterCreate) return;
+    const row = rows.find((candidate) => candidate.isNew && candidate.identity === openAfterCreate);
+    if (!row) return;
+    setOpenAfterCreate(null);
+    setOpenKey(row.key);
+  }, [openAfterCreate, rows]);
+
   if (!customField) return null;
+  const entryFields = customField.children ?? [];
+  const open = openKey ? rows.find((row) => row.key === openKey) : undefined;
+  if (open) {
+    latestRef.current = open.value;
+    lastRowIdRef.current = `${idPrefix}-${open.index}`;
+  }
+  const rowButton = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>(
+      `#${CSS.escape(lastRowIdRef.current)} button[aria-haspopup="dialog"]`,
+    );
+
+  const configuredOnly = Boolean(props.showConfiguredOnly) && scope != null;
+  const trimmedQuery = query.trim();
+  const visible = rows.filter(
+    (row) =>
+      isRowVisible(rowFilter, `${path}.${row.index}`) &&
+      matchesFilter(row, trimmedQuery) &&
+      (!configuredOnly || row.overridden || row.origin === 'scope'),
+  );
+  const shownRemovals = trimmedQuery === '' ? removals : [];
+
+  const closeDrawer = () => {
+    setOpenKey(null);
+    setRevealField(undefined);
+  };
+
+  const handleFieldChange = (key: string, value: t.ConfigValue) => {
+    if (!open) return;
+    const next = { ...latestRef.current, [key]: value };
+    if (value === undefined) delete next[key];
+    latestRef.current = next;
+    onChange(`${path}.${open.index}`, next);
+  };
+
+  const handleDelete = (row: t.EndpointRow) => {
+    if (!isDeletable(row)) return;
+    if (row.key === openKey) closeDrawer();
+    onChange(
+      path,
+      items.filter((_, index) => index !== row.index),
+    );
+  };
+
+  /** Back to what the layer beneath defines: the target's override of the endpoint is dropped on save. */
+  const handleRevert = (row: t.EndpointRow) => {
+    const lower = row.loadedName ? lowerEntry(row.loadedName) : undefined;
+    if (!lower) return;
+    onChange(`${path}.${row.index}`, lower);
+  };
+
+  const handleUndoRemoval = (removal: t.EndpointRemoval) => {
+    const at = Math.min(removal.index, items.length);
+    onChange(path, [...items.slice(0, at), removal.value, ...items.slice(at)]);
+  };
 
   const handleCreate = (entry: t.ConfigRecord) => {
     onChange(path, [...items, entry]);
+    setCreating(false);
+    setOpenAfterCreate(typeof entry.name === 'string' ? entry.name : null);
   };
-  const existingNames = new Set(
-    items.flatMap((item) =>
-      isConfigRecord(item) && typeof item.name === 'string' ? [item.name.trim()] : [],
-    ),
-  );
 
-  const isEmpty = items.length === 0;
+  const handleOverrideInstead = (name: string) => {
+    setCreating(false);
+    const row = rows.find((candidate) => candidate.loadedName === name);
+    if (!row) return;
+    setOverriding((prev) => new Set(prev).add(row.key));
+    setOpenKey(row.key);
+  };
 
-  return (
-    <div className="flex flex-col gap-2">
-      {!disabled && (
-        <div className="flex items-center gap-3 py-2">
-          <button type="button" onClick={() => setCreateOpen(true)} className="config-add-btn">
-            <DecorativeIcon name="plus" size="sm" />
-            <span>{localize('com_config_create_endpoint')}</span>
-          </button>
-        </div>
-      )}
-      {disabled && isEmpty ? (
-        <div className="py-3 text-sm text-(--cui-color-text-muted)">
-          {localize('com_config_no_custom_endpoints')}
-        </div>
-      ) : (
-        <ArrayObjectField
-          id={`${path.replace(/\./g, '-')}`}
-          path={path}
-          value={value}
-          fields={customField.children ?? []}
-          onChange={(v) => onChange(path, v)}
-          onEntryChange={(index, v) => onChange(`${path}.${index}`, v)}
-          disabled={disabled}
-          hideAddButton
-          renderFields={renderGroupedEndpointFields}
-          entryIdPrefix={`section-${path.split('.')[0]}-custom`}
-          isEntryLocked={(item) => isConfigRecord(item) && lowerNames.has(String(item.name))}
-          editSessionId={editSessionId}
+  const readOnlyInherited =
+    open != null && open.origin === 'inherited' && !open.overridden && !overriding.has(open.key);
+  const editable = open != null && !disabled && !readOnlyInherited;
+
+  const drawerNotice = (row: t.EndpointRow) => {
+    if (row.origin === 'yaml') {
+      return (
+        <Banner
+          tone="neutral"
+          action={
+            row.overridden && !disabled ? (
+              <Button
+                type="secondary"
+                htmlType="button"
+                iconLeft="history"
+                label={localize('com_config_ce_action_revert')}
+                onClick={() => handleRevert(row)}
+              />
+            ) : undefined
+          }
+        >
+          {localize(
+            row.overridden ? 'com_config_ce_notice_yaml_overridden' : 'com_config_ce_notice_yaml',
+          )}
+        </Banner>
+      );
+    }
+    if (row.origin !== 'inherited') return undefined;
+    if (readOnlyInherited) {
+      return (
+        <Banner
+          tone="info"
+          action={
+            disabled ? undefined : (
+              <Button
+                type="primary"
+                htmlType="button"
+                label={localize('com_config_ce_override_for', { scope: scopeName })}
+                onClick={() => setOverriding((prev) => new Set(prev).add(row.key))}
+              />
+            )
+          }
+        >
+          {localize('com_config_ce_notice_inherited', { scope: scopeName })}
+        </Banner>
+      );
+    }
+    return (
+      <Banner
+        tone="info"
+        action={
+          row.overridden && !disabled ? (
+            <Button
+              type="secondary"
+              htmlType="button"
+              iconLeft="history"
+              label={localize('com_config_ce_remove_scope_overrides', { scope: scopeName })}
+              onClick={() => handleRevert(row)}
+            />
+          ) : undefined
+        }
+      >
+        {localize('com_config_ce_notice_inherited_override', { scope: scopeName })}
+      </Banner>
+    );
+  };
+
+  const drawerFooter = (row: t.EndpointRow) => (
+    <>
+      {!disabled && isDeletable(row) && (
+        <Button
+          type="danger"
+          htmlType="button"
+          iconLeft="trash"
+          label={localize('com_config_ce_action_delete')}
+          onClick={() => handleDelete(row)}
         />
       )}
-      <CreateCustomEndpointDialog
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onSave={handleCreate}
-        fields={customField.children ?? []}
-        existingNames={existingNames}
-        renderFields={renderDraftFields}
+      <span className="ml-auto text-xs text-(--cui-color-text-muted)">
+        {editable ? localize('com_config_ce_drawer_staged') : null}
+      </span>
+      <Button
+        type="primary"
+        htmlType="button"
+        label={localize('com_config_ce_done')}
+        onClick={closeDrawer}
+      />
+    </>
+  );
+
+  const isEmpty = rows.length === 0 && removals.length === 0;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2 py-1">
+        {rows.length >= FILTER_THRESHOLD && (
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder={localize('com_config_ce_filter_placeholder')}
+            ariaLabel={localize('com_config_ce_filter_a11y')}
+            className="w-full min-w-0 sm:w-auto sm:flex-1"
+          />
+        )}
+        {!disabled && (
+          <div className="ml-auto" ref={createButtonRef}>
+            <Button
+              type="secondary"
+              htmlType="button"
+              iconLeft="plus"
+              label={localize('com_config_create_endpoint')}
+              onClick={() => {
+                closeDrawer();
+                setCreating(true);
+              }}
+            />
+          </div>
+        )}
+      </div>
+      {isEmpty ? (
+        <p className="m-0 py-3 text-sm text-(--cui-color-text-muted)">
+          {localize(scope ? 'com_config_ce_empty_scope' : 'com_config_no_custom_endpoints')}
+        </p>
+      ) : (
+        <>
+          <EndpointList
+            rows={visible}
+            removals={shownRemovals}
+            openKey={openKey}
+            disabled={disabled}
+            onOpen={(row) => {
+              setRevealField(filterMatchIn(rowFilter, `${path}.${row.index}`));
+              setOpenKey(row.key);
+            }}
+            onReveal={(row) => {
+              setCreating(false);
+              setOpenKey(row.key);
+            }}
+            onDelete={handleDelete}
+            onRevert={handleRevert}
+            onUndoRemoval={handleUndoRemoval}
+            idPrefix={idPrefix}
+          />
+          {visible.length === 0 && (
+            <p className="m-0 py-2 text-sm text-(--cui-color-text-muted)" role="status">
+              {configuredOnly && trimmedQuery === ''
+                ? localize('com_config_ce_none_set_in_scope', { scope: scopeName })
+                : localize('com_config_ce_filter_empty', { query: trimmedQuery })}
+            </p>
+          )}
+        </>
+      )}
+      <EndpointDrawer
+        open={open != null}
+        onClose={closeDrawer}
+        title={open?.title ?? ''}
+        badges={
+          open ? (
+            <>
+              <SourceBadge row={open} />
+              {open.isNew && (
+                <Badge tone="edited" dot label={localize('com_config_ce_state_new')} />
+              )}
+              <StatusBadge issues={open.issues} />
+            </>
+          ) : undefined
+        }
+        subtitle={open?.host ?? undefined}
+        notice={open ? drawerNotice(open) : undefined}
+        footer={open ? drawerFooter(open) : null}
+        bodyRef={bodyRef}
+        returnFocus={rowButton}
+      >
+        {open && (
+          <EndpointEditor
+            key={open.key}
+            path={`${path}.${open.index}`}
+            fields={entryFields}
+            value={open.value}
+            onFieldChange={handleFieldChange}
+            issues={open.issues}
+            origin={open.origin}
+            disabled={!editable}
+            endpointNames={names}
+            storedSecret={open.storedSecret}
+            lowerEntry={open.loadedName ? lowerEntry(open.loadedName) : undefined}
+            savedEntry={open.saved}
+            modelsOf={modelsOf}
+            showChips={!open.isNew}
+            revealField={revealField}
+            onRevealed={(fieldPath) => {
+              const body = bodyRef.current;
+              if (body) revealConfigPath(body, { path: fieldPath }, { align: 'center' });
+            }}
+            editSessionId={editSessionId}
+          />
+        )}
+      </EndpointDrawer>
+      <EndpointCreator
+        open={creating}
+        fields={entryFields}
+        names={names}
+        inheritedNames={inheritedNames}
+        onCreate={handleCreate}
+        onOverride={handleOverrideInstead}
+        onClose={() => setCreating(false)}
+        returnFocus={() => createButtonRef.current?.querySelector('button') ?? null}
       />
     </div>
   );

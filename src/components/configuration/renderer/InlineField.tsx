@@ -12,6 +12,7 @@ import {
 } from '@/utils';
 import { lowerLayerKeys, lowerLayerValue, entryFieldDefault, layerRevertTarget } from './defaults';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
+import { EntryFieldChipsContext } from '@/contexts/EntryFieldChipsContext';
 import { fieldMetaFor, fieldVariants, resolveControl } from './kinds';
 import { RevealTargetContext } from '@/contexts/RevealTargetContext';
 import { RecordObjectField } from '../fields/RecordObjectField';
@@ -462,7 +463,11 @@ function InlineFieldBody({
   const label = labelForPath(dataPath, localize);
   const meta = fieldMetaFor(field, dataPath);
   const required = Boolean(showRequired) && !field.isOptional;
-  const { kind } = resolveControl({ field, path: dataPath, value: fieldValue });
+  const { kind, width: controlWidth } = resolveControl({
+    field,
+    path: dataPath,
+    value: fieldValue,
+  });
   const state = useFieldState(dataPath);
   const { error } = state;
   const fieldDefault = entryFieldDefault(fieldValue, meta, state);
@@ -493,6 +498,15 @@ function InlineFieldBody({
   };
   /** Keys of a record the layer beneath sets: their values can change, but they cannot be removed. */
   const lockedKeys = lowerRecordKeys(state.isOverride ? state.revertTarget?.value : lower?.value);
+  const renderEntryChips = useContext(EntryFieldChipsContext);
+  const entryChips = renderEntryChips?.({
+    path: dataPath,
+    label,
+    value: fieldValue,
+    onChange: (next) => onChange(field.key, next),
+    onRevert: clearField,
+    disabled,
+  });
 
   /** Writes one key of this field's object value, merging into its latest value. */
   const changeChild: EntryChange = (childPath, childValue) => {
@@ -515,6 +529,7 @@ function InlineFieldBody({
           required={required}
           description={fieldDescription(field, meta, localize)}
           error={error}
+          extraChips={entryChips}
           control={
             disabled ? (
               <BooleanChip value={own ?? defaultEnabled ?? false} />
@@ -571,7 +586,7 @@ function InlineFieldBody({
   if (kind === 'array-object') {
     const renderFn = collectionRenderOverrides?.[field.key] ?? renderCollectionEntryFields;
     return (
-      <CollectionRow title={label} fieldId={fieldId} required={required}>
+      <CollectionRow title={label} fieldId={fieldId} required={required} extraChips={entryChips}>
         <ArrayObjectField
           id={fieldId}
           path={dataPath}
@@ -590,7 +605,7 @@ function InlineFieldBody({
   if (kind === 'record-object') {
     const renderFn = collectionRenderOverrides?.[field.key] ?? renderCollectionEntryFields;
     return (
-      <CollectionRow title={label} fieldId={fieldId} required={required}>
+      <CollectionRow title={label} fieldId={fieldId} required={required} extraChips={entryChips}>
         <RecordObjectField
           id={fieldId}
           path={dataPath}
@@ -617,6 +632,7 @@ function InlineFieldBody({
           required={required}
           description={fieldDescription(field, meta, localize)}
           error={error}
+          extraChips={entryChips}
           control={
             <VariantField
               key={`${fieldId}-${editSessionId ?? 0}`}
@@ -672,6 +688,8 @@ function InlineFieldBody({
       description={fieldDescription(field, meta, localize)}
       error={error}
       shadowedBy={fieldValue !== undefined ? state.shadowedBy : undefined}
+      extraChips={entryChips}
+      width={controlWidth}
       control={
         <FieldControl
           key={secretPreview != null ? `${fieldId}-${editSessionId ?? 0}` : undefined}
@@ -706,6 +724,8 @@ function InlineRow({
   description,
   error,
   shadowedBy,
+  extraChips,
+  width,
   control,
 }: {
   label: string;
@@ -715,17 +735,17 @@ function InlineRow({
   error?: string;
   /** D11: Global (all providers) takes precedence over this value. */
   shadowedBy?: t.ShadowedBy;
+  /** Chips a collection editor adds (`EntryFieldChipsContext`). */
+  extraChips?: ReactNode;
+  /** Control width token (URLs and prompts L); unset sizes by control type. */
+  width?: t.ControlWidth;
   control: ReactNode;
 }) {
   const chips =
-    required || shadowedBy ? (
+    shadowedBy || extraChips ? (
       <>
+        {extraChips}
         {shadowedBy && <ShadowBadge shadowedBy={shadowedBy} />}
-        {required && (
-          <span aria-hidden="true" className="text-(--cui-color-text-danger)">
-            *
-          </span>
-        )}
       </>
     ) : undefined;
   return (
@@ -736,6 +756,8 @@ function InlineRow({
       control={control}
       chips={chips}
       error={error}
+      required={required}
+      width={width}
     />
   );
 }
@@ -744,23 +766,36 @@ function CollectionRow({
   title,
   fieldId,
   required,
+  extraChips,
   children,
 }: {
   title: string;
   fieldId: string;
   required?: boolean;
+  /** Chips a collection editor adds (`EntryFieldChipsContext`). */
+  extraChips?: ReactNode;
   children: ReactNode;
 }) {
+  const heading = (
+    <span id={`${fieldId}-label`} className="text-sm font-medium text-(--cui-color-text-default)">
+      {title}
+      {required && (
+        <span aria-hidden="true" className="ml-0.5 text-(--cui-color-text-danger)">
+          *
+        </span>
+      )}
+    </span>
+  );
   return (
-    <div className="flex w-full flex-col gap-2 px-2.5 py-2">
-      <span id={`${fieldId}-label`} className="text-sm font-medium text-(--cui-color-text-default)">
-        {title}
-        {required && (
-          <span aria-hidden="true" className="ml-0.5 text-(--cui-color-text-danger)">
-            *
-          </span>
-        )}
-      </span>
+    <div className="flex w-full flex-col gap-2 px-(--settings-row-px) py-2">
+      {extraChips ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {heading}
+          <span className="flex flex-wrap items-center gap-1.5">{extraChips}</span>
+        </div>
+      ) : (
+        heading
+      )}
       {children}
     </div>
   );

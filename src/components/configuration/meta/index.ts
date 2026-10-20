@@ -2,10 +2,15 @@ import type * as t from '@/types';
 import { buildFieldMetaRegistry, resolveFieldMeta } from './registry';
 import { PROVIDER_FIELD_META } from './providers';
 import { SECRET_CONFIG_KEYS } from '@/constants';
+import { ENDPOINT_FIELD_META } from './endpoints';
 import { GENERIC_FIELD_META } from './generic';
 
 /** Registries merged in order; area files are appended here (WS2 owns, WS9–13 contribute). */
-const META_SOURCES: t.FieldMetaRegistry[] = [GENERIC_FIELD_META, PROVIDER_FIELD_META];
+const META_SOURCES: t.FieldMetaRegistry[] = [
+  GENERIC_FIELD_META,
+  PROVIDER_FIELD_META,
+  ENDPOINT_FIELD_META,
+];
 
 const REGISTRY = buildFieldMetaRegistry(META_SOURCES);
 

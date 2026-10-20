@@ -145,17 +145,17 @@ test.describe('Configuration shell: search and deep links', () => {
     await expect(page).toHaveURL(/tab=system/);
   });
 
-  test('Ctrl+K on a custom endpoint name opens its card', async ({ page }) => {
+  test('Ctrl+K on a custom endpoint name opens its editor', async ({ page }) => {
     await openTab(page, 'custom');
-    const first = page.locator('form [data-entry-card] button[aria-expanded]').first();
-    const name = (await first.locator('span[title]').first().getAttribute('title')) ?? '';
+    const first = page.locator('form li[data-endpoint-row]').first();
+    const name = (await first.getAttribute('data-endpoint-row')) ?? '';
     test.skip(!name, 'No custom endpoints');
     await openTab(page, 'system');
     await search(page, name);
-    const card = page.locator('form [data-entry-card] button[aria-expanded="true"]', {
-      hasText: name,
+    const editor = page.getByRole('dialog');
+    await expect(editor.getByRole('heading', { name, exact: true })).toBeVisible({
+      timeout: 10_000,
     });
-    await expect(card.first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('a deep link to a nested field expands its ancestors', async ({ page }) => {

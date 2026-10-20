@@ -5,3 +5,4 @@ export * from './scope';
 export * from './config';
 export * from './collections';
 export * from './providers';
+export * from './endpoints';
