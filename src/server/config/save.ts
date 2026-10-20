@@ -235,16 +235,20 @@ async function writeFieldOps(
 }
 
 /**
- * Writes a plan in a fixed order: every set (one PATCH per 100 entries), then
- * resets, tombstones and untombstones, so a rename writes the new entry
- * before removing the old one. Stops at the first failure.
+ * Writes a plan in a fixed order: tombstones, then every set (one PATCH per
+ * 100 entries), then resets and untombstones. Tombstones go first because
+ * LibreChat validates a PATCH against the layer beneath minus the target's
+ * stored tombstones: switching `memory.agent` from a librechat.yaml `id` to
+ * an inline provider/model only validates once `memory.agent.id` is hidden.
+ * Sets precede resets, so a rename writes the new entry before removing the
+ * old one. Stops at the first failure.
  */
 async function executePlan(target: t.WriteTargetRef, plan: t.WritePlan): Promise<WriteOutcome> {
   const outcome: WriteOutcome = { writes: [], dropped: [] };
   const steps = [
+    () => writeFieldOps(target, 'tombstone', plan.tombstones, outcome),
     () => patchFields(target, plan.sets, outcome),
     () => writeFieldOps(target, 'reset', plan.resets, outcome),
-    () => writeFieldOps(target, 'tombstone', plan.tombstones, outcome),
     () => writeFieldOps(target, 'untombstone', plan.untombstones, outcome),
   ];
   try {
@@ -345,7 +349,7 @@ function hasWrites(plan: t.WritePlan): boolean {
  * stored overrides and the layer beneath it, plans the changes against them
  * (`planConfigChanges`: keyed collection ops by identity, validation of
  * fields, entries and whole sections, write rules), and writes nothing when
- * any issue is found. Otherwise it writes sets before resets and tombstones;
+ * any issue is found. Otherwise it writes tombstones, sets, then resets;
  * if a write fails, the writes before it are rolled back to the captured
  * overrides. Afterwards the stored (and, for base, effective) config is read
  * back, and every change that did not take effect is reported in `skipped`.

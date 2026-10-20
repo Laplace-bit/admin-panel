@@ -4,6 +4,7 @@ export * from './draft';
 export * from './edits';
 export * from './endpoints';
 export * from './expand';
+export * from './features';
 export * from './field';
 export * from './guard';
 export * from './import';

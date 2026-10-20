@@ -503,7 +503,7 @@ describe('buildReviewModel', () => {
       'Custom endpoints › Zai 2 › Base URL',
     );
     expect(describePath('interface.termsOfService.modalTitle', ctx([]))).toBe(
-      'Features › Interface › Terms of service › Modal title',
+      'Features › Interface › Terms of service › Terms dialog title',
     );
   });
 

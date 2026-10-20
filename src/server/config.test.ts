@@ -822,6 +822,8 @@ function sampleValueForControl(field: t.SchemaField, path?: string): unknown {
       return true;
     case 'model-list':
       return getArrayItemType(field.type) === 'string' ? ['item'] : ['item', { name: 'item-2' }];
+    case 'domain-list':
+      return ['example.com', '*.example.org'];
     case 'array':
     case 'multi-enum': {
       const itemType = getArrayItemType(field.type);

@@ -5,6 +5,7 @@ export { TextareaField } from './TextareaField';
 export { ToggleField } from './ToggleField';
 export { SelectField } from './SelectField';
 export { ListField } from './ListField';
+export { DomainListField } from './DomainListField';
 export { NumberListField } from './NumberListField';
 export { KeyValueField } from './KeyValueField';
 export { CodeField } from './CodeField';

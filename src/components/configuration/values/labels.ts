@@ -1,6 +1,7 @@
 import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
 import { MASKED_SECRET, isEnvReference } from '@/utils';
+import { getFieldMeta } from '../meta';
 
 const MAX_TEXT_LENGTH = 40;
 
@@ -62,6 +63,9 @@ export function formatConfigValue(value: t.ConfigValue, localize: t.LocalizeFn, 
     return localize('com_config_values_not_set');
   }
   if (typeof value === 'boolean') {
+    /** A switch shown inverted (`memory.disabled` as "Enable memory") names its values from the meta. */
+    const labelKey = path ? getFieldMeta(path)?.enumLabels?.[String(value)] : undefined;
+    if (labelKey) return localize(labelKey);
     return localize(value ? 'com_config_values_on' : 'com_config_values_off');
   }
   if (typeof value === 'number') return value.toLocaleString();

@@ -247,6 +247,7 @@ export function ConfigTabContent({
       onChange: onFieldChange,
       onResetField,
       onDiscardField,
+      onHideField: sectionDisabled ? undefined : onHideField,
       editedValues,
       disabled: sectionDisabled,
       previewMode,
@@ -265,8 +266,7 @@ export function ConfigTabContent({
       yamlBaseKeys: baseRecordKeys?.[dataKey],
       onValidationError,
       editSessionId,
-      onHideField,
-      onUnhideField,
+      onUnhideField: sectionDisabled ? undefined : onUnhideField,
     };
     const content = (
       <>

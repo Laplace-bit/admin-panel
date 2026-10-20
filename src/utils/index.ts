@@ -2,6 +2,7 @@ export * from './capabilities';
 export * from './changes';
 export * from './cn';
 export * from './collections';
+export * from './domains';
 export * from './format';
 export * from './interfacePermissions';
 export * from './keys';

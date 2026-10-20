@@ -5,6 +5,7 @@ export type * from './config';
 export type * from './config-ui';
 export type * from './endpoints';
 export type * from './controls';
+export type * from './features';
 export type * from './fields';
 export type * from './grant';
 export type * from './hooks';

@@ -278,6 +278,7 @@ export function canRoundTrip(
       return (getFieldShape(field).values ?? []).some((member) => member === value);
     case 'array':
     case 'multi-enum':
+    case 'domain-list':
       return isStringList(value);
     case 'model-list':
       return Array.isArray(value) && value.every(isModelItem);
@@ -363,6 +364,7 @@ export function fallbackControl(
     case 'literal':
       return 'select';
     case 'multi-enum':
+    case 'domain-list':
       return 'array';
     case 'model-list':
       return value == null || isStringList(value) ? 'array' : 'code';

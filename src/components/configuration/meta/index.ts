@@ -2,6 +2,7 @@ import type * as t from '@/types';
 import { buildFieldMetaRegistry, resolveFieldMeta } from './registry';
 import { PROVIDER_FIELD_META } from './providers';
 import { SECRET_CONFIG_KEYS } from '@/constants';
+import { FEATURES_FIELD_META } from './features';
 import { ENDPOINT_FIELD_META } from './endpoints';
 import { GENERIC_FIELD_META } from './generic';
 import { SPEC_FIELD_META } from './specs';
@@ -14,6 +15,7 @@ const META_SOURCES: t.FieldMetaRegistry[] = [
   ENDPOINT_FIELD_META,
   SPEC_FIELD_META,
   MCP_FIELD_META,
+  FEATURES_FIELD_META,
 ];
 
 const REGISTRY = buildFieldMetaRegistry(META_SOURCES);

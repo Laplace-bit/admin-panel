@@ -85,6 +85,30 @@ describe('revealConfigPath', () => {
     expect(container.scrollTo).toHaveBeenCalled();
   });
 
+  it('opens the collapsed group around a target whose own id is already rendered', () => {
+    const group = document.createElement('section');
+    group.id = 'section-interface-group-onboarding';
+    group.innerHTML = html`<div><button aria-expanded="false">Onboarding</button></div>
+      <div class="config-section-grid config-section-grid-closed" inert>
+        <h4 id="section-interface.termsOfService">Terms of service</h4>
+      </div>`;
+    group.addEventListener('config:expand', () => {
+      const grid = group.querySelector<HTMLElement>('.config-section-grid')!;
+      grid.classList.replace('config-section-grid-closed', 'config-section-grid-open');
+      grid.removeAttribute('inert');
+    });
+    container.append(group);
+
+    const onDone = vi.fn();
+    revealConfigPath(container, { path: 'interface.termsOfService' }, { onDone, focus: false });
+    vi.advanceTimersByTime(2_000);
+
+    expect(onDone).toHaveBeenCalledWith(
+      document.getElementById('section-interface.termsOfService'),
+    );
+    expect(group.querySelector('[inert]')).toBeNull();
+  });
+
   it('gives up with null when the path never renders', () => {
     const onDone = vi.fn();
     revealConfigPath(container, { path: 'nothing.here' }, { onDone });
