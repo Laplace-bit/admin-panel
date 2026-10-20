@@ -8,8 +8,9 @@ import {
   fallbackSectionTitle,
 } from '@/components/configuration/configMeta';
 import { providerTocItems } from '@/components/configuration/sections/providers';
+import { webSearchTocItems } from '@/components/configuration/sections/features';
+import { INTERFACE_GROUPS, READ_ONLY_CONFIG_SECTIONS } from '@/constants';
 import { getValueAtPath, isConfigRecord } from '@/utils';
-import { READ_ONLY_CONFIG_SECTIONS } from '@/constants';
 import { useLocalize } from '../useLocalize';
 
 const PERMISSIONS_BANNER_LINK: t.InfoBannerLink = {
@@ -21,12 +22,13 @@ const PERMISSIONS_BANNER_LINK: t.InfoBannerLink = {
 /** A model spec is shown by its label (what the model menu shows), else its name. */
 const SPEC_LABEL_KEYS = ['label', 'name'] as const;
 
-/** Display name of a list entry: its name or label (label first for specs), else "Entry N". */
+/** Display name of a list entry: its name or label (label first for specs), else `untitled` or "Entry N". */
 function entryLabel(
   entry: t.ConfigValue,
   index: number,
   localize: t.LocalizeFn,
   keys: readonly string[] = ['name', 'label'],
+  untitled?: string,
 ): string {
   if (isConfigRecord(entry)) {
     for (const key of keys) {
@@ -34,7 +36,7 @@ function entryLabel(
       if (typeof value === 'string' && value) return value;
     }
   }
-  return localize('com_config_entry_n', { n: String(index + 1) });
+  return untitled ?? localize('com_config_entry_n', { n: String(index + 1) });
 }
 
 /**
@@ -90,7 +92,7 @@ function collectionTocItems(
     const list = getValueAtPath(values, 'modelSpecs.list');
     return (Array.isArray(list) ? list : []).map((entry, i) => ({
       id: `section-modelSpecs-list-${i}`,
-      label: entryLabel(entry, i, localize, SPEC_LABEL_KEYS),
+      label: entryLabel(entry, i, localize, SPEC_LABEL_KEYS, localize('com_config_specs_new')),
       dataPath: `modelSpecs.list.${i}`,
       path: `modelSpecs.list.${i}`,
     }));
@@ -98,6 +100,17 @@ function collectionTocItems(
   if (activeTab === 'providers' && section.schemaKey === 'endpoints') {
     return providerTocItems(section.fields, dataKey, localize);
   }
+  if (section.id === 'interface') {
+    /** The purpose groups the section shows (Chat controls, Onboarding & legal, …), not its schema objects. */
+    return INTERFACE_GROUPS.map((group) => ({
+      id: `section-interface-group-${group.key}`,
+      label: localize(group.labelKey),
+      dataPath: `interface.${group.fields[0]}`,
+    }));
+  }
+  if (section.id === 'webSearch') return webSearchTocItems(values, dataKey, localize);
+  /** Content filters show one read-only summary: nothing inside to jump to. */
+  if (section.id === 'filters') return [];
   return undefined;
 }
 

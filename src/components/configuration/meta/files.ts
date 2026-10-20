@@ -63,6 +63,8 @@ export const FILES_FIELD_META: t.FieldMetaRegistry = {
   },
   'fileConfig.fileTokenLimit': { runtimeDefault: fileConfig.fileTokenLimit },
   'fileConfig.fileContextCharLimit': { runtimeDefault: fileConfig.fileContextCharLimit },
+  /** LibreChat's code file provisioning assumes 6 hours when unset (`staleSafeWindowMs`). */
+  'fileConfig.codeEnvLivenessSafeWindowMs': { runtimeDefault: 6 * 60 * 60 * 1000 },
   'fileConfig.skills.fileSizeLimit': { runtimeDefault: megabytes(fileConfig.skills.fileSizeLimit) },
   'fileConfig.skills.importCleanupConcurrency': {
     runtimeDefault: fileConfig.skills.importCleanupConcurrency,

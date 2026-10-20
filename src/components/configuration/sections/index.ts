@@ -18,11 +18,6 @@ import {
   SummarizationRenderer,
   ContentFiltersRenderer,
 } from './features';
-import { CustomEndpointsRenderer } from './endpoints';
-import { McpServersRenderer } from './mcp';
-import { LangfuseRenderer } from './LangfuseRenderer';
-import { ProvidersRenderer } from './providers';
-import { ModelSpecsRenderer } from './specs';
 import {
   CreditsRenderer,
   RateLimitsRenderer,
@@ -30,6 +25,11 @@ import {
   RegistrationRenderer,
 } from './system';
 import { StorageRenderer, FileConfigRenderer } from './files';
+import { CustomEndpointsRenderer } from './endpoints';
+import { LangfuseRenderer } from './LangfuseRenderer';
+import { ProvidersRenderer } from './providers';
+import { ModelSpecsRenderer } from './specs';
+import { McpServersRenderer } from './mcp';
 
 export const SECTION_RENDERERS: Partial<Record<string, React.ComponentType<t.FieldRendererProps>>> =
   {

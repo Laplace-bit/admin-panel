@@ -1,7 +1,7 @@
 import type * as t from '@/types';
+import { getReadOnlyReason, KEYED_COLLECTIONS } from '@/constants';
 import { hasPathOrAncestor, pathIndexOverlaps } from './paths';
 import { getValueAtPath, isConfigRecord } from './format';
-import { getReadOnlyReason, KEYED_COLLECTIONS } from '@/constants';
 import { toSecretPreviewKey } from './secrets';
 
 /**

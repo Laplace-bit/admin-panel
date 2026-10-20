@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { SaveEntry, WriteTarget, SaveContext, SavePayload, SkippedChange } from './config-ui';
-import type { ConfigValue, ConfigRecord, FlatConfigMap } from './config';
+import type { ConfigValue, ConfigRecord, FlatConfigMap, ZodSchemaLike } from './config';
 import type { RevertTarget } from './values';
 import type { ConfigScope } from './scope';
 
@@ -57,7 +57,10 @@ export interface ApplyConfigChangesRequest {
 /** Warning attached to a change in the review (WS1 produces, WS7 renders). */
 export type ChangeWarning =
   | 'ownershipChange'
+  /** Empties a list where empty allows nothing (`supportedMimeTypes`, `allowedAddresses`). */
   | 'emptyAllowlist'
+  /** Empties a list where empty sets no limit (`addedEndpoints`, `allowedProviders`, `allowedDomains`). */
+  | 'openAllowlist'
   /** Empties the allowed sign-up domains, so anyone with an email address can sign up (WS14). */
   | 'openRegistration'
   | 'yamlOnly'
@@ -68,7 +71,11 @@ export type ChangeWarning =
   /** Sets a value Global (`endpoints.all`) takes precedence over, so it has no effect (D11). */
   | 'shadowed'
   /** Sets a provider title setting while Global exists, so LibreChat ignores it (D11). */
-  | 'shadowedBlock';
+  | 'shadowedBlock'
+  /** Turns on required acceptance of the terms, which also gates this admin's own changes (FX-5). */
+  | 'requireTerms'
+  /** Empties the model spec list: no specs, and Specs only has no effect (MS-1). */
+  | 'emptySpecs';
 
 /** A warning for one path (and entry), with the keys it concerns when relevant (WS1). */
 export interface ConfigWarning {
@@ -143,6 +150,14 @@ export interface KeyedCollection {
   merge: CollectionMerge;
   /** A secret stored on each entry, and its masked-preview companion. */
   secret?: { key: string; preview: string };
+  /**
+   * The name LibreChat serves an entry under, when that differs from its key
+   * (custom endpoints: `Ollama` in any letter case is the one `ollama`). Two
+   * entries with the same served name replace each other at runtime.
+   */
+  servedName?: (name: string) => string;
+  /** Names LibreChat keeps for itself (its built-in endpoints). */
+  reservedNames?: ReadonlySet<string>;
 }
 
 /** Where the layer beneath the write target comes from (WS1). */
@@ -197,6 +212,11 @@ export interface SchemaParseResult {
   success: boolean;
   error?: { issues: SchemaIssue[] };
 }
+
+/** A schema that can validate a value (a Zod schema, as far as validation uses it). */
+export type ParseableSchema = ZodSchemaLike & {
+  safeParse(value: ConfigValue): SchemaParseResult;
+};
 
 /** A keyed collection entry change (WS1). */
 export type EntryChange = Extract<ConfigChange, { op: 'upsertEntry' | 'removeEntry' }>;

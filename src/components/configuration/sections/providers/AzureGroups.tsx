@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type * as t from '@/types';
 import { AzureGroupDrawer } from './AzureGroupDrawer';
+import { toFieldId } from '../../renderer';
 import { toAzureGroups } from './azure';
 import { useLocalize } from '@/hooks';
 
@@ -8,9 +9,10 @@ import { useLocalize } from '@/hooks';
  * Azure OpenAI groups as a read-only table (AP-1 phase 1, D13): Group |
  * Instance or base URL | API version | Models | Serverless | Assistants,
  * each with a details drawer (credentials masked). LibreChat applies Azure
- * groups only from librechat.yaml, so nothing here is editable.
+ * groups only from librechat.yaml, so nothing here is editable. Each row is a
+ * search target: a found group lands on its row, with its Details button focused.
  */
-export function AzureGroupsTable({ value }: t.AzureGroupsTableProps) {
+export function AzureGroupsTable({ path, value, field }: t.AzureGroupsTableProps) {
   const localize = useLocalize();
   const rows = useMemo(() => toAzureGroups(value), [value]);
   const [selected, setSelected] = useState<t.AzureGroupRow | null>(null);
@@ -23,7 +25,7 @@ export function AzureGroupsTable({ value }: t.AzureGroupsTableProps) {
   }
 
   return (
-    <div className="azure-groups">
+    <div id={path.replace(/\./g, '-')} className="azure-groups">
       <table className="azure-groups-table">
         <thead>
           <tr>
@@ -49,9 +51,13 @@ export function AzureGroupsTable({ value }: t.AzureGroupsTableProps) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.group}>
-              <th scope="row" className="azure-group-name">
+          {rows.map((row, index) => (
+            <tr key={row.group} id={`section-${path.replace(/\./g, '-')}-${index}`}>
+              <th
+                scope="row"
+                id={toFieldId(`${path}.${row.index}.group`)}
+                className="azure-group-name"
+              >
                 {row.group}
               </th>
               <td className="azure-col-wide">
@@ -83,7 +89,13 @@ export function AzureGroupsTable({ value }: t.AzureGroupsTableProps) {
           ))}
         </tbody>
       </table>
-      <AzureGroupDrawer group={selected} onClose={() => setSelected(null)} returnFocus={opener} />
+      <AzureGroupDrawer
+        group={selected}
+        path={path}
+        field={field}
+        onClose={() => setSelected(null)}
+        returnFocus={opener}
+      />
     </div>
   );
 }

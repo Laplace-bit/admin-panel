@@ -1,7 +1,7 @@
 import { useContext } from 'react';
 import type * as t from '@/types';
-import { useCollapsibleSection } from '../../useCollapsibleSection';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
+import { useCollapsibleSection } from '../../useCollapsibleSection';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { SettingsSection } from '../../SettingsSection';
 import { CountBadge } from '@/components/shared';

@@ -1,6 +1,7 @@
 import { useContext, useId } from 'react';
 import type * as t from '@/types';
 import { HeadingLevelContext, SoleFieldContext } from '@/contexts/SettingsContext';
+import { RegionNameContext } from '@/contexts/RegionNameContext';
 import { renderCollapsible } from './renderCollapsible';
 import { DecorativeIcon } from '@/components/shared';
 import { useLocalize } from '@/hooks';
@@ -37,6 +38,7 @@ export function SettingsSection({
 }: t.SettingsSectionProps) {
   const localize = useLocalize();
   const contextLevel = useContext(HeadingLevelContext);
+  const container = useContext(RegionNameContext);
   const baseId = useId();
   const titleId = `${baseId}-title`;
   const bodyId = `${baseId}-body`;
@@ -96,10 +98,17 @@ export function SettingsSection({
     </p>
   ) : null;
 
+  /**
+   * Groups repeat across containers ("Title generation" in every provider, "Advanced OAuth" in
+   * every MCP server): name them with the whole path of theirs, so every region name is unique.
+   */
+  const regionName = !isCard && container ? `${container} – ${title}` : undefined;
   const bodyClass = isCard ? 'settings-section-body' : 'settings-group-body';
   const body = (
     <HeadingLevelContext.Provider value={nextLevel(headingLevel)}>
-      <SoleFieldContext.Provider value={null}>{children}</SoleFieldContext.Provider>
+      <RegionNameContext.Provider value={regionName ?? title}>
+        <SoleFieldContext.Provider value={null}>{children}</SoleFieldContext.Provider>
+      </RegionNameContext.Provider>
     </HeadingLevelContext.Provider>
   );
 
@@ -107,7 +116,8 @@ export function SettingsSection({
     <section
       ref={sectionRef}
       id={id}
-      aria-labelledby={titleId}
+      aria-labelledby={regionName ? undefined : titleId}
+      aria-label={regionName}
       className={isCard ? 'settings-section' : 'settings-group'}
       data-settings-section={isCard ? '' : undefined}
     >

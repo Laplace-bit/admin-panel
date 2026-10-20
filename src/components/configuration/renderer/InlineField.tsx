@@ -9,37 +9,36 @@ import {
   isConfigValueEqual,
   getSecretPreviewValue,
   MASKED_SECRET,
+  asConfigRecord,
+  hasConfigValue,
 } from '@/utils';
-import { lowerLayerKeys, lowerLayerValue, entryFieldDefault, layerRevertTarget } from './defaults';
-import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
+import { lowerLayerKeys, lowerLayerValue, entryFieldDefault, layerValueBeneath } from './defaults';
 import { EntryFieldChipsContext } from '@/contexts/EntryFieldChipsContext';
+import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
 import { fieldMetaFor, fieldVariants, resolveControl } from './kinds';
 import { RevealTargetContext } from '@/contexts/RevealTargetContext';
+import { useFieldState, useLocalize, useValuesScope } from '@/hooks';
 import { RecordObjectField } from '../fields/RecordObjectField';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { ArrayObjectField } from '../fields/ArrayObjectField';
-import { identityKeyFor } from '../review/diff';
+import { ShadowBadge, shadowedSourceLabel } from '../values';
 import { BooleanChip, FieldControl } from './FieldControl';
 import { TriStateField } from '../fields/TriStateField';
 import { fieldDescription, toFieldId } from './paths';
 import { VariantField } from '../fields/VariantField';
+import { UnknownSettings } from '../UnknownSettings';
 import { DecorativeIcon } from '@/components/shared';
-import { useFieldState, useLocalize } from '@/hooks';
 import { getFieldMeta, labelForPath } from '../meta';
 import { SECRET_CONFIG_KEYS } from '@/constants';
+import { identityKeyFor } from '../review/diff';
 import { SettingsRow } from '../SettingsRow';
 import { NestedGroup } from './NestedGroup';
 import { orderFields } from '../controls';
-import { ShadowBadge } from '../values';
 
 type EntryChange = (path: string, value: t.ConfigValue) => void;
 
 function isPlainRecord(value: t.ConfigValue): value is t.ConfigRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function asRecord(value: t.ConfigValue): t.ConfigRecord {
-  return isPlainRecord(value) ? value : {};
 }
 
 /** On/off reading of a `boolean | object` value: an object means enabled. */
@@ -71,14 +70,6 @@ function lowerEntryLock(
     const id = identityOf(item);
     return typeof id === 'string' && lowerIds.has(id);
   };
-}
-
-function hasValue(v: t.ConfigValue): boolean {
-  if (v === undefined || v === null) return false;
-  if (typeof v === 'string') return v !== '';
-  if (typeof v === 'boolean' || typeof v === 'number') return true;
-  if (Array.isArray(v)) return v.length > 0;
-  return Object.keys(v).length > 0;
 }
 
 function isNestedObject(field: t.SchemaField): boolean {
@@ -151,16 +142,17 @@ export function InlineFieldRenderer({
   onHiddenFieldsChange,
   editSessionId,
   showRequired,
+  knownFields,
 }: t.InlineFieldRendererProps) {
   const configuredOnly = useContext(ConfiguredOnlyContext);
   const rowFilter = useContext(RowFilterContext);
   const revealTarget = useContext(RevealTargetContext);
-  const values = asRecord(parentValue);
+  const values = asConfigRecord(parentValue);
   const lookupKey = collectionKeyOf(fields, parentPath);
   const useProgressiveDisclosure = PROGRESSIVE_DISCLOSURE_PATHS.has(lookupKey);
   const order = FIELD_ORDER[lookupKey];
   const [shownKeys, setShownKeys] = useState<ReadonlySet<string>>(
-    () => new Set(fields.filter((f) => hasValue(values[f.key])).map((f) => f.key)),
+    () => new Set(fields.filter((f) => hasConfigValue(values[f.key])).map((f) => f.key)),
   );
   const [pickerOpen, setPickerOpen] = useState(false);
   const focusKeyRef = useRef<string | null>(null);
@@ -169,7 +161,7 @@ export function InlineFieldRenderer({
   const toShow = fields.filter(
     (f) =>
       !shownKeys.has(f.key) &&
-      (hasValue(values[f.key]) || isRevealing(revealTarget, `${parentPath}.${f.key}`)),
+      (hasConfigValue(values[f.key]) || isRevealing(revealTarget, `${parentPath}.${f.key}`)),
   );
   if (toShow.length > 0) {
     setShownKeys((prev) => new Set([...prev, ...toShow.map((f) => f.key)]));
@@ -189,10 +181,10 @@ export function InlineFieldRenderer({
     !useProgressiveDisclosure ||
     pinnedKeys.has(f.key) ||
     shownKeys.has(f.key) ||
-    hasValue(values[f.key]) ||
+    hasConfigValue(values[f.key]) ||
     holdsFilterMatch(rowFilter, `${parentPath}.${f.key}`);
   const visibleFields = orderedFields.filter(
-    (f) => isVisible(f) && (!configuredOnly || hasValue(values[f.key])),
+    (f) => isVisible(f) && (!configuredOnly || hasConfigValue(values[f.key])),
   );
   const hiddenFields = useProgressiveDisclosure
     ? orderedFields.filter(
@@ -254,6 +246,9 @@ export function InlineFieldRenderer({
           onClose={() => setPickerOpen(false)}
         />
       )}
+      {!rowFilter && (
+        <UnknownSettings fields={knownFields ?? fields} value={parentValue} path={parentPath} />
+      )}
     </div>
   );
 }
@@ -285,10 +280,10 @@ function NestedGroupWithAddField({
   const lookupKey = collectionKeyOf(fields, parentPath);
   const usesPD = PROGRESSIVE_DISCLOSURE_PATHS.has(lookupKey);
   const pinnedSet = new Set(FIELD_ORDER[lookupKey] ?? []);
-  const values = asRecord(parentValue);
-  const configuredCount = fields.filter((f) => hasValue(values[f.key])).length;
+  const values = asConfigRecord(parentValue);
+  const configuredCount = fields.filter((f) => hasConfigValue(values[f.key])).length;
   const [hasHideable, setHasHideable] = useState(
-    () => usesPD && fields.some((f) => !pinnedSet.has(f.key) && !hasValue(values[f.key])),
+    () => usesPD && fields.some((f) => !pinnedSet.has(f.key) && !hasConfigValue(values[f.key])),
   );
 
   return (
@@ -452,7 +447,8 @@ function InlineFieldBody({
   editSessionId,
 }: t.InlineFieldProps) {
   const localize = useLocalize();
-  const values = asRecord(parentValue);
+  const scope = useValuesScope();
+  const values = asConfigRecord(parentValue);
   const fieldValue = values[field.key];
   const latestRef = useRef(fieldValue);
   latestRef.current = fieldValue;
@@ -474,7 +470,7 @@ function InlineFieldBody({
   const lower = lowerLayerValue(state);
   const secretPreview = getSecretPreviewValue(values, field.key);
   /** What clearing goes back to: the value the layer beneath sets (librechat.yaml, or Base in a profile). */
-  const revertTo = state.isOverride ? layerRevertTarget(state.revertTarget) : lower;
+  const revertTo = layerValueBeneath(state);
 
   /**
    * "Default" in an entry: remove the target's own value, so the entry reads
@@ -511,7 +507,7 @@ function InlineFieldBody({
   /** Writes one key of this field's object value, merging into its latest value. */
   const changeChild: EntryChange = (childPath, childValue) => {
     const leafKey = childPath.split('.').pop() ?? childPath;
-    const next = { ...asRecord(latestRef.current), [leafKey]: childValue };
+    const next = { ...asConfigRecord(latestRef.current), [leafKey]: childValue };
     if (childValue === undefined) delete next[leafKey];
     latestRef.current = next;
     onChange(field.key, next);
@@ -554,7 +550,7 @@ function InlineFieldBody({
           <div className="mb-2 ml-4 border-l-2 border-(--cui-color-stroke-default) pl-4">
             <InlineFieldRenderer
               fields={field.children}
-              parentValue={asRecord(fieldValue)}
+              parentValue={asConfigRecord(fieldValue)}
               parentPath={dataPath}
               onChange={changeChild}
               disabled={disabled}
@@ -688,6 +684,7 @@ function InlineFieldBody({
       description={fieldDescription(field, meta, localize)}
       error={error}
       shadowedBy={fieldValue !== undefined ? state.shadowedBy : undefined}
+      shadowSource={shadowedSourceLabel(state, localize, scope)}
       extraChips={entryChips}
       width={controlWidth}
       control={
@@ -724,6 +721,7 @@ function InlineRow({
   description,
   error,
   shadowedBy,
+  shadowSource,
   extraChips,
   width,
   control,
@@ -733,19 +731,27 @@ function InlineRow({
   required?: boolean;
   description?: string;
   error?: string;
-  /** D11: Global (all providers) takes precedence over this value. */
+  /** D11: Global overrides (`endpoints.all`) take precedence over this value. */
   shadowedBy?: t.ShadowedBy;
+  /** Where the shadowed value comes from, named in the reason ("librechat.yaml"). */
+  shadowSource?: string;
   /** Chips a collection editor adds (`EntryFieldChipsContext`). */
   extraChips?: ReactNode;
   /** Control width token (URLs and prompts L); unset sizes by control type. */
   width?: t.ControlWidth;
   control: ReactNode;
 }) {
+  const localize = useLocalize();
   const chips =
     shadowedBy || extraChips ? (
       <>
         {extraChips}
-        {shadowedBy && <ShadowBadge shadowedBy={shadowedBy} />}
+        {shadowedBy && (
+          <ShadowBadge
+            shadowedBy={shadowedBy}
+            source={shadowSource ?? localize('com_config_ui_state_edited')}
+          />
+        )}
       </>
     ) : undefined;
   return (

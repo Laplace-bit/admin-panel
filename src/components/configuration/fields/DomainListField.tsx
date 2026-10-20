@@ -133,12 +133,9 @@ export function DomainListField({
         <span>{status}</span>
       </p>
       {values.length > 0 && (
-        <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0" aria-label={name}>
+        <ul className="settings-chip-list" aria-label={name}>
           {values.map((value, index) => (
-            <li
-              key={value}
-              className="inline-flex max-w-full items-center gap-1 rounded-full border border-(--cui-color-stroke-default) bg-(--settings-neutral-bg) py-0.5 pr-0.5 pl-2.5 font-mono text-xs text-(--cui-color-text-default)"
-            >
+            <li key={value} className="settings-chip font-mono">
               <span className="truncate">{value}</span>
               {!disabled && (
                 <button

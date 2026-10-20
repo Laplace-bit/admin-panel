@@ -1,16 +1,16 @@
 import { useContext, useState } from 'react';
 import type * as t from '@/types';
-import { isConfigRecord, getValueAtPath, isConfigValueEqual } from '@/utils';
+import { isConfigRecord, getValueAtPath, isConfigValueEqual, stringItems } from '@/utils';
 import { NestedGroup, FieldRenderer, toFieldId } from '../../renderer';
 import { useLocalize, useOwnedField, useYamlConfig } from '@/hooks';
 import { ConfirmChoiceDialog } from '../../fields/ConfirmChoice';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { countConfigured, hasPathOverlap } from '../../counts';
+import { EmailDomainListField } from './EmailDomainListField';
 import { FieldRow, isRowShown } from '../files/FieldRow';
 import { UnknownSettings } from '../../UnknownSettings';
 import { ReadOnlySection } from '../../ReadOnlySection';
 import { SOCIAL_LOGIN_PROVIDERS } from '@/constants';
-import { DomainListField } from './DomainListField';
 import { SettingsRow } from '../../SettingsRow';
 import { ConfigRow } from '../../ConfigRow';
 import { labelForPath } from '../../meta';
@@ -23,12 +23,6 @@ const CUSTOM_ROWS: ReadonlySet<string> = new Set(['socialLogins', 'allowedDomain
 /** Set up once at startup from librechat.yaml (`configureSocialLogins`): shown read-only. */
 const STARTUP_KEYS: ReadonlySet<string> = new Set(['oauthStateTtlMs', 'openidDiscovery']);
 
-function stringList(value: t.ConfigValue): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : [];
-}
-
 /**
  * Social sign-in buttons (FX-9, FX-10): the sign-in page reads them from
  * librechat.yaml only, so they are shown read-only by provider name, with a
@@ -39,7 +33,7 @@ function SocialLoginsRow({ fieldProps }: { fieldProps: t.FieldRendererProps }) {
   const rowFilter = useContext(RowFilterContext);
   const social = useOwnedField(SOCIAL, fieldProps);
   if (!isRowShown(rowFilter, SOCIAL, fieldProps)) return null;
-  const providers = stringList(social.fallback);
+  const providers = stringItems(social.fallback);
   const hasStaleOverride = social.state.isOverride;
   const canRemove =
     hasStaleOverride &&
@@ -55,14 +49,11 @@ function SocialLoginsRow({ fieldProps }: { fieldProps: t.FieldRendererProps }) {
       control={
         <div className="flex flex-col gap-2">
           {providers.length > 0 ? (
-            <ul id={id} className="m-0 flex list-none flex-wrap gap-1.5 p-0">
+            <ul id={id} className="static-value-list">
               {providers.map((provider) => {
                 const labelKey = SOCIAL_LOGIN_PROVIDERS[provider];
                 return (
-                  <li
-                    key={provider}
-                    className="rounded-md border border-(--cui-color-stroke-default) bg-(--cui-color-background-muted) px-2 py-0.5 text-sm text-(--cui-color-text-default)"
-                  >
+                  <li key={provider} className="static-value-chip">
                     {labelKey
                       ? localize(labelKey)
                       : localize('com_config_registration_provider_unknown', { name: provider })}
@@ -114,9 +105,9 @@ function AllowedDomainsRow({ fieldProps }: { fieldProps: t.FieldRendererProps })
   const [confirmOpen, setConfirmOpen] = useState(false);
   if (!isRowShown(rowFilter, DOMAINS, fieldProps)) return null;
   const id = toFieldId(DOMAINS);
-  const domains = stringList(field.state.value);
-  const lower = stringList(field.fallback);
-  const yamlDomains = stringList(getValueAtPath(yaml, DOMAINS));
+  const domains = stringItems(field.state.value);
+  const lower = stringItems(field.fallback);
+  const yamlDomains = stringItems(getValueAtPath(yaml, DOMAINS));
   const differsFromYaml = yamlDomains.length > 0 && !isConfigValueEqual(domains, yamlDomains);
 
   /** Back to the list beneath when it matches, else the target's own list (an empty one only after asking). */
@@ -172,7 +163,7 @@ function AllowedDomainsRow({ fieldProps }: { fieldProps: t.FieldRendererProps })
                 : localize('com_config_registration_restricted', { count: domains.length })}
             </span>
           )}
-          <DomainListField
+          <EmailDomainListField
             id={id}
             domains={domains}
             onChange={change}
@@ -232,6 +223,7 @@ function StartupSettings({
   return (
     <ReadOnlySection
       reason="yamlOnly"
+      title={localize('com_config_registration_startup_title')}
       message={localize('com_config_registration_startup_yaml')}
       detail={
         canRemove ? (
@@ -275,6 +267,7 @@ function StartupSettings({
               parentPath={path}
               disabled
             />
+            {!rowFilter && <UnknownSettings fields={field.children} value={value} path={path} />}
           </NestedGroup>
         );
       })}

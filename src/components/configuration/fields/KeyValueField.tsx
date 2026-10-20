@@ -1,10 +1,11 @@
-import { useRef, useState, useLayoutEffect } from 'react';
+import { useRef, useState, useEffect, useContext, useLayoutEffect } from 'react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
+import { RowProblemsContext } from '@/contexts/RowProblemsContext';
 import { useDraftValue, useListKeys, useLocalize } from '@/hooks';
 import { AddItemButton, TrashButton } from '@/components/shared';
-import { BLOCK_UNSAFE_CONFIG_KEYS } from '@/constants';
 import { cn, isBlankText, isUnsafeConfigKey } from '@/utils';
+import { BLOCK_UNSAFE_CONFIG_KEYS } from '@/constants';
 import { TextareaField } from './TextareaField';
 import { SelectField } from './SelectField';
 import { INPUT_CLASSES } from './display';
@@ -39,6 +40,7 @@ export function inferTypeFromText(raw: string, allowed: readonly t.KVValueType[]
 function KVInput({
   value,
   onCommit,
+  onDraftChange,
   delay,
   placeholder,
   disabled,
@@ -50,7 +52,10 @@ function KVInput({
   className,
 }: {
   value: string;
-  onCommit: (value: string) => void;
+  /** `false` keeps the typed text (refused, with the row's error saying why). */
+  onCommit: (value: string) => void | false;
+  /** Every keystroke's text, before it is committed. */
+  onDraftChange?: (value: string) => void;
   /** Commit delay while typing; `0` commits only on blur or Enter. */
   delay?: number;
   placeholder?: string;
@@ -68,10 +73,15 @@ function KVInput({
       type={type}
       title={title}
       value={draft}
-      onChange={(e) => setDraft(e.target.value)}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        onDraftChange?.(e.target.value);
+      }}
       onBlur={commit}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') commit();
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        commit();
       }}
       placeholder={placeholder}
       disabled={disabled}
@@ -85,9 +95,11 @@ function KVInput({
 
 /**
  * Key/value record editor. A new row stays a local draft until it has a key
- * (a blank one is flagged, never committed); clearing a key removes its row;
- * removing the last row calls `onClear` (when given) instead of emitting an
- * empty list. Unless the admin picks a type, a committed value's type is
+ * (a blank one is flagged, never committed). A saved row's key is renamed on
+ * blur or Enter; a key that is blank or already in the list is refused and
+ * flagged at the row (the typed text stays, so it can be fixed), never
+ * dropping the row or its value. Removing the last row calls `onClear` (when
+ * given) instead of emitting an empty list. Unless the admin picks a type, a committed value's type is
  * inferred (numbers, true/false, JSON). `valueTypes` of one type gives a
  * string-only (or number-only) editor; `valueOptions` gives a value select.
  */
@@ -110,6 +122,8 @@ export function KeyValueField({
   const [drafts, setDrafts] = useState<Array<{ id: number; pair: t.KeyValuePair }>>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [pinned, setPinned] = useState<ReadonlySet<string>>(() => new Set());
+  /** Typed keys of saved rows not committed yet (refused, or still being typed), by row id. */
+  const [keyTexts, setKeyTexts] = useState<Readonly<Record<string, string>>>({});
   const draftCounter = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const focusDraftRef = useRef<number | null>(null);
@@ -149,14 +163,25 @@ export function KeyValueField({
     next[index] = { ...next[index], ...patch };
     onChange(next);
   };
-  const removePair = (index: number) => emit(pairs.filter((_, i) => i !== index));
-  const renameKey = (index: number, key: string) => {
-    if (isBlankText(key)) {
-      removePair(index);
-      return;
-    }
+  const setKeyText = (rowId: string, text: string | undefined) =>
+    setKeyTexts((prev) => {
+      if (prev[rowId] === text) return prev;
+      const next = { ...prev };
+      if (text === undefined) delete next[rowId];
+      else next[rowId] = text;
+      return next;
+    });
+  const isTaken = (key: string, index: number) =>
+    pairs.some((pair, i) => i !== index && pair.key === key);
+  const removePair = (index: number) => {
+    setKeyText(rowIdAt(index), undefined);
+    emit(pairs.filter((_, i) => i !== index));
+  };
+  const renameKey = (index: number, key: string): void | false => {
+    const rowId = rowIdAt(index);
+    if (isBlankText(key) || isTaken(key, index)) return false;
+    setKeyText(rowId, undefined);
     if (key === pairs[index].key) return;
-    if (pairs.some((pair, i) => i !== index && pair.key === key)) return;
     updatePair(index, { key });
   };
   const changeType = (index: number, valueType: t.KVValueType) => {
@@ -192,16 +217,35 @@ export function KeyValueField({
   };
 
   const keyErrorId = (rowId: string) => `${safeId}-${rowId}-key-error`;
-  const keyProblem = (pair: t.KeyValuePair, isDraft: boolean): string | null => {
-    if (pair.key !== '' && isBlankText(pair.key)) return localize('com_config_ctl_kv_blank_key');
-    if (BLOCK_UNSAFE_CONFIG_KEYS && isUnsafeConfigKey(pair.key)) {
+  /** What is wrong with a row's key: a draft's (`index` undefined), or a saved row's typed key. */
+  const keyProblem = (pair: t.KeyValuePair, index?: number): string | null => {
+    const isDraft = index === undefined;
+    const key = isDraft ? pair.key : (keyTexts[rowIdAt(index)] ?? pair.key);
+    if (key !== '' && isBlankText(key)) return localize('com_config_ctl_kv_blank_key');
+    if (key === '' && !isDraft) return localize('com_config_ctl_kv_key_cleared');
+    if (isDraft && key === '' && !isBlankText(pair.value)) {
+      return localize('com_config_ctl_kv_key_missing');
+    }
+    if (BLOCK_UNSAFE_CONFIG_KEYS && isUnsafeConfigKey(key)) {
       return localize('com_config_unsafe_key_error');
     }
-    if (isDraft && pair.key !== '' && pairs.some((existing) => existing.key === pair.key)) {
-      return localize('com_config_ctl_kv_duplicate');
-    }
+    const taken = isDraft ? pairs.some((existing) => existing.key === key) : isTaken(key, index);
+    if (key !== '' && taken) return localize('com_config_ctl_kv_duplicate');
     return null;
   };
+
+  const reportProblems = useContext(RowProblemsContext);
+  const problemCount =
+    pairs.filter((pair, index) => keyProblem(pair, index) != null).length +
+    drafts.filter((draft) => keyProblem(draft.pair) != null).length;
+  useEffect(() => {
+    if (!reportProblems) return;
+    reportProblems(id, problemCount);
+  }, [reportProblems, id, problemCount]);
+  useEffect(() => {
+    if (!reportProblems) return;
+    return () => reportProblems(id, 0);
+  }, [reportProblems, id]);
 
   const renderValueControl = (
     pair: t.KeyValuePair,
@@ -290,15 +334,16 @@ export function KeyValueField({
     pair: t.KeyValuePair,
     index: number,
     handlers: {
-      onKey: (key: string) => void;
+      onKey: (key: string) => void | false;
+      onKeyDraft?: (key: string) => void;
       onValue: (raw: string) => void;
       onType: (type: t.KVValueType) => void;
       onRemove: () => void;
     },
     isDraft: boolean,
   ) => {
-    const problem = keyProblem(pair, isDraft);
-    const rowLabel = pair.key || `${localize('com_ui_entry')} ${index + 1}`;
+    const problem = keyProblem(pair, isDraft ? undefined : index);
+    const rowLabel = isBlankText(pair.key) ? `${localize('com_ui_entry')} ${index + 1}` : pair.key;
     const isLocked = !isDraft && (lockedKeys?.has(pair.key) ?? false);
     return (
       <div
@@ -311,7 +356,8 @@ export function KeyValueField({
           <KVInput
             value={pair.key}
             onCommit={handlers.onKey}
-            delay={isDraft ? 0 : undefined}
+            onDraftChange={handlers.onKeyDraft}
+            delay={0}
             placeholder={keyPlaceholder ?? localize('com_ui_key')}
             disabled={disabled || isLocked}
             title={isLocked ? localize('com_config_ctl_kv_locked') : undefined}
@@ -356,6 +402,7 @@ export function KeyValueField({
         index,
         {
           onKey: (key) => renameKey(index, key),
+          onKeyDraft: (key) => setKeyText(rowIdAt(index), key === pair.key ? undefined : key),
           onValue: (raw) => updatePair(index, typed(pair, raw)),
           onType: (type) => changeType(index, type),
           onRemove: () => removePair(index),

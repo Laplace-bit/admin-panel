@@ -1,8 +1,9 @@
 import { useId } from 'react';
-import { Button, Dialog } from '@clickhouse/click-ui';
+import { Link, Button, Dialog } from '@clickhouse/click-ui';
 import type * as t from '@/types';
+import { useReturnFocus, useLocalize } from '@/hooks';
+import { activeConfigTab } from '@/utils';
 import { ReviewList } from './review';
-import { useLocalize } from '@/hooks';
 
 /**
  * "Revert all admin overrides to librechat.yaml" (RV-5): lists every base
@@ -13,11 +14,13 @@ export function ResetBaseConfigDialog({
   open,
   resetting,
   error,
+  termsUrl,
   overrides,
   onConfirm,
   onCancel,
 }: t.ResetBaseConfigDialogProps) {
   const localize = useLocalize();
+  const returnFocus = useReturnFocus(open, activeConfigTab);
   const listLabelId = useId();
   const count = overrides?.count ?? 0;
 
@@ -32,6 +35,7 @@ export function ResetBaseConfigDialog({
         title={localize('com_config_review_reset_title')}
         showClose
         onClose={onCancel}
+        onCloseAutoFocus={returnFocus}
         className="modal-frost"
       >
         <div className="flex flex-col gap-4">
@@ -58,10 +62,15 @@ export function ResetBaseConfigDialog({
           )}
           {error && (
             <div
-              className="rounded-lg bg-[rgba(220,38,38,0.1)] px-3 py-2 text-sm font-medium text-(--cui-color-text-danger)"
+              className="flex flex-col gap-1.5 rounded-lg bg-[rgba(220,38,38,0.1)] px-3 py-2 text-sm font-medium text-(--cui-color-text-danger)"
               role="alert"
             >
               {error}
+              {termsUrl && (
+                <Link href={termsUrl} target="_blank" rel="noopener" size="sm" weight="medium">
+                  {localize('com_config_terms_open')}
+                </Link>
+              )}
             </div>
           )}
           <div className="flex items-center justify-end gap-2">

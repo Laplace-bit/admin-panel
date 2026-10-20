@@ -3,8 +3,8 @@ import { FieldRenderer, SingleFieldRenderer } from '..';
 import { render, screen, fireEvent } from '@testing-library/react';
 import type * as t from '@/types';
 import { renderInlineField, collectionKeyOf } from '../InlineField';
+import { deriveFieldDefault, layerValueBeneath } from '../defaults';
 import { resolveControl, fieldOptions } from '../kinds';
-import { deriveFieldDefault } from '../defaults';
 import { createField } from '@/test/fixtures';
 import { fitsControl } from '../FieldControl';
 
@@ -88,6 +88,22 @@ describe('deriveFieldDefault', () => {
       value: true,
       source: 'yaml',
     });
+  });
+
+  it('names the value a layer beneath sets, not a default (layerValueBeneath)', () => {
+    const yaml = { ...base, effective: 'a', source: 'yaml' as const, isConfigured: true };
+    expect(layerValueBeneath(yaml)).toEqual({ value: 'a', source: 'yaml' });
+    const override = {
+      ...base,
+      effective: 'b',
+      source: 'admin' as const,
+      isOverride: true,
+      revertTarget: { value: 'a', source: 'yaml' as const },
+    };
+    expect(layerValueBeneath(override)).toEqual({ value: 'a', source: 'yaml' });
+    const overDefault = { ...override, revertTarget: { value: 'x', source: 'default' as const } };
+    expect(layerValueBeneath(overDefault)).toBeUndefined();
+    expect(layerValueBeneath(base)).toBeUndefined();
   });
 
   it('uses the revert target, else the schema default, for an override', () => {
@@ -336,6 +352,37 @@ describe('SingleFieldRenderer row affordances', () => {
   });
 });
 
+describe('allowedAddresses lists', () => {
+  it("checks entries with LibreChat's schema wherever the list appears", () => {
+    const onChange = vi.fn();
+    render(
+      <SingleFieldRenderer
+        field={createField({
+          key: 'allowedAddresses',
+          type: 'array<string>',
+          isArray: true,
+          isOptional: true,
+          path: 'mcpSettings.allowedAddresses',
+        })}
+        value={undefined}
+        path="mcpSettings.allowedAddresses"
+        getValue={getValue}
+        onChange={onChange}
+        permissions={{ canView: true, canEdit: true, canAssign: false }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /com_ui_add_item/ }));
+    const input = screen.getByPlaceholderText('com_config_providers_network_placeholder');
+    fireEvent.change(input, { target: { value: 'http://localhost:8080' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByRole('alert').textContent).toBe('com_config_providers_network_issue_url');
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: 'localhost:8080' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onChange).toHaveBeenCalledWith('mcpSettings.allowedAddresses', ['localhost:8080']);
+  });
+});
+
 describe('enum-valued records', () => {
   it('offers the enum members as a value select (WS2 itemType)', () => {
     render(
@@ -400,6 +447,22 @@ describe('renderInlineField', () => {
     );
     expect(container.textContent).not.toContain('[object Object]');
     expect(screen.getByText('kimi-k2.5')).toBeInTheDocument();
+  });
+
+  it('offers no "provider defaults" for a model list the schema requires', () => {
+    render(
+      <>
+        {renderInlineField(
+          createField({ key: 'default', type: 'array<union(string | object)>', isArray: true }),
+          { default: ['kimi-latest'] },
+          'endpoints.custom.3.models',
+          vi.fn(),
+          localize,
+        )}
+      </>,
+    );
+    expect(screen.getByText('kimi-latest')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'com_config_ctl_models_defaults' })).toBeNull();
   });
 
   it('removes the key when an optional entry field is set back to Default', () => {

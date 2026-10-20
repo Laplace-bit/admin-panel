@@ -83,6 +83,6 @@ describe('StorageRenderer', () => {
         name: 'Amazon CloudFront (S3)',
       }),
     ).not.toBeDisabled();
-    expect(screen.getByText(/Values saved in the admin panel are never applied/)).toBeVisible();
+    expect(screen.getByText(/values saved in the admin panel are never applied/i)).toBeVisible();
   });
 });

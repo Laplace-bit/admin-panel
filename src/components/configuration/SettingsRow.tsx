@@ -27,9 +27,10 @@ function useSoleFieldName(htmlFor: string | undefined, nameId: string) {
 }
 
 /**
- * Ties a row's error to its control (`aria-invalid`, `aria-describedby`), for
- * errors the row shows on the control's behalf (save pipeline issues).
- * Controls that report their own errors keep theirs.
+ * Ties a row's error to its control (`aria-describedby`, and `aria-invalid`
+ * unless the control already says so), for errors the row shows on the
+ * control's behalf (save pipeline issues, spec problems). A control that also
+ * shows its own message stays described by both.
  */
 function useErrorDescription(htmlFor: string | undefined, hasError: boolean) {
   useLayoutEffect(() => {
@@ -38,17 +39,29 @@ function useErrorDescription(htmlFor: string | undefined, hasError: boolean) {
     const control = target?.matches(LABELABLE)
       ? target
       : target?.querySelector<HTMLElement>(LABELABLE);
-    if (!control || control.getAttribute('aria-invalid') === 'true') return;
+    if (!control) return;
     const errorId = `${htmlFor}-error`;
-    const previous = control.getAttribute('aria-describedby');
-    control.setAttribute('aria-invalid', 'true');
-    if (previous?.split(' ').includes(errorId)) {
-      return () => control.removeAttribute('aria-invalid');
+    const setsInvalid = control.getAttribute('aria-invalid') !== 'true';
+    const described = control.getAttribute('aria-describedby')?.split(' ') ?? [];
+    const addsDescription = !described.includes(errorId);
+    if (setsInvalid) control.setAttribute('aria-invalid', 'true');
+    if (addsDescription) {
+      control.setAttribute('aria-describedby', [...described, errorId].join(' '));
     }
-    control.setAttribute('aria-describedby', previous ? `${previous} ${errorId}` : errorId);
+    /**
+     * Undo only what this effect added, against the attributes as they are
+     * now: React may have updated them since (a rename warning that went
+     * away), and restoring a snapshot would bring back a stale id.
+     */
     return () => {
-      control.removeAttribute('aria-invalid');
-      if (previous) control.setAttribute('aria-describedby', previous);
+      if (setsInvalid && control.getAttribute('aria-invalid') === 'true') {
+        control.removeAttribute('aria-invalid');
+      }
+      if (!addsDescription) return;
+      const remaining = (control.getAttribute('aria-describedby') ?? '')
+        .split(' ')
+        .filter((id) => id !== '' && id !== errorId);
+      if (remaining.length > 0) control.setAttribute('aria-describedby', remaining.join(' '));
       else control.removeAttribute('aria-describedby');
     };
   });

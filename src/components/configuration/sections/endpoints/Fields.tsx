@@ -11,8 +11,8 @@ import { EModelEndpoint, paramSettings } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { useLocalize, useFieldError, useFieldState, useOptionSources } from '@/hooks';
-import { layerRevertTarget, lowerLayerValue } from '../../renderer/defaults';
 import { SecretInput, SelectField, TextField } from '../../fields';
+import { layerValueBeneath } from '../../renderer/defaults';
 import { fieldDescription } from '../../renderer/paths';
 import { DecorativeIcon } from '@/components/shared';
 import { fieldMetaFor } from '../../renderer/kinds';
@@ -20,15 +20,6 @@ import { SettingsRow } from '../../SettingsRow';
 import { toFieldId } from '../../renderer';
 import { labelForPath } from '../../meta';
 import { TagListField } from './Request';
-
-/** Built-in providers a custom endpoint can hand title or label generation to. */
-const BUILT_IN_PROVIDERS: readonly string[] = [
-  EModelEndpoint.openAI,
-  EModelEndpoint.azureOpenAI,
-  EModelEndpoint.anthropic,
-  EModelEndpoint.google,
-  EModelEndpoint.bedrock,
-];
 
 const CURRENT_MODEL = 'current_model';
 const DEFAULT_PARAM_SET = EModelEndpoint.custom as string;
@@ -51,47 +42,13 @@ function paramSetOptions(localize: t.LocalizeFn): t.SelectOption[] {
   }));
 }
 
-/** Endpoints a setting can name: the built-in providers, then the custom endpoints, without repeats. */
-function endpointOptions(
-  names: readonly string[],
-  fromSource: readonly t.SelectOption[],
-  localize: t.LocalizeFn,
-): t.SelectOption[] {
-  const seen = new Set<string>();
-  const options: t.SelectOption[] = [];
-  const add = (option: t.SelectOption) => {
-    if (option.value === '' || seen.has(option.value)) return;
-    seen.add(option.value);
-    options.push(option);
-  };
-  for (const provider of BUILT_IN_PROVIDERS) {
-    add({ value: provider, label: labelForPath(`endpoints.${provider}`, localize) });
-  }
-  for (const name of names) add({ value: name, label: name });
-  for (const option of fromSource) add(option);
-  return options;
-}
-
 /** What clearing a field goes back to: the layer beneath's value when it sets one (D3), else nothing. */
 function useClearTarget(path: string): t.RevertTarget | undefined {
-  const state = useFieldState(path);
-  return state.isOverride ? layerRevertTarget(state.revertTarget) : lowerLayerValue(state);
-}
-
-interface RowProps {
-  /** Data path of the field. */
-  path: string;
-  /** Its schema field (label meta and help text). */
-  field: t.SchemaField;
-  required?: boolean;
-  chips?: ReactNode;
-  control: ReactNode;
-  /** Shown under the control, muted (a non-blocking warning, a lock note). */
-  note?: ReactNode;
+  return layerValueBeneath(useFieldState(path));
 }
 
 /** A settings row of the endpoint editor with the field's label, help and inline error. */
-export function EditorRow({ path, field, required, chips, control, note }: RowProps) {
+function EditorRow({ path, field, required, chips, control, note }: t.EndpointEditorRowProps) {
   const localize = useLocalize();
   const error = useFieldError(path);
   return (
@@ -338,22 +295,27 @@ function ReferenceRow({
   );
 }
 
-/** A setting that names an endpoint (`titleEndpoint`, …): built-ins, custom endpoints and WS9's source. */
+/**
+ * A setting that names an endpoint (`titleEndpoint`, …): the providers
+ * LibreChat can hand the work to (built-in providers and custom endpoints),
+ * except the endpoint being edited.
+ */
 export function EndpointRefRow({
-  names,
+  self,
   ...props
 }: {
   path: string;
   field: t.SchemaField;
   value: t.ConfigValue;
-  names: readonly string[];
+  /** Name of the endpoint being edited, which is not offered. */
+  self: string;
   chips?: ReactNode;
   disabled?: boolean;
   onChange: (value: t.ConfigValue) => void;
 }) {
   const localize = useLocalize();
-  const { options: fromSource } = useOptionSources('endpoints');
-  const options = endpointOptions(names, fromSource, localize);
+  const { options: providers } = useOptionSources('providers');
+  const options = providers.filter((option) => option.value !== self);
   return (
     <ReferenceRow
       {...props}

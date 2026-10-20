@@ -1,5 +1,4 @@
 import { useMemo, useRef, useCallback } from 'react';
-import { EModelEndpoint } from 'librechat-data-provider';
 import type * as t from '@/types';
 import {
   NameField,
@@ -11,16 +10,16 @@ import {
   GroupField,
   DefaultField,
   EndpointField,
-} from './SpecFields';
-import { isAgentSpec, problemsOf, specEndpoint } from './validation';
+} from './Fields';
+import { isAgentSpec, problemsOf, specEndpoint, ASSISTANT_ENDPOINTS } from './validation';
+import { isConfigRecord, hasConfigValue } from '@/utils';
 import { UnknownSettings } from '../../UnknownSettings';
+import { useSpecList, specIndexOf } from './context';
 import { renderInlineField } from '../../renderer';
 import { PresetEditor } from './PresetEditor';
-import { useSpecList, specIndexOf } from './context';
+import { presetParams, promptKeyFor } from './params';
 import { useLocalize } from '@/hooks';
-import { SpecGroup } from './SpecGroup';
-import { promptKeyFor } from './params';
-import { isConfigRecord } from '@/utils';
+import { SpecGroup } from './Group';
 
 const BASICS = ['label', 'name', 'description', 'iconURL'];
 const CAPABILITIES = [
@@ -58,19 +57,8 @@ const GROUPED: ReadonlySet<string> = new Set([
   'preset',
 ]);
 
-const ASSISTANT_ENDPOINTS: ReadonlySet<string> = new Set([
-  EModelEndpoint.assistants,
-  EModelEndpoint.azureAssistants,
-]);
-
-function hasValue(value: t.ConfigValue): boolean {
-  if (value === undefined || value === null || value === '') return false;
-  if (Array.isArray(value)) return value.length > 0;
-  return !isConfigRecord(value) || Object.keys(value).length > 0;
-}
-
 function countSet(record: t.ConfigRecord, keys: readonly string[]): number {
-  return keys.filter((key) => hasValue(record[key])).length;
+  return keys.filter((key) => hasConfigValue(record[key])).length;
 }
 
 /**
@@ -140,11 +128,16 @@ export function SpecEditor({
     typeof preset.model === 'string' ? preset.model : '',
     options.customEndpoint(endpoint),
   );
+  /** The prompt key the endpoint doesn't read, listed while set so it can be seen and removed. */
+  const otherPromptKey = promptKey === 'system' ? 'promptPrefix' : 'system';
   const promptKeys = [
     promptKey,
+    ...(hasConfigValue(preset[otherPromptKey]) ? [otherPromptKey] : []),
     'greeting',
-    ...(ASSISTANT_ENDPOINTS.has(endpoint) || hasValue(preset.instructions) ? ['instructions'] : []),
-    ...(ASSISTANT_ENDPOINTS.has(endpoint) || hasValue(preset.additional_instructions)
+    ...(ASSISTANT_ENDPOINTS.has(endpoint) || hasConfigValue(preset.instructions)
+      ? ['instructions']
+      : []),
+    ...(ASSISTANT_ENDPOINTS.has(endpoint) || hasConfigValue(preset.additional_instructions)
       ? ['additional_instructions']
       : []),
   ];
@@ -158,12 +151,28 @@ export function SpecEditor({
   const rest = fields.filter((field) => !GROUPED.has(field.key));
 
   /** Under "Set values only", a row (or group) without a value is left out. */
-  const shows = (record: t.ConfigRecord, key: string) => !configuredOnly || hasValue(record[key]);
+  const shows = (record: t.ConfigRecord, key: string) =>
+    !configuredOnly || hasConfigValue(record[key]);
   const showsGroup = (count: number) => !configuredOnly || count > 0;
   const modelKeys = ['endpoint', 'model', 'agent_id', 'modelLabel', 'assistant_id'];
-  const paramCount = Object.keys(preset).filter(
+  const setParams = Object.keys(preset).filter(
     (key) => !modelKeys.includes(key) && !promptKeys.includes(key),
-  ).length;
+  );
+  const presetKeys = useMemo(
+    () => new Set((presetField?.children ?? []).map((field) => field.key)),
+    [presetField],
+  );
+  /** The endpoint's own parameters, plus the other preset fields the spec sets (all listed in the group). */
+  const offered = new Set(
+    presetParams(
+      endpoint,
+      typeof preset.model === 'string' ? preset.model : '',
+      options.customEndpoint(endpoint),
+      presetKeys,
+    ).params.map((param) => param.key),
+  );
+  const paramCount = setParams.length;
+  const paramTotal = offered.size + setParams.filter((key) => !offered.has(key)).length;
   const subagentKeys = (subagentsField?.children ?? []).map((field) => field.key);
   const advancedKeys = [...ADVANCED, ...rest.map((field) => field.key)];
 
@@ -202,40 +211,46 @@ export function SpecEditor({
   const fieldProps = { spec, index, path, onChange, disabled };
   const presetProps = { ...fieldProps, onPresetChange: presetChange.change };
 
-  return (
-    <div className="flex min-w-0 flex-col **:[[role=group]]:flex-wrap">
-      {showsGroup(countSet(spec, BASICS)) && (
-        <SpecGroup
-          title={localize('com_config_specs_group_basics')}
-          paths={paths(BASICS)}
-          defaultExpanded
-        >
-          {shows(spec, 'label') && <LabelField {...fieldProps} field={byKey.get('label')} />}
-          {shows(spec, 'name') && <NameField {...fieldProps} field={byKey.get('name')} />}
-          {row('description')}
-          {shows(spec, 'iconURL') && <IconField {...fieldProps} field={byKey.get('iconURL')} />}
-        </SpecGroup>
+  const basicsGroup = showsGroup(countSet(spec, BASICS)) ? (
+    <SpecGroup
+      title={localize('com_config_specs_group_basics')}
+      paths={paths(BASICS)}
+      defaultExpanded
+    >
+      {shows(spec, 'label') && <LabelField {...fieldProps} field={byKey.get('label')} />}
+      {shows(spec, 'name') && <NameField {...fieldProps} field={byKey.get('name')} />}
+      {row('description')}
+      {shows(spec, 'iconURL') && <IconField {...fieldProps} field={byKey.get('iconURL')} />}
+    </SpecGroup>
+  ) : null;
+  const modelGroup = (
+    <SpecGroup
+      title={localize('com_config_specs_group_model')}
+      description={localize('com_config_specs_group_model_desc')}
+      paths={paths(modelKeys, presetPath)}
+      defaultExpanded
+    >
+      {shows(preset, 'endpoint') && (
+        <EndpointField {...presetProps} field={presetChildField('endpoint')} />
       )}
+      {isAgent && shows(preset, 'agent_id') && (
+        <AgentField {...presetProps} field={presetChildField('agent_id')} />
+      )}
+      {!isAgent && shows(preset, 'model') && (
+        <ModelField {...presetProps} field={presetChildField('model')} />
+      )}
+      {isAgent && hasConfigValue(preset.model) && presetRow('model')}
+      {!isAgent && hasConfigValue(preset.agent_id) && presetRow('agent_id')}
+      {(ASSISTANT_ENDPOINTS.has(endpoint) || hasConfigValue(preset.assistant_id)) &&
+        presetRow('assistant_id')}
+      {presetRow('modelLabel')}
+    </SpecGroup>
+  );
 
-      <SpecGroup
-        title={localize('com_config_specs_group_model')}
-        description={localize('com_config_specs_group_model_desc')}
-        paths={paths(modelKeys, presetPath)}
-        defaultExpanded
-      >
-        {shows(preset, 'endpoint') && (
-          <EndpointField {...presetProps} field={presetChildField('endpoint')} />
-        )}
-        {isAgent && shows(preset, 'agent_id') && (
-          <AgentField {...presetProps} field={presetChildField('agent_id')} />
-        )}
-        {!isAgent && shows(preset, 'model') && (
-          <ModelField {...presetProps} field={presetChildField('model')} />
-        )}
-        {isAgent && hasValue(preset.model) && presetRow('model')}
-        {ASSISTANT_ENDPOINTS.has(endpoint) && presetRow('assistant_id')}
-        {presetRow('modelLabel')}
-      </SpecGroup>
+  return (
+    <div className="spec-editor flex min-w-0 flex-col **:[[role=group]]:flex-wrap">
+      {basicsGroup}
+      {modelGroup}
 
       {presetField && showsGroup(paramCount) && (
         <SpecGroup
@@ -243,6 +258,8 @@ export function SpecEditor({
           description={localize('com_config_specs_group_params_desc')}
           paths={[presetPath]}
           defaultExpanded={false}
+          configuredCount={paramCount}
+          totalCount={paramTotal}
         >
           <PresetEditor
             presetField={presetField}
@@ -333,6 +350,11 @@ export function SpecEditor({
                   editSessionId,
                 ),
           )}
+          <UnknownSettings
+            fields={subagentsField.children ?? []}
+            value={subagents}
+            path={`${path}.${SUBAGENTS}`}
+          />
         </SpecGroup>
       )}
 

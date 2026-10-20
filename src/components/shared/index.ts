@@ -4,6 +4,7 @@ export { Avatar } from './Avatar';
 export { CloseButton } from './CloseButton';
 export { CountBadge, OverrideCount } from './CountBadge';
 export { DecorativeIcon } from './DecorativeIcon';
+export { DiscardConfirm } from './DiscardConfirm';
 export { EditButton } from './EditButton';
 export { EmptyState } from './EmptyState';
 export { FormDialog } from './FormDialog';

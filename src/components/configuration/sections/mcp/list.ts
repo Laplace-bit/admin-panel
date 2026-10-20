@@ -1,11 +1,6 @@
 import type * as t from '@/types';
 import { isPlainObject, resolveEntryKey, setLeaf, deepClone } from './validation';
 
-interface EntryEdit {
-  segments: string[];
-  value: t.ConfigValue;
-}
-
 function readLeaf(value: t.ConfigValue, segments: string[]): t.ConfigValue {
   let cursor = value;
   for (const segment of segments) {
@@ -34,9 +29,9 @@ function editsByServer(
   editedValues: t.FlatConfigMap,
   path: string,
   knownKeys: string[],
-): Map<string, EntryEdit[]> {
+): Map<string, t.McpEntryEdit[]> {
   const prefix = `${path}.`;
-  const byServer = new Map<string, EntryEdit[]>();
+  const byServer = new Map<string, t.McpEntryEdit[]>();
   for (const [editPath, value] of Object.entries(editedValues)) {
     if (!editPath.startsWith(prefix)) continue;
     const parsed = resolveEntryKey(editPath.slice(prefix.length), knownKeys);
@@ -48,19 +43,17 @@ function editsByServer(
   return byServer;
 }
 
-interface Resolved {
-  value: t.ConfigValue | undefined;
-  /** The latest whole-server edit reverts it to what the layer beneath defines. */
-  reset: boolean;
-}
-
 /**
  * One server with its edits applied. The latest whole-server write is the
  * seed: a reset reads as what the layer beneath defines (nothing, for a
  * server the target added). Field edits after it apply on top; a reset of a
  * field shows the value beneath again.
  */
-function resolveServer(saved: t.ConfigValue, lower: t.ConfigValue, edits: EntryEdit[]): Resolved {
+function resolveServer(
+  saved: t.ConfigValue,
+  lower: t.ConfigValue,
+  edits: t.McpEntryEdit[],
+): t.McpResolvedServer {
   let seed: t.ConfigValue = saved;
   let reset = false;
   let start = 0;

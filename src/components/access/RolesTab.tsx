@@ -109,7 +109,7 @@ export function RolesTab({ onCreateRole }: t.RolesTabProps) {
               <button
                 type="button"
                 onClick={() => setEditTarget(role)}
-                className="-my-2 -ml-2 min-w-0 flex-1 cursor-pointer rounded py-3 pl-3 text-left outline-none focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--cui-color-outline)"
+                className="-my-2 -ml-2 min-w-0 flex-1 cursor-pointer rounded py-3 pl-3 text-left outline-none focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--cui-color-outline) focus-visible:outline-solid"
               >
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-(--cui-color-text-default) hover:underline">

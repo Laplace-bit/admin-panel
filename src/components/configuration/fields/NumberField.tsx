@@ -115,7 +115,7 @@ export function NumberField({
             </span>
           ) : undefined
         }
-        aria-invalid={shownError ? true : undefined}
+        aria-invalid={error || hasRowError ? true : undefined}
         aria-describedby={describedBy || undefined}
         {...ariaProps}
       />

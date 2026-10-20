@@ -3,18 +3,19 @@ import type * as t from '@/types';
 import { backendsInUse, isCloudFrontReady, resolveStorage } from './storage';
 import { STORAGE_FILE_TYPES, STORAGE_BACKEND_LABELS } from '@/constants';
 import { useLocalize, useYamlConfig, useStorageStates } from '@/hooks';
+import { NestedGroup, OtherSettings } from '../../renderer';
 import { getValueAtPath, isConfigRecord } from '@/utils';
 import { DecorativeIcon } from '@/components/shared';
 import { ConfigSection } from '../../ConfigSection';
 import { StorageConfirm } from './StorageConfirm';
 import { countConfigured } from '../../counts';
-import { NestedGroup } from '../../renderer';
 import { BackendRow } from './BackendRow';
 import { EnvVars } from './EnvVars';
 
 const PRIMARY = 'fileStrategy';
 const PER_TYPE = 'fileStrategies';
 const CLOUDFRONT = 'cloudfront';
+const FILE_TYPES: ReadonlySet<string> = new Set(STORAGE_FILE_TYPES);
 
 function sumCounts(counts: Array<t.SectionCount | undefined>): t.SectionCount {
   return counts.reduce<t.SectionCount>(
@@ -152,6 +153,7 @@ export function StorageRenderer({
               onRequestChange={requestChange}
             />
           ))}
+          <OtherSettings {...propsFor(perType)} placed={FILE_TYPES} />
         </NestedGroup>
       )}
       {cloudfront &&

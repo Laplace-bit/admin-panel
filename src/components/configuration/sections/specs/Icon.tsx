@@ -5,7 +5,7 @@ import { cn } from '@/utils';
 const IMAGE_URL = /^(https?:\/\/|data:image\/)/i;
 
 /** An absolute image URL the panel can load (a relative path resolves against LibreChat, not here). */
-export function isImageUrl(value: t.ConfigValue): value is string {
+function isImageUrl(value: t.ConfigValue): value is string {
   return typeof value === 'string' && IMAGE_URL.test(value.trim());
 }
 

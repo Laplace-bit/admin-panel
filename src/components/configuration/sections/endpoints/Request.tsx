@@ -81,12 +81,9 @@ export function TagListField({
   return (
     <div className="flex w-full max-w-150 flex-col gap-2">
       {values.length > 0 && (
-        <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0" aria-label={ariaLabel}>
+        <ul className="settings-chip-list" aria-label={ariaLabel}>
           {values.map((item) => (
-            <li
-              key={item}
-              className="flex max-w-full items-center gap-1 rounded-full border border-(--cui-color-stroke-default) bg-(--cui-color-background-muted) py-0.5 pr-1 pl-2.5 text-xs text-(--cui-color-text-default)"
-            >
+            <li key={item} className="settings-chip">
               <span className="truncate font-mono">{item}</span>
               {!disabled && (
                 <button
@@ -198,7 +195,7 @@ export function HeaderPlaceholders({ children }: { children: ReactNode }) {
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => insert(placeholder)}
                 title={localize('com_config_ce_placeholder_insert')}
-                className="cursor-pointer rounded-full border border-dashed border-(--cui-color-stroke-default) bg-transparent px-2 py-0.5 font-mono text-[0.6875rem] text-(--cui-color-text-default) hover:bg-(--cui-color-background-hover)"
+                className="cursor-pointer rounded-full border border-dashed border-(--cui-color-stroke-default) bg-transparent px-2 py-0.5 font-mono text-xs text-(--cui-color-text-default) hover:bg-(--cui-color-background-hover)"
               >
                 {placeholder}
               </button>

@@ -1,18 +1,20 @@
 import { useContext } from 'react';
 import { useNavigate } from '@tanstack/react-router';
+import { normalizeEndpointName } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
+import { cn, isRowVisible, isConfigRecord, stringItems } from '@/utils';
 import { useLocalize, useFieldState, useValuesScope } from '@/hooks';
-import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { DecorativeIcon, StateChip } from '@/components/shared';
-import { cn, isRowVisible, isConfigRecord } from '@/utils';
+import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { hasPathOrDescendant } from '../../renderer/paths';
-import { FieldProvenance } from '../../values';
 import { SettingsRow } from '../../SettingsRow';
+import { FieldProvenance } from '../../values';
+import { ConfigRow } from '../../ConfigRow';
+import { endpointLabelOf } from './options';
 import { endpointGroups } from './groups';
 import { ChipPicker } from './ChipPicker';
-import { ConfigRow } from '../../ConfigRow';
-import { SpecNote } from './SpecNote';
+import { SpecNote } from './Note';
 
 const ENFORCE = 'modelSpecs.enforce';
 const PRIORITIZE = 'modelSpecs.prioritize';
@@ -32,10 +34,45 @@ function asBool(value: t.ConfigValue, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
-function stringsOf(value: t.ConfigValue): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : [];
+function modeOf(enforce: boolean, prioritize: boolean): t.SpecSelectionMode {
+  if (enforce) return 'enforce';
+  return prioritize ? 'prioritize' : 'endpoints';
+}
+
+/** Layer sources from the bottom up, to find what the other flag holds at a layer. */
+const LAYER_ORDER: readonly t.ProvenanceSource[] = [
+  'default',
+  'runtimeDefault',
+  'yaml',
+  'admin',
+  'inherited',
+  'scope',
+];
+
+/** A flag's value at `source`: its own layer there, else the nearest one beneath. */
+function flagAt(stack: readonly t.FieldLayer[], source: t.ProvenanceSource, fallback: boolean) {
+  const rank = LAYER_ORDER.indexOf(source);
+  const below = stack.filter((layer) => LAYER_ORDER.indexOf(layer.source) <= rank);
+  return asBool(below[below.length - 1]?.value, fallback);
+}
+
+/**
+ * The mode each layer of the chip's flag selects ("Default: Specs first ·
+ * librechat.yaml: Specs only"), read with the other flag at the same layer,
+ * instead of the flag's own On/Off.
+ */
+function modeLayerFormatter(
+  enforce: t.FieldState,
+  prioritize: t.FieldState,
+  localize: t.LocalizeFn,
+): (layer: t.FieldLayer) => string {
+  return (layer) => {
+    const mode = modeOf(
+      flagAt(enforce.stack ?? [], layer.source, false),
+      flagAt(prioritize.stack ?? [], layer.source, true),
+    );
+    return localize(`com_config_specs_mode_${mode}`);
+  };
 }
 
 /**
@@ -57,7 +94,11 @@ export function previewText(
     added,
   }: { items: t.ConfigValue[]; mode: t.SpecSelectionMode; menuOn: boolean; added: string[] },
 ): string {
-  if (items.length === 0) return localize('com_config_specs_preview_none');
+  if (items.length === 0) {
+    return localize(
+      menuOn ? 'com_config_specs_preview_none' : 'com_config_specs_preview_none_menu_off',
+    );
+  }
   const hidden = items.filter((spec) => isConfigRecord(spec) && spec.showInMenu === false).length;
   const specs = localize('com_config_specs_preview_specs', { count: items.length - hidden });
   const sentence = (() => {
@@ -107,7 +148,7 @@ function useModeState(
   };
   const overridden = states.filter(([, state]) => state.isOverride).map(([path]) => path);
   const edited = states.filter(([, state]) => state.isEdited).map(([path]) => path);
-  return { setMode, overridden, edited };
+  return { setMode, overridden, edited, enforce, prioritize };
 }
 
 /**
@@ -134,14 +175,12 @@ export function SpecsSettings({
   const navigate = useNavigate();
   const scope = useValuesScope();
   const rowFilter = useContext(RowFilterContext);
-  const { setMode, overridden, edited } = useModeState(onChange, onDiscardField);
+  const modeState = useModeState(onChange, onDiscardField);
+  const { setMode, overridden, edited } = modeState;
   const enforce = asBool(getValue(ENFORCE, undefined), false);
   const prioritize = asBool(getValue(PRIORITIZE, undefined), true);
-  const mode: t.SpecSelectionMode = (() => {
-    if (enforce) return 'enforce';
-    return prioritize ? 'prioritize' : 'endpoints';
-  })();
-  const added = stringsOf(getValue(ADDED, undefined));
+  const mode = modeOf(enforce, prioritize);
+  const added = stringItems(getValue(ADDED, undefined));
   const menuOn = modelSelectOn(getValue(MODEL_SELECT, undefined), items.length, added.length);
   const canEdit = !disabled && permissions?.canEdit !== false;
   const isShown = (path: string) =>
@@ -173,7 +212,13 @@ export function SpecsSettings({
         />
       );
     }
-    return <FieldProvenance path={overridden[0] ?? (enforce ? ENFORCE : PRIORITIZE)} hideDefault />;
+    return (
+      <FieldProvenance
+        path={overridden[0] ?? (enforce ? ENFORCE : PRIORITIZE)}
+        hideDefault
+        formatLayer={modeLayerFormatter(modeState.enforce, modeState.prioritize, localize)}
+      />
+    );
   };
 
   const modeRevert =
@@ -240,9 +285,18 @@ export function SpecsSettings({
                     </span>
                     <span
                       id={`modelSpecs-mode-${value}-desc`}
-                      className="text-xs text-(--cui-color-text-muted)"
+                      className={cn(
+                        'text-xs',
+                        value === mode
+                          ? 'text-(--cui-color-text-default)'
+                          : 'text-(--cui-color-text-muted)',
+                      )}
                     >
-                      {localize(`com_config_specs_mode_${value}_desc`)}
+                      {localize(
+                        value === 'enforce' && items.length === 0
+                          ? 'com_config_specs_mode_enforce_desc_empty'
+                          : `com_config_specs_mode_${value}_desc`,
+                      )}
                     </span>
                   </span>
                 </label>
@@ -254,7 +308,15 @@ export function SpecsSettings({
       {showsMode && enforce && !prioritize && (
         <SpecNote tone="warning">{localize('com_config_specs_mode_mixed')}</SpecNote>
       )}
-      {showsMode && mode === 'enforce' && menuOn && (
+      {items.length === 0 && !menuOn && (
+        <SpecNote tone="warning" action={modelSelectLink}>
+          {localize('com_config_specs_empty_menu_off')}
+        </SpecNote>
+      )}
+      {showsMode && mode === 'enforce' && items.length === 0 && menuOn && (
+        <SpecNote tone="info">{localize('com_config_specs_enforce_empty')}</SpecNote>
+      )}
+      {showsMode && mode === 'enforce' && items.length > 0 && menuOn && (
         <SpecNote tone="warning" action={modelSelectLink}>
           {localize('com_config_specs_enforce_menu_on')}
         </SpecNote>
@@ -291,7 +353,12 @@ export function SpecsSettings({
               return true;
             }}
             addLabel={localize('com_config_specs_added_add')}
-            unknownLabel={(name) => localize('com_config_specs_not_configured', { name })}
+            unknownLabel={(name) => {
+              const served = normalizeEndpointName(name);
+              return served !== name && options.knownEndpoints.has(served)
+                ? localize('com_config_specs_added_served_as', { name, served })
+                : localize('com_config_specs_not_configured', { name });
+            }}
             aria-label={localize('com_config_specs_added')}
           />
         </ConfigRow>
@@ -308,9 +375,7 @@ export function SpecsSettings({
             items,
             mode,
             menuOn,
-            added: added.map(
-              (name) => options.endpoints.find((option) => option.value === name)?.label ?? name,
-            ),
+            added: added.map((name) => endpointLabelOf(options, name)),
           })}
         </SpecNote>
       )}

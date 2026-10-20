@@ -6,8 +6,8 @@ import {
   unflattenObject,
   stripSecretPreviewValues,
 } from '@/utils';
+import { SECRET_CONFIG_KEYS, TERMS_ACCEPTANCE_PATH } from '@/constants';
 import { isConfigValueEqual, normalizeForSave } from '../edits';
-import { SECRET_CONFIG_KEYS } from '@/constants';
 import { findSchemaField } from '../controls';
 import { getFieldMeta } from '../meta';
 
@@ -24,13 +24,21 @@ const IDENTITY_CANDIDATES = ['name', 'group', 'id', 'key', 'label', 'title'];
 /** Lists LibreChat merges with librechat.yaml by name; saving one never takes over the whole list. */
 const MERGED_COLLECTIONS: ReadonlySet<string> = new Set(['endpoints.custom']);
 
-/** List fields where an empty list means "allow nothing". */
-const ALLOWLIST_KEYS: ReadonlySet<string> = new Set([
-  'allowedDomains',
+/** List fields where an empty list allows nothing (no file types; no private addresses). */
+const CLOSED_WHEN_EMPTY_KEYS: ReadonlySet<string> = new Set([
   'allowedAddresses',
+  'supportedMimeTypes',
+]);
+
+/**
+ * List fields where an empty list sets no limit: every endpoint is listed
+ * (`addedEndpoints`), every provider allowed (`allowedProviders`), any public
+ * domain reachable (`allowedDomains` of Actions and MCP).
+ */
+const OPEN_WHEN_EMPTY_KEYS: ReadonlySet<string> = new Set([
+  'allowedDomains',
   'addedEndpoints',
   'allowedProviders',
-  'supportedMimeTypes',
 ]);
 
 const INDEX_SEGMENT_RE = /^\d+$/;
@@ -133,13 +141,29 @@ function withEntry(
   };
 }
 
-/** An empty list here lets everyone in rather than no one. */
-const OPEN_WHEN_EMPTY: ReadonlySet<string> = new Set(['registration.allowedDomains']);
+/** An empty list here lets everyone sign up. */
+const REGISTRATION_DOMAINS = 'registration.allowedDomains';
+
+/** An empty spec list: users get the endpoint menu, whatever the selection mode says. */
+const SPEC_LIST = 'modelSpecs.list';
 
 function allowlistWarning(path: string, after: t.ConfigValue): t.ChangeWarning[] {
   if (!Array.isArray(after) || after.length > 0) return [];
-  if (OPEN_WHEN_EMPTY.has(path)) return ['openRegistration'];
-  return ALLOWLIST_KEYS.has(lastSegment(path)) ? ['emptyAllowlist'] : [];
+  if (path === REGISTRATION_DOMAINS) return ['openRegistration'];
+  if (path === SPEC_LIST) return ['emptySpecs'];
+  const key = lastSegment(path);
+  if (CLOSED_WHEN_EMPTY_KEYS.has(key)) return ['emptyAllowlist'];
+  return OPEN_WHEN_EMPTY_KEYS.has(key) ? ['openAllowlist'] : [];
+}
+
+function termsWarning(
+  path: string,
+  before: t.ConfigValue,
+  after: t.ConfigValue,
+): t.ChangeWarning[] {
+  return path === TERMS_ACCEPTANCE_PATH && after === true && before !== true
+    ? ['requireTerms']
+    : [];
 }
 
 /**
@@ -186,7 +210,11 @@ function leafItem(
     after,
     sourcePath: ctx.sourcePath,
     secret: isSecretPath(path) || undefined,
-    warnings: warningsOf(allowlistWarning(path, after), ownershipWarning(path, after, ctx)),
+    warnings: warningsOf(
+      allowlistWarning(path, after),
+      ownershipWarning(path, after, ctx),
+      termsWarning(path, before, after),
+    ),
   };
   if (entry) return withEntry(withInherited(item, entry, ctx), entry);
   if (ctx.input.isOwned(path)) return item;

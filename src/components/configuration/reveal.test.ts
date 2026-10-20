@@ -123,4 +123,90 @@ describe('revealConfigPath', () => {
     vi.advanceTimersByTime(10_000);
     expect(onDone).not.toHaveBeenCalled();
   });
+
+  function renderedField(): HTMLInputElement {
+    const row = document.createElement('div');
+    row.className = 'config-row';
+    const input = document.createElement('input');
+    input.id = 'memory-tokenLimit';
+    row.append(input);
+    container.append(row);
+    return input;
+  }
+
+  it('cancelled after landing (its deep link done), it still focuses the target', () => {
+    const input = renderedField();
+    const cancel = revealConfigPath(container, { path: 'memory.tokenLimit' });
+    cancel();
+    vi.advanceTimersByTime(2_000);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("a newer reveal in the same container ends the previous one's re-checks", () => {
+    const input = renderedField();
+    revealConfigPath(container, { path: 'memory.tokenLimit' });
+    const other = document.createElement('input');
+    other.id = 'memory-agent';
+    container.append(other);
+    revealConfigPath(container, { path: 'memory.agent' }, { focus: false });
+    vi.advanceTimersByTime(2_000);
+    expect(document.activeElement).not.toBe(input);
+    expect(container.scrollTo).toHaveBeenCalledTimes(4);
+  });
+
+  it('stops correcting the scroll once the user scrolls', () => {
+    const input = renderedField();
+    revealConfigPath(container, { path: 'memory.tokenLimit' });
+    container.dispatchEvent(new Event('wheel'));
+    vi.advanceTimersByTime(2_000);
+    expect(container.scrollTo).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).not.toBe(input);
+  });
+
+  it('stops correcting the scroll once the page is scrolled away from the target', () => {
+    renderedField();
+    revealConfigPath(container, { path: 'memory.tokenLimit' });
+    container.scrollTop = 500;
+    container.dispatchEvent(new Event('scroll'));
+    vi.advanceTimersByTime(2_000);
+    expect(container.scrollTo).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves focus on a control the user moved to meanwhile', () => {
+    const input = renderedField();
+    const other = document.createElement('button');
+    container.append(other);
+    revealConfigPath(container, { path: 'memory.tokenLimit' });
+    other.focus();
+    vi.advanceTimersByTime(2_000);
+    expect(document.activeElement).toBe(other);
+    expect(document.activeElement).not.toBe(input);
+  });
+
+  it("focuses a radio group's chosen option", () => {
+    const group = document.createElement('div');
+    group.id = 'modelSpecs-list-0-softDefault';
+    group.innerHTML = html`<input type="radio" name="soft" value="no" /><input
+        type="radio"
+        name="soft"
+        value="yes"
+        checked
+      />`;
+    container.append(group);
+    revealConfigPath(container, { path: 'modelSpecs.list.0.softDefault' });
+    vi.advanceTimersByTime(2_000);
+    expect((document.activeElement as HTMLInputElement).value).toBe('yes');
+  });
+
+  it('focuses the row of a read-only setting, which has no control', () => {
+    const row = document.createElement('div');
+    row.className = 'settings-row';
+    row.innerHTML = html`<span id="registration-oauthStateTtlMs">60,000</span>`;
+    container.append(row);
+    revealConfigPath(container, { path: 'registration.oauthStateTtlMs' });
+    vi.advanceTimersByTime(2_000);
+    expect(document.activeElement).toBe(row);
+    row.blur();
+    expect(row.hasAttribute('tabindex')).toBe(false);
+  });
 });

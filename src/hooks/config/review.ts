@@ -281,6 +281,7 @@ export function useChangeReview({
     open,
     saving: save.saving,
     sessionExpired: save.sessionExpired,
+    termsUrl: save.termsUrl,
     saveIssues,
     title,
     scope: editingScope,

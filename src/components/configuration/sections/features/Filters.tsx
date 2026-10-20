@@ -1,10 +1,12 @@
 import type * as t from '@/types';
-import { getFieldOptions } from '../../controls';
+import { optionLabels, settingRows } from '../../values';
+import { UnknownSettings } from '../../UnknownSettings';
 import { labelForPath } from '../../meta';
 import { isConfigRecord } from '@/utils';
 import { useLocalize } from '@/hooks';
 
 const PII_KEY = 'pii';
+const SURFACE_LISTED_KEYS: ReadonlySet<string> = new Set([PII_KEY]);
 const PII_LISTED_KEYS: ReadonlySet<string> = new Set([
   'action',
   'fields',
@@ -16,33 +18,8 @@ function childField(field: t.SchemaField | undefined, key: string): t.SchemaFiel
   return field?.children?.find((child) => child.key === key);
 }
 
-/** An enum value (or list of them) as its option labels. */
-function optionLabels(
-  field: t.SchemaField | undefined,
-  value: t.ConfigValue,
-  localize: t.LocalizeFn,
-): string[] {
-  if (value == null) return [];
-  const values = Array.isArray(value) ? value : [value];
-  const labels = new Map(
-    (field ? getFieldOptions(field, localize) : []).map((option) => [option.value, option.label]),
-  );
-  return values.map((item) => labels.get(String(item)) ?? String(item));
-}
-
-function scalarText(
-  field: t.SchemaField | undefined,
-  value: t.ConfigValue,
-  localize: t.LocalizeFn,
-): string {
-  if (typeof value === 'boolean') {
-    return localize(value ? 'com_config_values_on' : 'com_config_values_off');
-  }
-  return optionLabels(field, value, localize).join(', ');
-}
-
 /** What one surface's filter does, read from librechat.yaml's value and the schema's labels. */
-export function summarizeSurface(
+function summarizeSurface(
   surface: t.SchemaField,
   value: t.ConfigValue,
   localize: t.LocalizeFn,
@@ -50,23 +27,18 @@ export function summarizeSurface(
   const record = isConfigRecord(value) ? value : {};
   const piiField = childField(surface, PII_KEY);
   const pii = isConfigRecord(record[PII_KEY]) ? record[PII_KEY] : undefined;
-  const extras: t.FilterSurfaceSummary['extras'] = [];
-  const addExtras = (
-    field: t.SchemaField | undefined,
-    source: t.ConfigRecord,
-    skip: ReadonlySet<string>,
-  ) => {
-    for (const child of field?.children ?? []) {
-      const childValue = source[child.key];
-      if (skip.has(child.key) || childValue == null) continue;
-      extras.push({
-        label: labelForPath(child.path, localize),
-        value: scalarText(child, childValue, localize),
-      });
-    }
-  };
-  addExtras(surface, record, new Set([PII_KEY]));
-  if (pii) addExtras(piiField, pii, PII_LISTED_KEYS);
+  const extras = [
+    ...settingRows(surface.children ?? [], record, localize, {
+      path: surface.path,
+      skip: SURFACE_LISTED_KEYS,
+    }),
+    ...(pii
+      ? settingRows(piiField?.children ?? [], pii, localize, {
+          path: `${surface.path}.${PII_KEY}`,
+          skip: PII_LISTED_KEYS,
+        })
+      : []),
+  ];
   const custom = Array.isArray(pii?.customPatterns) ? pii.customPatterns : [];
   return {
     key: surface.key,
@@ -138,7 +110,7 @@ function SurfaceCard({ summary }: t.SurfaceCardProps) {
           </>
         )}
         {summary.extras.map((extra) => (
-          <div key={extra.label} className="contents">
+          <div key={extra.path} className="contents">
             <dt className="text-(--settings-muted-fg)">{extra.label}</dt>
             <dd className="m-0 text-(--cui-color-text-default)">{extra.value}</dd>
           </div>
@@ -155,7 +127,12 @@ function SurfaceCard({ summary }: t.SurfaceCardProps) {
  * (block or audit), the fields scanned and the patterns used, with the
  * surfaces nothing filters listed together.
  */
-export function ContentFiltersRenderer({ fields, getValue, parentPath }: t.FieldRendererProps) {
+export function ContentFiltersRenderer({
+  fields,
+  getValue,
+  parentPath,
+  parentValue,
+}: t.FieldRendererProps) {
   const localize = useLocalize();
   const summaries = fields.map((surface) =>
     summarizeSurface(surface, getValue(`${parentPath}.${surface.key}`, undefined), localize),
@@ -191,6 +168,7 @@ export function ContentFiltersRenderer({ fields, getValue, parentPath }: t.Field
       <p className="m-0 text-xs text-(--settings-muted-fg)">
         {localize('com_config_features_filters_how')}
       </p>
+      <UnknownSettings fields={fields} value={parentValue} path={parentPath} />
     </div>
   );
 }

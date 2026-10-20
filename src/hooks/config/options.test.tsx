@@ -9,6 +9,7 @@ import {
   useEndpointModels,
   buildEndpointOptions,
   useModelListDefaults,
+  useCustomEndpointNames,
 } from './options';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 
@@ -60,8 +61,35 @@ describe('useOptionSources without a query client', () => {
     const options = valuesOf(result.current.options);
     expect(options.slice(0, 2)).toEqual(['openAI', 'google']);
     expect(options).toContain('Moonshot');
-    expect(options).toContain('Ollama');
+    expect(options).toContain('ollama');
     expect(options).not.toContain('');
+  });
+
+  it('leaves agents and the Assistants endpoints out of providers', () => {
+    const { result } = renderHook(() => useOptionSources('providers'), { wrapper: withValues });
+    const options = valuesOf(result.current.options);
+    expect(options).toEqual([
+      'openAI',
+      'google',
+      'anthropic',
+      'azureOpenAI',
+      'bedrock',
+      'Moonshot',
+      'ollama',
+    ]);
+  });
+
+  it('names each custom endpoint once', () => {
+    const data: t.ConfigValuesData = {
+      configValues: { endpoints: { custom: [{ name: 'A' }, { name: 'A' }, { name: ' ' }, {}] } },
+      editedValues: {},
+    };
+    const { result } = renderHook(() => useCustomEndpointNames(), {
+      wrapper: ({ children }) => (
+        <ConfigValuesProvider value={data}>{children}</ConfigValuesProvider>
+      ),
+    });
+    expect(result.current).toEqual(['A']);
   });
 
   it('has no models and does not fetch', () => {
@@ -89,6 +117,11 @@ describe('useOptionSources with server data', () => {
       wrapper: withClient(client),
     });
     expect(unknown.result.current.options).toEqual([]);
+    client.setQueryData(['endpointModels', 0], { ollama: ['llama3'] });
+    const normalized = renderHook(() => useOptionSources('models:Ollama'), {
+      wrapper: withClient(client),
+    });
+    expect(valuesOf(normalized.result.current.options)).toEqual(['llama3']);
   });
 
   it('lists served endpoints first, then the configured ones it leaves out', () => {
@@ -103,6 +136,10 @@ describe('useOptionSources with server data', () => {
     const options = valuesOf(result.current.options);
     expect(options.slice(0, 3)).toEqual(['agents', 'Moonshot', 'openAI']);
     expect(options.filter((name) => name === 'Moonshot')).toHaveLength(1);
+    const providers = renderHook(() => useOptionSources('providers'), {
+      wrapper: withClient(client),
+    });
+    expect(valuesOf(providers.result.current.options).slice(0, 2)).toEqual(['Moonshot', 'openAI']);
   });
 
   it('exposes the models map for model list defaults', () => {
@@ -115,6 +152,31 @@ describe('useOptionSources with server data', () => {
 });
 
 describe('buildEndpointOptions', () => {
+  it('offers a custom endpoint LibreChat serves under a normalized name once, by its served key', () => {
+    const status: t.EndpointStatusMap = {
+      ollama: { name: 'ollama', custom: true, userProvide: false },
+    };
+    const root = { endpoints: { custom: [{ name: 'Ollama' }] } };
+    const options = buildEndpointOptions(status, root, (key) => key);
+    expect(options.filter((option) => option.value.toLowerCase() === 'ollama')).toEqual([
+      { value: 'ollama', label: 'Ollama (ollama)' },
+    ]);
+    expect(options[0].value).toBe('ollama');
+  });
+
+  it('keeps endpoints whose names differ only in letter case apart (LibreChat serves both)', () => {
+    const status: t.EndpointStatusMap = {
+      Perplexity: { name: 'Perplexity', custom: true, userProvide: false },
+      perplexity: { name: 'perplexity', custom: true, userProvide: false },
+    };
+    const root = { endpoints: { custom: [{ name: 'Perplexity' }, { name: 'perplexity' }] } };
+    const values = buildEndpointOptions(status, root, (key) => key).map((option) => option.value);
+    expect(values.filter((value) => value.toLowerCase() === 'perplexity')).toEqual([
+      'Perplexity',
+      'perplexity',
+    ]);
+  });
+
   it('labels built-in providers with their display name and key', () => {
     const options = buildEndpointOptions(undefined, null, (key) =>
       key === 'com_config_field_openAI' ? 'OpenAI' : key,

@@ -17,6 +17,7 @@ import {
 } from '@/server';
 import {
   cn,
+  errorText,
   isSameScope,
   formatScopeName,
   findPriorityTies,
@@ -200,7 +201,7 @@ export function ScopeSelector({
         choose({ type: 'SCOPE', scope });
       } catch (err) {
         setCreatingKey(null);
-        onError?.(err instanceof Error ? err.message : localize('com_scope_create_error'));
+        onError?.(errorText(err, localize('com_scope_create_error'), localize));
       }
     },
     [creatingKey, queryClient, choose, onError, localize],
@@ -215,7 +216,7 @@ export function ScopeSelector({
         });
         await queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
       } catch (err) {
-        onError?.(err instanceof Error ? err.message : localize('com_scope_toggle_error'));
+        onError?.(errorText(err, localize('com_scope_toggle_error'), localize));
       } finally {
         setTogglingKey(null);
       }
@@ -247,7 +248,7 @@ export function ScopeSelector({
       setDeleting(false);
     } catch (err) {
       setDeleting(false);
-      onError?.(err instanceof Error ? err.message : localize('com_scope_delete_error'));
+      onError?.(errorText(err, localize('com_scope_delete_error'), localize));
     }
   }, [
     deleteTarget,

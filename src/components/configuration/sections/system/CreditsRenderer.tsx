@@ -1,9 +1,9 @@
 import { useContext } from 'react';
 import type * as t from '@/types';
+import { NestedGroup, OtherSettings, toFieldId } from '../../renderer';
 import { useFieldState, useLocalize, useOwnedField } from '@/hooks';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { FieldRow, isRowShown } from '../files/FieldRow';
-import { NestedGroup, toFieldId } from '../../renderer';
 import { ConfigSection } from '../../ConfigSection';
 import { formatUsd, inputValues } from './credits';
 import { CREDITS_PER_USD } from '@/constants';
@@ -17,6 +17,17 @@ const BALANCE = 'balance';
 const TRANSACTIONS = 'transactions';
 const START = 'balance.startBalance';
 const RESERVATION = 'balance.reservationTtlMs';
+/** The keys this card places; any other balance or transactions setting follows as a plain row. */
+const BALANCE_PLACED: ReadonlySet<string> = new Set([
+  'enabled',
+  'startBalance',
+  'autoRefillEnabled',
+  'refillIntervalValue',
+  'refillIntervalUnit',
+  'refillAmount',
+  'reservationTtlMs',
+]);
+const TRANSACTIONS_PLACED: ReadonlySet<string> = new Set(['enabled']);
 
 function fieldFinder(section: t.ConfigSectionConfig | undefined): t.FieldLookup {
   const fields = new Map((section?.fields ?? []).map((field) => [field.key, field]));
@@ -130,6 +141,7 @@ export function CreditsRenderer({
           <FieldRow field={balanceField('reservationTtlMs')} fieldProps={fieldProps} />
         </NestedGroup>
       )}
+      <OtherSettings {...fieldProps} placed={BALANCE_PLACED} />
     </>
   );
 
@@ -139,6 +151,7 @@ export function CreditsRenderer({
       {transactionsConflict && (
         <WarningNote>{localize('com_config_credits_transactions_forced')}</WarningNote>
       )}
+      <OtherSettings {...fieldProps} placed={TRANSACTIONS_PLACED} />
     </>
   );
 

@@ -2,19 +2,22 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import type * as t from '@/types';
 import {
+  errorText,
   notifyInfo,
   notifyError,
   notifyWarning,
   notifySuccess,
   getValueAtPath,
+  termsRefusalUrl,
   planConfigChanges,
   mergedBackChanges,
 } from '@/utils';
 import { validateMcpCrossField } from '@/components/configuration/sections/mcp/validation';
-import { specListIssues } from '@/components/configuration/sections/specs/validation';
 import { buildConfigChanges, normalizeEditValue } from '@/components/configuration/edits';
+import { specListIssues } from '@/components/configuration/sections/specs/validation';
 import { isResetSent, summarizeChanges } from '@/components/configuration/summary';
 import { describeSkippedChanges } from '@/components/configuration/review/group';
+import { TERMS_NOT_ACCEPTED_ISSUE, TERMS_NOT_ACCEPTED_CODE } from '@/constants';
 import { applyConfigChangesFn, resetBaseConfigFn } from '@/server';
 import { describeIssues } from '@/components/configuration/issues';
 import { hasPathOverlap } from '@/components/configuration/counts';
@@ -37,6 +40,13 @@ const SESSION_ERROR_RE = /no admin session token|session (has )?expired|unauthor
 
 function isSessionError(message: string): boolean {
   return SESSION_ERROR_RE.test(message);
+}
+
+/** Where to accept LibreChat's terms when a save was refused until the admin does (`null` otherwise). */
+function termsUrlOf(result: t.ApplyConfigChangesResult): string | null {
+  const issue = result.failed.find(({ code }) => code === TERMS_NOT_ACCEPTED_ISSUE);
+  if (!issue) return null;
+  return typeof issue.params?.url === 'string' ? issue.params.url : '';
 }
 
 /** Skipped changes without repeats (the client and the server can report the same path). */
@@ -91,6 +101,7 @@ export function useConfigSave({
   const [saving, setSaving] = useState(false);
   const [serverIssues, setServerIssues] = useState<t.ConfigIssue[]>([]);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [termsUrl, setTermsUrl] = useState<string | null>(null);
 
   useEffect(() => setServerIssues([]), [editedValues, visibilityEdits]);
 
@@ -162,6 +173,7 @@ export function useConfigSave({
 
   const describeFailure = useCallback(
     (result: t.ApplyConfigChangesResult, collections: t.PendingCollection[]) => {
+      if (termsUrlOf(result) !== null) return localize('com_config_terms_not_accepted');
       const blocking = [...result.issues, ...result.failed];
       const { summaries } = describeIssues(blocking, collections, localize);
       const titleKey = (() => {
@@ -189,6 +201,9 @@ export function useConfigSave({
         ...resets.map((path): t.ConfigChange => ({ op: 'reset', path })),
       ];
       const result = await applyChanges(target, ops);
+      /** A terms refusal keeps its code, so the caller (Import) words it and links to LibreChat. */
+      const terms = termsUrlOf(result);
+      if (terms !== null) throw new Error(`${TERMS_NOT_ACCEPTED_CODE} ${terms}`.trim());
       if (result.issues.length > 0 || result.failed.length > 0) {
         throw new Error(describeFailure(result, []));
       }
@@ -378,8 +393,18 @@ export function useConfigSave({
     setSaving(true);
     setSaveError(null);
     setSessionExpired(false);
+    setTermsUrl(null);
     try {
       const result = await applyChanges(editTarget, changeSet.ops);
+      const terms = termsUrlOf(result);
+      if (terms !== null) {
+        const message = localize('com_config_terms_not_accepted');
+        setSaving(false);
+        setTermsUrl(terms);
+        setSaveError(message);
+        notifyError(message);
+        return;
+      }
       if (result.issues.length > 0 || result.failed.length > 0) {
         const message = describeFailure(result, changeSet.collections);
         setServerIssues([...result.issues, ...result.failed]);
@@ -430,6 +455,7 @@ export function useConfigSave({
     void invalidateTarget(editTarget);
     setSaveError(null);
     setSessionExpired(false);
+    setTermsUrl(null);
     setConfirmSaveOpen(true);
   }, [invalidateTarget, editTarget, setSaveError]);
 
@@ -437,6 +463,7 @@ export function useConfigSave({
     setConfirmSaveOpen(false);
     setSaveError(null);
     setSessionExpired(false);
+    setTermsUrl(null);
   }, [setSaveError]);
 
   const closeReview = useCallback(() => setConfirmSaveOpen(false), []);
@@ -445,6 +472,7 @@ export function useConfigSave({
     confirmSaveOpen,
     saving,
     sessionExpired,
+    termsUrl,
     savePlan,
     unsafeKeys,
     changes,
@@ -469,11 +497,13 @@ export function useResetBaseConfig({ onReset }: t.ResetBaseConfigOptions): t.Res
   const [resetBaseOpen, setResetBaseOpen] = useState(false);
   const [resettingBase, setResettingBase] = useState(false);
   const [resetBaseError, setResetBaseError] = useState<string | null>(null);
+  const [resetBaseTermsUrl, setResetBaseTermsUrl] = useState<string | null>(null);
 
   const handleResetBaseConfig = useCallback(async () => {
     if (resettingBase) return;
     setResettingBase(true);
     setResetBaseError(null);
+    setResetBaseTermsUrl(null);
     try {
       await resetBaseConfigFn();
       /** resolvedConfig holds each scope's own overrides (not a base merge), so a
@@ -489,15 +519,20 @@ export function useResetBaseConfig({ onReset }: t.ResetBaseConfigOptions): t.Res
       setResetBaseOpen(false);
       notifySuccess(localize('com_config_reset_base_success'));
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const termsUrl = termsRefusalUrl(err);
       setResettingBase(false);
-      setResetBaseError(message);
-      notifyError(message);
+      setResetBaseTermsUrl(termsUrl || null);
+      setResetBaseError(
+        termsUrl != null
+          ? localize('com_config_terms_refused')
+          : errorText(err, localize('com_config_reset_base_error'), localize),
+      );
     }
   }, [resettingBase, queryClient, localize, onReset]);
 
   const openResetBase = useCallback(() => {
     setResetBaseError(null);
+    setResetBaseTermsUrl(null);
     setResetBaseOpen(true);
   }, []);
 
@@ -505,12 +540,14 @@ export function useResetBaseConfig({ onReset }: t.ResetBaseConfigOptions): t.Res
     if (resettingBase) return;
     setResetBaseOpen(false);
     setResetBaseError(null);
+    setResetBaseTermsUrl(null);
   }, [resettingBase]);
 
   return {
     resetBaseOpen,
     resettingBase,
     resetBaseError,
+    resetBaseTermsUrl,
     openResetBase,
     cancelResetBase,
     handleResetBaseConfig,

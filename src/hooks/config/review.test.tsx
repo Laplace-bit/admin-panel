@@ -94,7 +94,7 @@ describe('the change review over the save pipeline (WS1 × WS7)', () => {
     });
   });
 
-  it('warns that a value Global (all providers) takes precedence over has no effect (D11)', () => {
+  it('warns that a value Global overrides take precedence over has no effect (D11)', () => {
     const { result } = renderPage({
       ...yaml,
       endpoints: { ...(yaml.endpoints as t.ConfigRecord), all: { activityModel: 'gpt-luna' } },

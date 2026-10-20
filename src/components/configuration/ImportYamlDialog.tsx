@@ -1,9 +1,10 @@
-import { Button, Dialog } from '@clickhouse/click-ui';
 import { PrincipalType } from 'librechat-data-provider';
+import { Link, Button, Dialog } from '@clickhouse/click-ui';
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import type * as t from '@/types';
-import { useLocalize, useImportPreview, importTargetLabel } from '@/hooks';
+import { useLocalize, useReturnFocus, useImportPreview, importTargetLabel } from '@/hooks';
 import { Source, Targets, Preview, SyntaxFrame } from './wizard';
+import { errorText, termsRefusalUrl } from '@/utils';
 import { parseImportedYaml } from '@/server';
 
 const STEPS: t.ImportStep[] = ['input', 'target', 'preview'];
@@ -26,14 +27,17 @@ export function ImportYamlDialog({
   schemaTree,
   schemaPathSet,
   onImport,
+  knownMcpServers,
 }: t.ImportYamlDialogProps) {
   const localize = useLocalize();
+  const returnFocus = useReturnFocus(open);
   const [step, setStep] = useState<t.ImportStep>('input');
   const [activeTab, setActiveTab] = useState<t.ImportTab>('upload');
   const [yamlText, setYamlText] = useState('');
   const [fileName, setFileName] = useState<string>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const [termsUrl, setTermsUrl] = useState<string | null>(null);
   const [errorMark, setErrorMark] = useState<{ line: number; column: number }>();
   const [validationErrors, setValidationErrors] = useState<t.ImportValidationError[]>();
   const [appConfig, setAppConfig] = useState<t.ConfigRecord | null>(null);
@@ -107,6 +111,7 @@ export function ImportYamlDialog({
 
   const clearErrors = () => {
     setError(undefined);
+    setTermsUrl(null);
     setErrorMark(undefined);
     setValidationErrors(undefined);
   };
@@ -128,7 +133,9 @@ export function ImportYamlDialog({
     setLoading(true);
     clearErrors();
     try {
-      const result = await parseImportedYaml({ data: { yamlContent: yamlText } });
+      const result = await parseImportedYaml({
+        data: { yamlContent: yamlText, knownMcpServers },
+      });
       if (!result.success || !result.appConfig) {
         setError(result.error ?? localize('com_config_import_error'));
         setErrorMark(result.mark);
@@ -138,7 +145,7 @@ export function ImportYamlDialog({
       setAppConfig(result.appConfig);
       setStep('target');
     } catch (err) {
-      setError(err instanceof Error ? err.message : localize('com_config_import_error'));
+      setError(errorText(err, localize('com_config_import_error'), localize));
     } finally {
       setLoading(false);
     }
@@ -148,11 +155,13 @@ export function ImportYamlDialog({
     if (!target) return;
     setLoading(true);
     setError(undefined);
+    setTermsUrl(null);
     try {
       await onImport({ target, entries: preview.entriesFor(selection) });
       handleClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : localize('com_config_import_error'));
+      setTermsUrl(termsRefusalUrl(err) || null);
+      setError(errorText(err, localize('com_config_import_error'), localize));
     } finally {
       setLoading(false);
     }
@@ -216,126 +225,136 @@ export function ImportYamlDialog({
         title={localize('com_config_import_yaml_title')}
         showClose
         onClose={handleClose}
-        className="modal-frost"
+        onCloseAutoFocus={returnFocus}
+        className="modal-frost form-dialog-content"
       >
-        <div className="flex flex-col gap-4">
-          <p className="m-0 text-xs font-medium text-(--cui-color-text-muted)" aria-live="polite">
-            {localize('com_config_review_import_step', {
-              n: stepIndex + 1,
-              total: STEPS.length,
-              name: localize(STEP_KEYS[step]),
-            })}
-          </p>
+        <div className="form-dialog-form">
+          <div className="form-dialog-body gap-4!">
+            <p className="m-0 text-xs font-medium text-(--cui-color-text-muted)" aria-live="polite">
+              {localize('com_config_review_import_step', {
+                n: stepIndex + 1,
+                total: STEPS.length,
+                name: localize(STEP_KEYS[step]),
+              })}
+            </p>
 
-          {step === 'input' && (
-            <Source
-              activeTab={activeTab}
-              onTabChange={(tab) => {
-                setActiveTab(tab);
-                clearErrors();
-              }}
-              yamlText={yamlText}
-              onTextChange={(text) => {
-                setYamlText(text);
-                clearErrors();
-              }}
-              fileName={fileName}
-              onFile={handleFile}
-            />
-          )}
+            {step === 'input' && (
+              <Source
+                activeTab={activeTab}
+                onTabChange={(tab) => {
+                  setActiveTab(tab);
+                  clearErrors();
+                }}
+                yamlText={yamlText}
+                onTextChange={(text) => {
+                  setYamlText(text);
+                  clearErrors();
+                }}
+                fileName={fileName}
+                onFile={handleFile}
+              />
+            )}
 
-          {step === 'target' && (
-            <Targets
-              open={open}
-              currentScope={currentScope}
-              mode={mode}
-              onModeChange={setMode}
-              kind={kind}
-              onKindChange={(next) => {
-                setKind(next);
-                setSelected(null);
-              }}
-              selected={selected}
-              onSelect={setSelected}
-              newType={newType}
-              onNewTypeChange={setNewType}
-              newName={newName}
-              onNewNameChange={setNewName}
-            />
-          )}
+            {step === 'target' && (
+              <Targets
+                open={open}
+                currentScope={currentScope}
+                mode={mode}
+                onModeChange={setMode}
+                kind={kind}
+                onKindChange={(next) => {
+                  setKind(next);
+                  setSelected(null);
+                }}
+                selected={selected}
+                onSelect={setSelected}
+                newType={newType}
+                onNewTypeChange={setNewType}
+                newName={newName}
+                onNewNameChange={setNewName}
+              />
+            )}
 
-          {step === 'preview' && (
-            <Preview
-              preview={preview}
-              targetLabel={targetLabel}
-              isScope={target?.type !== 'base'}
-              included={selection}
-              onToggle={toggle}
-            />
-          )}
+            {step === 'preview' && (
+              <Preview
+                preview={preview}
+                targetLabel={targetLabel}
+                isScope={target?.type !== 'base'}
+                included={selection}
+                onToggle={toggle}
+              />
+            )}
+          </div>
 
-          {importIssues.length > 0 && (
-            <div
-              className="flex flex-col gap-1 rounded-lg bg-[rgba(220,38,38,0.1)] px-3 py-2"
-              role="alert"
-            >
-              <span className="text-sm font-medium text-(--cui-color-text-danger)">
-                {localize('com_config_review_import_issues', { count: importIssues.length })}
-              </span>
-              <ul className="m-0 max-h-32 list-none overflow-auto p-0 text-xs text-(--cui-color-text-danger)">
-                {importIssues.map((issue) => (
-                  <li key={issue} className="py-0.5 wrap-anywhere">
-                    {issue}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {error && (
-            <div
-              className="flex flex-col gap-2 rounded-lg bg-[rgba(220,38,38,0.1)] px-3 py-2"
-              role="alert"
-            >
-              <span className="text-sm font-medium wrap-anywhere text-(--cui-color-text-danger)">
-                {error}
-              </span>
-              {errorMark && <SyntaxFrame text={yamlText} mark={errorMark} />}
-              {validationErrors && validationErrors.length > 0 && (
+          <div className="form-dialog-footer">
+            {importIssues.length > 0 && (
+              <div
+                className="flex flex-col gap-1 rounded-lg bg-[rgba(220,38,38,0.1)] px-3 py-2"
+                role="alert"
+              >
+                <span className="text-sm font-medium text-(--cui-color-text-danger)">
+                  {localize('com_config_review_import_issues', { count: importIssues.length })}
+                </span>
                 <ul className="m-0 max-h-32 list-none overflow-auto p-0 text-xs text-(--cui-color-text-danger)">
-                  {validationErrors.slice(0, 10).map((issue, i) => (
-                    <li key={`${issue.path}-${i}`} className="py-0.5 wrap-anywhere">
-                      <code>{issue.path}</code>: {issue.message}
+                  {importIssues.map((issue) => (
+                    <li key={issue} className="py-0.5 wrap-anywhere">
+                      {issue}
                     </li>
                   ))}
-                  {validationErrors.length > 10 && (
-                    <li className="py-0.5 opacity-70">
-                      {localize('com_config_validation_more', {
-                        count: String(validationErrors.length - 10),
-                      })}
-                    </li>
-                  )}
                 </ul>
-              )}
-            </div>
-          )}
+              </div>
+            )}
 
-          <div className="flex items-center justify-end gap-2">
-            <Button
-              htmlType="button"
-              type="secondary"
-              label={localize(step === 'input' ? 'com_ui_cancel' : 'com_config_import_back')}
-              onClick={step === 'input' ? handleClose : () => goTo(STEPS[stepIndex - 1])}
-              disabled={loading}
-            />
-            <Button
-              htmlType="button"
-              type="primary"
-              label={primary.label}
-              iconLeft={loading ? 'loading-animated' : undefined}
-              onClick={() => void primary.onClick()}
-              disabled={primary.disabled}
-            />
+            {error && (
+              <div
+                className="flex max-h-[35dvh] flex-col gap-2 overflow-y-auto rounded-lg bg-[rgba(220,38,38,0.1)] px-3 py-2"
+                role="alert"
+              >
+                <span className="text-sm font-medium wrap-anywhere text-(--cui-color-text-danger)">
+                  {error}
+                </span>
+                {termsUrl && (
+                  <Link href={termsUrl} target="_blank" rel="noopener" size="sm" weight="medium">
+                    {localize('com_config_terms_open')}
+                  </Link>
+                )}
+                {errorMark && <SyntaxFrame text={yamlText} mark={errorMark} />}
+                {validationErrors && validationErrors.length > 0 && (
+                  <ul className="m-0 max-h-32 list-none overflow-auto p-0 text-xs text-(--cui-color-text-danger)">
+                    {validationErrors.slice(0, 10).map((issue, i) => (
+                      <li key={`${issue.path}-${i}`} className="py-0.5 wrap-anywhere">
+                        <code>{issue.path}</code>: {issue.message}
+                      </li>
+                    ))}
+                    {validationErrors.length > 10 && (
+                      <li className="py-0.5 opacity-70">
+                        {localize('com_config_validation_more', {
+                          count: String(validationErrors.length - 10),
+                        })}
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                htmlType="button"
+                type="secondary"
+                label={localize(step === 'input' ? 'com_ui_cancel' : 'com_config_import_back')}
+                onClick={step === 'input' ? handleClose : () => goTo(STEPS[stepIndex - 1])}
+                disabled={loading}
+              />
+              <Button
+                htmlType="button"
+                type="primary"
+                label={primary.label}
+                iconLeft={loading ? 'loading-animated' : undefined}
+                onClick={() => void primary.onClick()}
+                disabled={primary.disabled}
+              />
+            </div>
           </div>
         </div>
       </Dialog.Content>

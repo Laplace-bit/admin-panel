@@ -12,10 +12,7 @@ import { McpNote } from './Note';
  * librechat.yaml can define (D10), so stdio is listed but disabled unless the
  * server already is one, and a YAML `http` type is shown as written.
  */
-export function transportOptions(
-  current: t.McpTransport,
-  localize: t.LocalizeFn,
-): t.SelectOption[] {
+function transportOptions(current: t.McpTransport, localize: t.LocalizeFn): t.SelectOption[] {
   const options: t.SelectOption[] = TRANSPORTS.map((value) => {
     const isLocked = value === 'stdio' && current !== 'stdio';
     return {

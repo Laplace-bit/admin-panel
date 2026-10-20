@@ -1,9 +1,9 @@
 import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
-import { CONFIG_TABS, OTHER_TAB, SECTION_META, splitCamelCase } from '../configMeta';
 import { flattenObject, getValueAtPath, isConfigRecord, findKeyedCollectionEntry } from '@/utils';
+import { CONFIG_TABS, OTHER_TAB, SECTION_META, splitCamelCase } from '../configMeta';
+import { SKIP_REASON_KEYS, BUILT_IN_PROVIDERS, getConfigSection } from '@/constants';
 import { identityKeyFor, isSecretPath, findEntry } from './diff';
-import { SKIP_REASON_KEYS, getConfigSection } from '@/constants';
 import { findSchemaField, getFieldOptions } from '../controls';
 import { getFieldMeta, labelForPath } from '../meta';
 import { fieldVariants } from '../renderer/kinds';
@@ -200,8 +200,17 @@ function valueLabelsAt(
 ): Readonly<Record<string, string>> | undefined {
   const discriminated = discriminatorLabelsAt(path, ctx);
   if (discriminated) return discriminated;
+  const meta = getFieldMeta(path);
+  if (meta?.optionSource === 'endpoints' || meta?.optionSource === 'providers') {
+    /** Built-in endpoints by their provider name ("Anthropic"); custom ones are named as written. */
+    return Object.fromEntries(
+      BUILT_IN_PROVIDERS.map((name) => [name, ctx.localize(`com_config_field_${name}`)]),
+    );
+  }
   const field = findSchemaField(ctx.fields, path);
-  const metaLabels = field?.type === 'boolean' ? getFieldMeta(path)?.enumLabels : undefined;
+  /** Switches named by their meaning, and lists of choices (agent capabilities) by their labels. */
+  const labelsByMeta = field?.type === 'boolean' || field?.isArray === true;
+  const metaLabels = labelsByMeta ? getFieldMeta(path)?.enumLabels : undefined;
   if (metaLabels) {
     return Object.fromEntries(
       Object.entries(metaLabels).map(([value, key]) => [value, ctx.localize(key)]),

@@ -5,11 +5,11 @@
  * key, a base URL and a model list (`loadCustomEndpointsConfig`), and its
  * schema requires at least one default model even when the list is fetched.
  */
-import { EModelEndpoint } from 'librechat-data-provider';
+import { normalizeEndpointName } from 'librechat-data-provider';
 import type * as t from '@/types';
+import { RESERVED_ENDPOINT_NAMES } from '@/constants';
 import { isConfigRecord } from '@/utils';
 
-const RESERVED_NAMES: ReadonlySet<string> = new Set(Object.values(EModelEndpoint));
 const USER_PROVIDED = 'user_provided';
 const ENV_PLACEHOLDER_RE = /\$\{[A-Za-z0-9_]+\}/;
 
@@ -65,22 +65,22 @@ export function isUsableBaseURL(baseURL: string): boolean {
   }
 }
 
-/** Names LibreChat reserves for its built-in endpoints (`openAI`, `anthropic`, …). */
-function isReservedEndpointName(name: string): boolean {
-  return RESERVED_NAMES.has(name);
-}
-
 function nameIssues(name: t.ConfigValue, otherNames: readonly string[]): t.EndpointIssue[] {
   if (!hasText(name)) {
     return [{ field: 'name', code: 'nameRequired', severity: 'error', unserved: true }];
   }
   const trimmed = name.trim();
   if (trimmed !== name) return [{ field: 'name', code: 'nameWhitespace', severity: 'error' }];
-  if (isReservedEndpointName(trimmed)) {
+  if (RESERVED_ENDPOINT_NAMES.has(trimmed)) {
     return [{ field: 'name', code: 'nameReserved', severity: 'error' }];
   }
   if (otherNames.includes(name)) {
     return [{ field: 'name', code: 'nameTaken', severity: 'error', params: { name } }];
+  }
+  const served = normalizeEndpointName(trimmed);
+  const merged = otherNames.find((other) => normalizeEndpointName(other.trim()) === served);
+  if (merged !== undefined) {
+    return [{ field: 'name', code: 'nameMerged', severity: 'error', params: { name: merged } }];
   }
   const lower = trimmed.toLowerCase();
   const similar = otherNames.find((other) => other.trim().toLowerCase() === lower);

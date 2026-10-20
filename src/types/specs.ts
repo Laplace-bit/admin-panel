@@ -79,6 +79,8 @@ export interface SpecListContextValue {
   actions: SpecListActions;
   /** Names the specs had when loaded: renaming one of them breaks links and conversations. */
   savedNames: ReadonlySet<string>;
+  /** Positions of the specs added in this session (by origin, so a renamed saved spec isn't one). */
+  addedIndexes: ReadonlySet<number>;
   /** "Set values only": rows and groups without a value are left out. */
   configuredOnly: boolean;
 }

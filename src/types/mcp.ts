@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { ConfigRecord, ConfigValue, FlatConfigMap, SchemaField } from './config';
 import type { FieldDefault } from './controls';
+import type { PathErrors } from './changes';
 
 /**
  * How LibreChat connects to an MCP server (WS12). `http` is librechat.yaml's
@@ -196,3 +197,36 @@ export interface CreateMcpServerDialogProps {
 
 /** The look of a note inside a server card: read-only (lock), information, or a warning. */
 export type McpNoteTone = 'lock' | 'info' | 'warning';
+
+/** Why a server's fields can't be edited here. */
+export type McpReadOnlyReason = 'dotted' | 'process' | 'inherited';
+
+/** One row of the MCP servers list: a server, one pending deletion, or one the profile hides. */
+export type McpListRow =
+  | { kind: 'server'; key: string; value: ConfigRecord }
+  | { kind: 'deleted'; key: string }
+  | { kind: 'hidden'; key: string; pending: boolean };
+
+/** How a server's `serverInstructions` is set: LibreChat's default, off, the server's own, or custom text. */
+export type McpInstructionsMode = 'default' | 'off' | 'server' | 'custom';
+
+/** What a new server's draft still needs before Create (MCP-9). */
+export interface McpDraftCheck {
+  /** Labels of required fields still empty ("URL", "Scopes"). */
+  missing: string[];
+  /** Inline errors of fields that hold a value. */
+  errors: PathErrors;
+}
+
+/** One pending edit of an MCP server: where in the server, and the value (WS12). */
+export interface McpEntryEdit {
+  segments: string[];
+  value: ConfigValue;
+}
+
+/** An MCP server with its pending edits applied (WS12). */
+export interface McpResolvedServer {
+  value: ConfigValue | undefined;
+  /** The latest whole-server edit reverts it to what the layer beneath defines. */
+  reset: boolean;
+}

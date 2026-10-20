@@ -1,23 +1,23 @@
-import { useId, useState } from 'react';
 import { ButtonGroup } from '@clickhouse/click-ui';
+import { useId, useRef, useState, useEffect } from 'react';
+import { normalizeEndpointName } from 'librechat-data-provider';
+import type { FocusEvent, MouseEvent } from 'react';
 import type * as t from '@/types';
+import { problemAt, specEndpoint, ASSISTANT_ENDPOINTS } from './validation';
+import { ConfirmChoiceDialog } from '../../fields/ConfirmChoice';
+import { uniqueOptions, endpointLabelOf } from './options';
+import { describeField, labelForPath } from '../../meta';
 import { useLocalize, useOptionSources } from '@/hooks';
 import { endpointGroups, mcpGroups } from './groups';
-import { problemAt, specEndpoint } from './validation';
 import { TextField } from '../../fields/TextField';
-import { describeField, labelForPath } from '../../meta';
+import { isConfigRecord, stringOf } from '@/utils';
 import { GroupedSelect } from './GroupedSelect';
-import { SpecFieldRow } from './SpecFieldRow';
 import { toFieldId } from '../../renderer';
-import { uniqueOptions } from './options';
 import { ChipPicker } from './ChipPicker';
+import { presetParams } from './params';
 import { useSpecList } from './context';
-import { SpecIcon } from './SpecIcon';
-import { isConfigRecord } from '@/utils';
-
-function textOf(value: t.ConfigValue): string {
-  return typeof value === 'string' ? value : '';
-}
+import { SpecFieldRow } from './Row';
+import { SpecIcon } from './Icon';
 
 /** "OpenAI GPT-5" → "openai-gpt-5", made unique among the other specs' names. */
 export function slugify(label: string, taken: ReadonlySet<string>): string {
@@ -41,10 +41,9 @@ function otherNames(items: t.ConfigValue[], index: number): Set<string> {
   );
 }
 
-/** A spec added in this session (its name isn't one the list was loaded with). */
-function useIsNewSpec(spec: t.ConfigRecord): boolean {
-  const { savedNames } = useSpecList();
-  return !savedNames.has(textOf(spec.name));
+/** A spec added in this session (not one the list was loaded with, whatever it is named now). */
+function useIsNewSpec(index: number): boolean {
+  return useSpecList().addedIndexes.has(index);
 }
 
 function useRowLabel(path: string, field?: t.SchemaField) {
@@ -55,19 +54,27 @@ function useRowLabel(path: string, field?: t.SchemaField) {
   };
 }
 
+/** Whether a new spec's name is still the one derived from its label (so the label keeps deriving it). */
+function useNameFollowsLabel(spec: t.ConfigRecord, index: number): boolean {
+  const { items, addedIndexes } = useSpecList();
+  const name = stringOf(spec.name);
+  return (
+    addedIndexes.has(index) &&
+    (name === '' || name === slugify(stringOf(spec.label), otherNames(items, index)))
+  );
+}
+
 /**
  * Label*: the name the model menu shows. On a new spec whose name still
  * follows the label, the name is derived from it ("GPT 5 mini" → "gpt-5-mini").
  */
 export function LabelField({ field, spec, index, path, onChange, disabled }: t.SpecFieldProps) {
-  const { items, problems, savedNames } = useSpecList();
-  const isNew = useIsNewSpec(spec);
+  const localize = useLocalize();
+  const { items, problems } = useSpecList();
+  const isNew = useIsNewSpec(index);
   const dataPath = `${path}.label`;
   const { label, description } = useRowLabel(dataPath, field);
-  const name = textOf(spec.name);
-  const followsLabel =
-    !savedNames.has(name) &&
-    (name === '' || name === slugify(textOf(spec.label), otherNames(items, index)));
+  const followsLabel = useNameFollowsLabel(spec, index);
   return (
     <SpecFieldRow
       path={dataPath}
@@ -75,14 +82,15 @@ export function LabelField({ field, spec, index, path, onChange, disabled }: t.S
       description={description}
       required
       problem={problemAt(problems, index, 'label')}
-      quietWhenEmpty={isNew && textOf(spec.label).trim() === ''}
+      quietWhenEmpty={isNew && stringOf(spec.label).trim() === ''}
       control={
         <TextField
           id={toFieldId(dataPath)}
-          value={textOf(spec.label)}
+          value={stringOf(spec.label)}
           required
           hasRowError={problemAt(problems, index, 'label') != null}
           disabled={disabled}
+          placeholder={localize('com_config_specs_label_placeholder')}
           onChange={(next) => {
             onChange('label', next);
             if (followsLabel && next.trim() !== '') {
@@ -95,18 +103,45 @@ export function LabelField({ field, spec, index, path, onChange, disabled }: t.S
   );
 }
 
-/** Name*: the id conversations and `?spec=` links use; renaming a saved spec says what it breaks. */
+/**
+ * Name*: the id conversations and `?spec=` links use; renaming a saved spec
+ * says what it breaks. While a new spec's name is still derived from its
+ * label, focusing it selects the derived name (also when the label commits
+ * as focus moves here), so typing replaces it instead of appending to it.
+ */
 export function NameField({ field, spec, index, path, onChange, disabled }: t.SpecFieldProps) {
   const localize = useLocalize();
   const { problems, savedNames } = useSpecList();
-  const isNew = useIsNewSpec(spec);
-  const [initialName] = useState(() => textOf(spec.name));
+  const isNew = useIsNewSpec(index);
+  const followsLabel = useNameFollowsLabel(spec, index);
+  const [initialName] = useState(() => stringOf(spec.name));
+  const keepSelectionRef = useRef(false);
   const dataPath = `${path}.name`;
+  const inputId = toFieldId(dataPath);
+  const name = stringOf(spec.name);
   const { label, description } = useRowLabel(dataPath, field);
   const problem = problemAt(problems, index, 'name');
-  const renamed =
-    initialName !== '' && savedNames.has(initialName) && textOf(spec.name) !== initialName;
-  const warningId = `${toFieldId(dataPath)}-rename`;
+  const renamed = initialName !== '' && savedNames.has(initialName) && name !== initialName;
+  const warningId = `${inputId}-rename`;
+
+  useEffect(() => {
+    if (!followsLabel) return;
+    const input = document.getElementById(inputId);
+    if (input instanceof HTMLInputElement && document.activeElement === input) input.select();
+  }, [followsLabel, inputId, name]);
+
+  const selectDerived = (event: FocusEvent<HTMLDivElement>) => {
+    if (!followsLabel || !(event.target instanceof HTMLInputElement)) return;
+    event.target.select();
+    keepSelectionRef.current = true;
+  };
+  /** The click that focused the input would otherwise collapse the selection to a caret. */
+  const keepSelection = (event: MouseEvent<HTMLDivElement>) => {
+    if (!keepSelectionRef.current) return;
+    keepSelectionRef.current = false;
+    event.preventDefault();
+  };
+
   return (
     <SpecFieldRow
       path={dataPath}
@@ -114,15 +149,20 @@ export function NameField({ field, spec, index, path, onChange, disabled }: t.Sp
       description={description}
       required
       problem={problem}
-      quietWhenEmpty={isNew && textOf(spec.name).trim() === ''}
+      quietWhenEmpty={isNew && name.trim() === ''}
       control={
-        <>
+        <div
+          className="flex w-full flex-col gap-1"
+          onFocus={selectDerived}
+          onMouseUp={keepSelection}
+        >
           <TextField
-            id={toFieldId(dataPath)}
-            value={textOf(spec.name)}
+            id={inputId}
+            value={name}
             required
             hasRowError={problem != null}
             disabled={disabled}
+            placeholder={localize('com_config_specs_name_placeholder')}
             aria-describedby={renamed ? warningId : undefined}
             onChange={(next) => onChange('name', next)}
           />
@@ -131,7 +171,7 @@ export function NameField({ field, spec, index, path, onChange, disabled }: t.Sp
               {localize('com_config_specs_rename_warning', { name: initialName })}
             </p>
           )}
-        </>
+        </div>
       }
     />
   );
@@ -151,8 +191,8 @@ export function IconField({
   const { options } = useSpecList();
   const dataPath = `${path}.${keyName}`;
   const { label, description } = useRowLabel(dataPath, field);
-  const value = textOf(spec[keyName]);
-  const title = textOf(keyName === 'groupIcon' ? spec.group : spec.label) || label;
+  const value = stringOf(spec[keyName]);
+  const title = stringOf(keyName === 'groupIcon' ? spec.group : spec.label) || label;
   return (
     <SpecFieldRow
       path={dataPath}
@@ -212,7 +252,7 @@ export function GroupField({
         <>
           <TextField
             id={toFieldId(dataPath)}
-            value={textOf(spec.group)}
+            value={stringOf(spec.group)}
             list={listId}
             disabled={disabled}
             placeholder={localize('com_config_ctl_ref_placeholder')}
@@ -235,7 +275,31 @@ export function GroupField({
   );
 }
 
-/** Endpoint*: a built-in provider or a custom endpoint; one the configuration lacks is flagged. */
+/**
+ * Preset parameters the old endpoint offers and the new one doesn't (Top K
+ * and Thinking budget when an Anthropic spec switches to OpenAI).
+ */
+function strandedParams(
+  preset: t.ConfigRecord,
+  from: string,
+  to: string,
+  options: t.SpecOptions,
+): string[] {
+  if (!from || from === to) return [];
+  const model = stringOf(preset.model);
+  const keys = new Set(Object.keys(preset));
+  const before = presetParams(from, model, options.customEndpoint(from), keys).params;
+  const after = new Set(
+    presetParams(to, model, options.customEndpoint(to), keys).params.map((param) => param.key),
+  );
+  return before.map((param) => param.key).filter((key) => !after.has(key));
+}
+
+/**
+ * Endpoint*: a built-in provider or a custom endpoint; one the configuration
+ * lacks is flagged. Switching to an endpoint that doesn't offer parameters
+ * the preset sets asks whether to remove them.
+ */
 export function EndpointField({
   field,
   spec,
@@ -246,35 +310,80 @@ export function EndpointField({
 }: t.SpecPresetFieldProps) {
   const localize = useLocalize();
   const { options, problems } = useSpecList();
+  const [switching, setSwitching] = useState<{ to: string; stranded: string[] } | null>(null);
   const dataPath = `${path}.preset.endpoint`;
   const { label, description } = useRowLabel(dataPath, field);
   const preset = isConfigRecord(spec.preset) ? spec.preset : {};
   const problem = problemAt(problems, index, 'preset.endpoint');
-  const isNew = useIsNewSpec(spec);
+  const isNew = useIsNewSpec(index);
+  const endpoint = stringOf(preset.endpoint);
+  /** LibreChat resolves a preset's endpoint by its served name, so "Ollama" is the "ollama" choice. */
+  const served = normalizeEndpointName(endpoint);
+  const shown = options.knownEndpoints.has(served) ? served : endpoint;
+  const labelOf = (name: string) => endpointLabelOf(options, name);
+  const paramLabel = (key: string) => labelForPath(`${path}.preset.${key}`, localize);
+
+  const switchTo = (next: string, removed: readonly string[] = []) => {
+    onPresetChange('endpoint', next);
+    removed.forEach((key) => onPresetChange(key, undefined));
+    setSwitching(null);
+  };
+
   return (
-    <SpecFieldRow
-      path={dataPath}
-      label={label}
-      description={description}
-      required
-      problem={problem}
-      quietWhenEmpty={isNew && textOf(preset.endpoint).trim() === ''}
-      control={
-        <GroupedSelect
-          id={toFieldId(dataPath)}
-          value={textOf(preset.endpoint) || undefined}
-          groups={endpointGroups(options, localize)}
-          required
-          disabled={disabled}
-          placeholder={localize('com_config_specs_endpoint_placeholder')}
-          unknownLabel={(name) => localize('com_config_specs_not_configured', { name })}
-          aria-describedby={
-            problem?.level === 'warning' ? `${toFieldId(dataPath)}-warning` : undefined
-          }
-          onChange={(next) => onPresetChange('endpoint', next)}
-        />
-      }
-    />
+    <>
+      <SpecFieldRow
+        path={dataPath}
+        label={label}
+        description={description}
+        required
+        problem={problem}
+        quietWhenEmpty={isNew && endpoint.trim() === ''}
+        control={
+          <GroupedSelect
+            id={toFieldId(dataPath)}
+            value={shown || undefined}
+            groups={endpointGroups(options, localize)}
+            required
+            disabled={disabled}
+            placeholder={localize('com_config_specs_endpoint_placeholder')}
+            unknownLabel={(name) => localize('com_config_specs_not_configured', { name })}
+            aria-describedby={
+              problem?.level === 'warning' ? `${toFieldId(dataPath)}-warning` : undefined
+            }
+            onChange={(next) => {
+              const stranded = strandedParams(preset, endpoint, next, options);
+              if (stranded.length === 0) switchTo(next);
+              else setSwitching({ to: next, stranded });
+            }}
+          />
+        }
+      />
+      {switching && (
+        <ConfirmChoiceDialog
+          open
+          title={localize('com_config_specs_switch_title', { endpoint: labelOf(switching.to) })}
+          onCancel={() => setSwitching(null)}
+          actions={[
+            {
+              label: localize('com_config_specs_switch_keep'),
+              type: 'secondary',
+              onSelect: () => switchTo(switching.to),
+            },
+            {
+              label: localize('com_config_specs_switch_remove'),
+              onSelect: () => switchTo(switching.to, switching.stranded),
+            },
+          ]}
+        >
+          <p className="m-0">
+            {localize('com_config_specs_switch_body', {
+              endpoint: labelOf(switching.to),
+              params: switching.stranded.map(paramLabel).join(', '),
+            })}
+          </p>
+        </ConfirmChoiceDialog>
+      )}
+    </>
   );
 }
 
@@ -297,22 +406,24 @@ export function ModelField({
   const dataPath = `${path}.preset.model`;
   const { label, description } = useRowLabel(dataPath, field);
   const problem = problemAt(problems, index, 'preset.model');
-  const isNew = useIsNewSpec(spec);
+  const isNew = useIsNewSpec(index);
+  /** An assistant brings its own model. */
+  const required = !ASSISTANT_ENDPOINTS.has(endpoint);
   return (
     <SpecFieldRow
       path={dataPath}
       label={label}
       description={description}
-      required
+      required={required}
       problem={problem}
-      quietWhenEmpty={isNew && textOf(preset.model).trim() === ''}
+      quietWhenEmpty={isNew && stringOf(preset.model).trim() === ''}
       control={
         <>
           <TextField
             id={toFieldId(dataPath)}
-            value={textOf(preset.model)}
+            value={stringOf(preset.model)}
             list={listId}
-            required
+            required={required}
             hasRowError={problem != null}
             disabled={disabled}
             placeholder={localize('com_config_specs_model_placeholder')}
@@ -345,7 +456,7 @@ export function AgentField({
   const dataPath = `${path}.preset.agent_id`;
   const { label, description } = useRowLabel(dataPath, field);
   const problem = problemAt(problems, index, 'preset.agent_id');
-  const isNew = useIsNewSpec(spec);
+  const isNew = useIsNewSpec(index);
   return (
     <SpecFieldRow
       path={dataPath}
@@ -353,11 +464,11 @@ export function AgentField({
       description={description}
       required
       problem={problem}
-      quietWhenEmpty={isNew && textOf(preset.agent_id).trim() === ''}
+      quietWhenEmpty={isNew && stringOf(preset.agent_id).trim() === ''}
       control={
         <TextField
           id={toFieldId(dataPath)}
-          value={textOf(preset.agent_id)}
+          value={stringOf(preset.agent_id)}
           required
           hasRowError={problem != null}
           disabled={disabled}
@@ -390,21 +501,23 @@ export function DefaultField({ spec, index, path, disabled }: Omit<t.SpecFieldPr
       problem={problem}
       matchPaths={[`${path}.softDefault`]}
       control={
-        <ButtonGroup
-          id={toFieldId(dataPath)}
-          aria-label={label}
-          className="max-w-full self-start"
-          options={DEFAULT_KINDS.map((value) => ({
-            value,
-            label: localize(`com_config_specs_default_${value}`),
-            disabled,
-          }))}
-          selected={kind}
-          onClick={(next) => {
-            if (disabled || next === kind) return;
-            actions.setDefault(index, next as t.SpecDefaultKind);
-          }}
-        />
+        <div id={toFieldId(`${path}.softDefault`)} className="flex max-w-full self-start">
+          <ButtonGroup
+            id={toFieldId(dataPath)}
+            aria-label={label}
+            className="max-w-full"
+            options={DEFAULT_KINDS.map((value) => ({
+              value,
+              label: localize(`com_config_specs_default_${value}`),
+              disabled,
+            }))}
+            selected={kind}
+            onClick={(next) => {
+              if (disabled || next === kind) return;
+              actions.setDefault(index, next as t.SpecDefaultKind);
+            }}
+          />
+        </div>
       }
     />
   );

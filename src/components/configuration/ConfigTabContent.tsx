@@ -2,7 +2,6 @@ import { useMemo, useContext } from 'react';
 import { Button } from '@clickhouse/click-ui';
 import type { KeyboardEvent, ReactNode } from 'react';
 import type * as t from '@/types';
-import { countSection, countSectionOverrides, countEntrySectionOverrides } from './counts';
 import {
   SECTION_RENDERERS,
   READ_ONLY_DETAIL_KEYS,
@@ -10,15 +9,16 @@ import {
   UNFOLDED_READ_ONLY_SECTIONS,
   SELF_CONTAINED_SECTION_RENDERERS,
 } from './sections';
+import { countSection, countSectionOverrides, countEntrySectionOverrides } from './counts';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { RevealTargetContext } from '@/contexts/RevealTargetContext';
 import { FieldRenderer, SingleFieldRenderer } from './renderer';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { deriveFieldValue, isSectionDisabled } from '@/utils';
+import { SECTION_META, isPathInSection } from './configMeta';
 import { ReadOnlySection } from './ReadOnlySection';
 import { UnknownSettings } from './UnknownSettings';
 import { ConfigSection } from './ConfigSection';
-import { SECTION_META, isPathInSection } from './configMeta';
 import { CodeField } from './fields/CodeField';
 import { InfoBanner } from './InfoBanner';
 import { ScopeGate } from './ScopeGate';
@@ -362,7 +362,7 @@ export function ConfigTabContent({
     return (
       <ReadOnlySection
         reason={section.readOnlyReason}
-        detail={detailKey ? localize(detailKey) : undefined}
+        message={detailKey ? localize(detailKey) : undefined}
         isEmpty={isEmpty && !filterPaths}
         reveal={reveal}
       >

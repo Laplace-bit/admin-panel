@@ -64,6 +64,16 @@ export function layerRevertTarget(target: t.RevertTarget | undefined): t.RevertT
 }
 
 /**
+ * What removing the edit target's own value goes back to, when a layer sets
+ * one (librechat.yaml, or Base in a profile): the revert target of an
+ * override, else the value the layer beneath gives the field. Undefined when
+ * only a default applies.
+ */
+export function layerValueBeneath(state: t.FieldState): t.RevertTarget | undefined {
+  return state.isOverride ? layerRevertTarget(state.revertTarget) : lowerLayerValue(state);
+}
+
+/**
  * "Default" for a value inside a collection entry: what the layer beneath
  * sets for this entry (an override reverts to it; with no override it is
  * the value shown, and not one the target owns), else the runtime default.

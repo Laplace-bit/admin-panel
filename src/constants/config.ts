@@ -12,6 +12,15 @@ export const BLOCK_UNSAFE_CONFIG_KEYS = true;
 export const UNSAFE_CONFIG_KEY_MESSAGE =
   "keys containing '.' or starting with '$' can't be saved through the admin API yet; set this in librechat.yaml";
 
+/** The admin API's 403 code while the signed-in admin hasn't accepted LibreChat's terms of service. */
+export const TERMS_NOT_ACCEPTED_CODE = 'terms_not_accepted';
+
+/** Once true, LibreChat refuses writes (admin API saves included) from anyone who hasn't accepted its terms. */
+export const TERMS_ACCEPTANCE_PATH = 'interface.termsOfService.modalAcceptance';
+
+/** Issue code of a save LibreChat refused until the admin accepts its terms of service. */
+export const TERMS_NOT_ACCEPTED_ISSUE = 'TERMS_NOT_ACCEPTED';
+
 /**
  * Base-only sections of newer LibreChat releases than the bundled
  * `librechat-data-provider` knows about; the admin API strips them all the same.

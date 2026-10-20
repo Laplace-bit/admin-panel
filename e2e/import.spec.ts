@@ -82,7 +82,7 @@ test('imports into a role that has no profile yet', async ({ page }) => {
   const admin = page.getByRole('radio', { name: /ADMIN/ });
   await admin.click();
   const { dialog, apply } = await previewAndApply(page, /into Role: ADMIN$/);
-  await expect(dialog.getByText('Custom welcome')).toBeVisible();
+  await expect(dialog.getByText('Welcome message')).toBeVisible();
   await apply.click();
   await expect(page.getByText(/Imported 1 value into Role: ADMIN/).first()).toBeVisible();
 });

@@ -116,7 +116,7 @@ export function knownMimePatternLabel(pattern: string): string | undefined {
 }
 
 /** Compiles a pattern the way the browser would, or null when it is not a valid regular expression. */
-export function compileMimePattern(pattern: string): RegExp | null {
+function compileMimePattern(pattern: string): RegExp | null {
   try {
     return new RegExp(pattern);
   } catch {

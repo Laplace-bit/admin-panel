@@ -1,17 +1,20 @@
+import { Button } from '@clickhouse/click-ui';
 import { useRef, useMemo, useState, useEffect, useCallback, useContext } from 'react';
 import type * as t from '@/types';
+import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
+import { useLocalize, useValuesScope, useFieldState } from '@/hooks';
 import { ListOwnershipNotice } from '../../renderer/Collections';
 import { ArrayObjectField } from '../../fields/ArrayObjectField';
+import { SpecLeading, SpecSummary, specTitle } from './Summary';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { SpecLeading, SpecSummary, specTitle } from './SpecSummary';
-import { useLocalize, useValuesScope, useFieldState } from '@/hooks';
-import { CountBadge, DecorativeIcon } from '@/components/shared';
 import { hasPathOrDescendant } from '../../renderer/paths';
+import { CountBadge } from '@/components/shared';
 import { SPEC_LIST_PATH } from './validation';
 import { SpecListContext } from './context';
+import { sourceLabel } from '../../values';
 import { isConfigRecord } from '@/utils';
-import { SpecEditor } from './SpecEditor';
-import { SpecNote } from './SpecNote';
+import { SpecEditor } from './Editor';
+import { SpecNote } from './Note';
 
 function namesOf(list: t.ConfigValue): Set<string> {
   const names = new Set<string>();
@@ -19,6 +22,27 @@ function namesOf(list: t.ConfigValue): Set<string> {
     if (isConfigRecord(spec) && typeof spec.name === 'string') names.add(spec.name);
   }
   return names;
+}
+
+/**
+ * Positions of the specs added in this session. A pending item's origin (the
+ * loaded spec it came from) decides it, not its current name, so renaming a
+ * saved spec never turns it into a new one; without pending edits (or their
+ * record), an item counts as added when no loaded spec has its name.
+ */
+function addedIndexesOf(
+  items: t.ConfigValue[],
+  edit: t.CollectionEdit | undefined,
+  savedNames: ReadonlySet<string>,
+): Set<number> {
+  const added = new Set<number>();
+  items.forEach((item, index) => {
+    const isAdded = edit
+      ? edit.origins[index] == null
+      : !(isConfigRecord(item) && typeof item.name === 'string' && savedNames.has(item.name));
+    if (isAdded) added.add(index);
+  });
+  return added;
 }
 
 /** The list with one spec made the default (or soft default, or neither) and that role taken off the others. */
@@ -78,12 +102,12 @@ export function SpecList({
   const rowFilter = useContext(RowFilterContext);
   const listState = useFieldState(SPEC_LIST_PATH);
   const addRef = useRef<(() => void) | null>(null);
-  const addButtonRef = useRef<HTMLButtonElement>(null);
+  const addButtonRef = useRef<HTMLSpanElement>(null);
   const [customizing, setCustomizing] = useState(false);
   useEffect(() => setCustomizing(false), [editSessionId, scope?.name]);
   /** "Customize list" disappears once used: focus moves on to Add spec. */
   useEffect(() => {
-    if (customizing) addButtonRef.current?.focus();
+    if (customizing) addButtonRef.current?.querySelector('button')?.focus();
   }, [customizing]);
 
   const canEdit = !disabled && permissions?.canEdit !== false;
@@ -95,6 +119,11 @@ export function SpecList({
   const inheritedOnly = scope != null && !ownsList && !isPending && !customizing;
   const editable = canEdit && !inheritedOnly && !isPendingReset;
   const savedNames = useMemo(() => namesOf(listState.effective), [listState.effective]);
+  const listEdit = useContext(CollectionEditsContext)[SPEC_LIST_PATH];
+  const addedIndexes = useMemo(
+    () => addedIndexesOf(items, listEdit, savedNames),
+    [items, listEdit, savedNames],
+  );
 
   const setDefault = useCallback(
     (index: number, kind: t.SpecDefaultKind) =>
@@ -108,9 +137,10 @@ export function SpecList({
       options,
       actions: { setDefault },
       savedNames,
+      addedIndexes,
       configuredOnly: Boolean(showConfiguredOnly),
     }),
-    [items, problems, options, setDefault, savedNames, showConfiguredOnly],
+    [items, problems, options, setDefault, savedNames, addedIndexes, showConfiguredOnly],
   );
   const renderFields = useCallback<t.CollectionRenderFields>(
     (fields, value, path, change, _addField, sessionId, fieldsDisabled) => (
@@ -126,7 +156,8 @@ export function SpecList({
     [],
   );
 
-  const scopeName = scope?.name ?? '';
+  /** "Role: USER", as every other note names the open profile. */
+  const scopeName = scope ? sourceLabel('scope', localize, scope) : '';
   const revert = canEdit && onResetField ? () => onResetField(SPEC_LIST_PATH) : undefined;
 
   const notice = (() => {
@@ -158,13 +189,14 @@ export function SpecList({
           tone="info"
           action={
             canEdit && (
-              <button
-                type="button"
-                className="settings-row-action"
+              <Button
+                type="primary"
+                htmlType="button"
+                label={localize('com_config_ce_override_for', {
+                  scope: scopeName,
+                })}
                 onClick={() => setCustomizing(true)}
-              >
-                {localize('com_config_specs_customize', { name: scopeName })}
-              </button>
+              />
             )
           }
         >
@@ -175,7 +207,19 @@ export function SpecList({
     if (ownsList) return <ListOwnershipNotice isScope={scope != null} onRevert={revert} />;
     if (scope) {
       return (
-        <SpecNote tone="info">
+        <SpecNote
+          tone="info"
+          action={
+            customizing && !isPending ? (
+              <Button
+                type="secondary"
+                htmlType="button"
+                label={localize('com_ui_cancel')}
+                onClick={() => setCustomizing(false)}
+              />
+            ) : undefined
+          }
+        >
           {localize('com_config_specs_customizing', { name: scopeName })}
         </SpecNote>
       );
@@ -187,15 +231,13 @@ export function SpecList({
   })();
 
   const addButton = editable ? (
-    <button
-      ref={addButtonRef}
-      type="button"
-      className="config-add-btn"
+    <Button
+      type="secondary"
+      htmlType="button"
+      iconLeft="plus"
+      label={localize('com_config_specs_add')}
       onClick={() => addRef.current?.()}
-    >
-      <DecorativeIcon name="plus" size="sm" />
-      <span>{localize('com_config_specs_add')}</span>
-    </button>
+    />
   ) : undefined;
 
   return (
@@ -209,7 +251,9 @@ export function SpecList({
           <span className="settings-group-title">{localize('com_config_specs_list')}</span>
           <CountBadge configured={items.length} total={items.length} entries />
         </h3>
-        <span className="ml-auto">{addButton}</span>
+        <span ref={addButtonRef} className="ml-auto">
+          {addButton}
+        </span>
         <p className="settings-help m-0 basis-full">{localize('com_config_specs_list_desc')}</p>
       </div>
       {!rowFilter && notice}

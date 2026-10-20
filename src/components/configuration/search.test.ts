@@ -106,6 +106,21 @@ describe('buildConfigSearchIndex', () => {
     expect(paths.has('mcpServers.everything.url')).toBe(false);
   });
 
+  it('finds a read-only Azure group by name, but not the fields only its drawer shows', () => {
+    const azure = buildConfigSearchIndex(
+      tree,
+      {
+        endpoints: { azureOpenAI: { groups: [{ group: 'region-eastus', dropParams: ['stop'] }] } },
+      },
+      localize,
+    );
+    const paths = new Set(azure.map((e) => e.path));
+    expect(paths.has('endpoints.azureOpenAI.groups.0')).toBe(true);
+    expect([...paths].some((path) => path.startsWith('endpoints.azureOpenAI.groups.0.'))).toBe(
+      false,
+    );
+  });
+
   it('skips hidden sections', () => {
     expect(index.some((e) => e.path === 'version' || e.path.startsWith('cache'))).toBe(false);
   });

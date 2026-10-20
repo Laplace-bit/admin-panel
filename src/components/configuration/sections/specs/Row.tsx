@@ -2,15 +2,15 @@ import { useState, useContext } from 'react';
 import type * as t from '@/types';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { useFieldError, useLocalize } from '@/hooks';
-import { toFieldId } from '../../renderer';
 import { SettingsRow } from '../../SettingsRow';
+import { toFieldId } from '../../renderer';
 import { isRowVisible } from '@/utils';
 
 /** Codes whose message is a predicate of the field ("is required"), read after its label. */
 const PREDICATE_CODES: ReadonlySet<string> = new Set(['required']);
 
 /** A spec problem as text: "Label is required", "Spec 1 (“GPT”) already uses this name". */
-export function problemText(problem: t.SpecProblem, label: string, localize: t.LocalizeFn): string {
+function problemText(problem: t.SpecProblem, label: string, localize: t.LocalizeFn): string {
   const text = localize(`com_config_issue_${problem.code}`, problem.params);
   return PREDICATE_CODES.has(problem.code) ? `${label} ${text}` : text;
 }
@@ -61,7 +61,7 @@ export function SpecFieldRow({
       marker={error ? 'error' : undefined}
       control={
         <div
-          className="flex min-w-0 flex-col gap-1.5"
+          className="flex min-w-0 flex-col gap-1.5 [&>:is(.cui-field,.relative)]:max-w-[min(100%,var(--settings-control-w))] [&>div>.cui-field]:max-w-[min(100%,var(--settings-control-w))]"
           onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget)) setVisited(true);
           }}

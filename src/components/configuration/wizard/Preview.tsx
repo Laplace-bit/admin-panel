@@ -4,7 +4,7 @@ import type * as t from '@/types';
 import { ChangeRow, formatReviewValue } from '@/components/configuration/review';
 import { useLocalize } from '@/hooks';
 
-/** The value an imported leaf sets, for keys shown without a change row (not recognised). */
+/** The value an imported leaf sets, for keys shown without a change row (not recognized). */
 function importedValue(row: t.ImportPreviewRow): t.ConfigValue {
   return row.rows.find((change) => change.item.path === row.fieldPath)?.item.after;
 }
@@ -30,8 +30,8 @@ function PreviewEntry({
   );
   const single = row.rows.length === 1 && row.rows[0].item.path === row.fieldPath;
   const replaces = row.replacesList && (
-    <span className="flex items-start gap-1 pl-6 text-xs text-(--cui-color-accent-warning)">
-      <span aria-hidden="true" className="flex pt-0.5">
+    <span className="flex items-start gap-1 pl-6 text-xs text-(--settings-warn-fg)">
+      <span aria-hidden="true" className="flex pt-0.5 text-(--settings-warn-mark)">
         <Icon name="warning" size="xs" />
       </span>
       {localize(
@@ -129,7 +129,7 @@ export function Preview({
       <p className="m-0 text-sm text-(--cui-color-text-default)">
         {localize('com_config_review_import_summary', { count, target: targetLabel })}
       </p>
-      <div className="flex max-h-[50vh] flex-col gap-3 overflow-y-auto pr-1">
+      <div className="flex flex-col gap-3">
         {visible.map((group) => (
           <section key={group.key} aria-label={group.title} className="flex flex-col gap-1">
             <h3 className="m-0 text-xs font-semibold tracking-wide text-(--cui-color-text-muted) uppercase">

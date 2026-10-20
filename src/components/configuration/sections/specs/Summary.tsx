@@ -1,18 +1,15 @@
 import type * as t from '@/types';
 import { isAgentSpec, problemsOf, specEndpoint } from './validation';
-import { isConfigRecord } from '@/utils';
+import { isConfigRecord, trimmedText } from '@/utils';
+import { endpointLabelOf } from './options';
 import { useSpecList } from './context';
 import { useLocalize } from '@/hooks';
-import { SpecIcon } from './SpecIcon';
-
-function textOf(value: t.ConfigValue): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
+import { SpecIcon } from './Icon';
 
 /** A spec's display title: its label, else its name, else "New spec". */
 export function specTitle(spec: t.ConfigValue, localize: t.LocalizeFn): string {
   if (!isConfigRecord(spec)) return localize('com_config_specs_new');
-  return textOf(spec.label) || textOf(spec.name) || localize('com_config_specs_new');
+  return trimmedText(spec.label) || trimmedText(spec.name) || localize('com_config_specs_new');
 }
 
 /** The icon before a spec's title in the list. */
@@ -45,20 +42,20 @@ function SummaryChip({
  */
 export function SpecSummary({ spec, index }: t.SpecSummaryProps) {
   const localize = useLocalize();
-  const { problems } = useSpecList();
+  const { problems, options } = useSpecList();
   if (!isConfigRecord(spec)) return null;
   const preset = isConfigRecord(spec.preset) ? spec.preset : {};
   const own = problemsOf(problems, index);
   const errors = own.filter((problem) => problem.level === 'error').length;
   const warnings = own.length - errors;
-  const name = textOf(spec.name);
-  const label = textOf(spec.label);
-  const target = isAgentSpec(spec) ? textOf(preset.agent_id) : textOf(preset.model);
+  const name = trimmedText(spec.name);
+  const label = trimmedText(spec.label);
+  const target = isAgentSpec(spec) ? trimmedText(preset.agent_id) : trimmedText(preset.model);
   const details = [
     name && name !== label ? name : '',
-    [specEndpoint(spec), target].filter(Boolean).join(' · '),
-    textOf(spec.group)
-      ? localize('com_config_specs_summary_group', { group: textOf(spec.group) })
+    [endpointLabelOf(options, specEndpoint(spec)), target].filter(Boolean).join(' · '),
+    trimmedText(spec.group)
+      ? localize('com_config_specs_summary_group', { group: trimmedText(spec.group) })
       : '',
   ].filter(Boolean);
   return (

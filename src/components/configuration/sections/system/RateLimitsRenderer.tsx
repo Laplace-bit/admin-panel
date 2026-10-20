@@ -3,12 +3,33 @@ import type * as t from '@/types';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { cn, isConfigRecord, isRowVisible } from '@/utils';
 import { UnknownSettings } from '../../UnknownSettings';
+import { SettingList, settingRows } from '../../values';
 import { useFieldState, useLocalize } from '@/hooks';
 import { RATE_LIMITERS } from '@/constants';
 import { toFieldId } from '../../renderer';
 import { labelForPath } from '../../meta';
 
 const SECTION = 'rateLimits';
+/** The settings of a limiter the table shows; a limiter's other settings are listed under it. */
+const LIMIT_FIELDS: ReadonlySet<string> = new Set([
+  'ipMax',
+  'ipWindowInMinutes',
+  'userMax',
+  'userWindowInMinutes',
+]);
+
+/** The entries of `value` the schema `fields` name, outside `skip` (unknown keys are listed apart). */
+function schemaEntries(
+  fields: readonly t.SchemaField[],
+  value: t.ConfigValue,
+  skip: ReadonlySet<string>,
+): t.ConfigRecord {
+  if (!isConfigRecord(value)) return {};
+  const keys = new Set(fields.map((field) => field.key));
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => keys.has(key) && !skip.has(key)),
+  );
+}
 
 /** A number librechat.yaml (or, in a profile, Base) sets; the panel's own overrides never apply here. */
 function setNumber(state: t.FieldState): number | undefined {
@@ -75,6 +96,27 @@ export function RateLimitsRenderer({ fields, parentValue }: t.FieldRendererProps
   const limiters = RATE_LIMITERS.filter(
     (limiter) => known.has(limiter.key) && isRowVisible(rowFilter, `${SECTION}.${limiter.key}`),
   );
+  const record = isConfigRecord(parentValue) ? parentValue : {};
+  const tabled = new Set(RATE_LIMITERS.map((limiter) => limiter.key));
+  const childrenOf = (key: string) => fields.find((field) => field.key === key)?.children ?? [];
+  /** What librechat.yaml sets that the table has no column for: a newer limiter or setting. */
+  const otherRows = rowFilter
+    ? []
+    : [
+        ...settingRows(fields, schemaEntries(fields, record, tabled), localize, {
+          path: SECTION,
+        }),
+        ...limiters.flatMap((limiter) => {
+          const path = `${SECTION}.${limiter.key}`;
+          const children = childrenOf(limiter.key);
+          return settingRows(
+            children,
+            schemaEntries(children, record[limiter.key], LIMIT_FIELDS),
+            localize,
+            { path, prefix: labelForPath(path, localize) },
+          );
+        }),
+      ];
   return (
     <>
       <div
@@ -121,8 +163,19 @@ export function RateLimitsRenderer({ fields, parentValue }: t.FieldRendererProps
           );
         })}
       </div>
+      <SettingList rows={otherRows} label={localize('com_config_ratelimits_other')} />
       {!rowFilter && isConfigRecord(parentValue) && (
-        <UnknownSettings fields={fields} value={parentValue} path={SECTION} />
+        <>
+          <UnknownSettings fields={fields} value={parentValue} path={SECTION} />
+          {limiters.map((limiter) => (
+            <UnknownSettings
+              key={limiter.key}
+              fields={childrenOf(limiter.key)}
+              value={record[limiter.key]}
+              path={`${SECTION}.${limiter.key}`}
+            />
+          ))}
+        </>
       )}
       <p className="m-0 px-4 pb-1 text-xs text-(--cui-color-text-muted)">
         {localize('com_config_ratelimits_env_note')}

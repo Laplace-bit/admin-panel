@@ -1,5 +1,6 @@
 import { ensureFreshBearer, refreshOn401 } from './refresh';
-import { getServerApiUrl } from './url';
+import { getApiBaseUrl, getServerApiUrl } from './url';
+import { TERMS_NOT_ACCEPTED_CODE } from '@/constants';
 
 /** Skew window: refresh proactively when the bearer is within this of expiry. */
 const PROACTIVE_REFRESH_SKEW_MS = 30_000;
@@ -45,14 +46,22 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
 }
 
 /**
- * Extract an error message from a failed API response and throw.
- * Handles both `{ error }` and `{ message }` response shapes.
+ * The message of a failed API response: its `{ error }` or `{ message }`, else
+ * `fallback` with the status. LibreChat's refusal until the admin accepts its
+ * terms of service becomes `terms_not_accepted <LibreChat URL>`, which the
+ * panel explains (with where to accept them) instead of a bare 403.
  */
+export async function apiErrorMessage(response: Response, fallback: string): Promise<string> {
+  const body = (await response.json().catch(() => ({}))) as {
+    error?: string;
+    message?: string;
+    code?: string;
+  };
+  if (body.code === TERMS_NOT_ACCEPTED_CODE) return `${TERMS_NOT_ACCEPTED_CODE} ${getApiBaseUrl()}`;
+  return body.error ?? body.message ?? `${fallback}: ${response.status}`;
+}
+
+/** Throws the message of a failed API response (see `apiErrorMessage`). */
 export async function extractApiError(response: Response, fallback: string): Promise<never> {
-  const body = await response.json().catch(() => ({}));
-  const message =
-    (body as { error?: string }).error ??
-    (body as { message?: string }).message ??
-    `${fallback}: ${response.status}`;
-  throw new Error(message);
+  throw new Error(await apiErrorMessage(response, fallback));
 }

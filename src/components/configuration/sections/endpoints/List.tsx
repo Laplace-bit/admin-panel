@@ -7,11 +7,15 @@ import { describeIssue } from './issues';
 import { isUnserved } from './model';
 import { cn } from '@/utils';
 
-/** Two letters for the endpoint's monogram: initials of its words, else its first two characters. */
-function monogram(title: string): string {
-  const words = title.split(/[\s_-]+/).filter(Boolean);
-  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
-  return title.slice(0, 2).toUpperCase();
+/**
+ * Two letters for the endpoint's monogram: initials of its words ("Azure
+ * (DeepSeek)" → "AD"), else its first two letters or digits; punctuation never shows.
+ */
+export function monogram(title: string): string {
+  const words = title.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  if (words.length >= 2) return `${[...words[0]][0]}${[...words[1]][0]}`.toUpperCase();
+  const [only = title] = words;
+  return [...only].slice(0, 2).join('').toUpperCase();
 }
 
 function Monogram({ title, muted }: { title: string; muted?: boolean }) {
@@ -53,7 +57,7 @@ export function Badge({
 
 /**
  * Where an endpoint comes from (CE-2): "librechat.yaml", "librechat.yaml +
- * overrides", "Added in admin"; in a profile "Inherited from Base", "Base +
+ * overrides", "Added in admin panel"; in a profile "Inherited from Base", "Base +
  * Role: USER" or "Added in Role: USER".
  */
 export function SourceBadge({ row }: { row: Pick<t.EndpointRow, 'origin' | 'overridden'> }) {
@@ -188,6 +192,7 @@ function RemovalRow({
         <button
           type="button"
           onClick={() => onUndo(removal)}
+          data-removal-undo={removal.key}
           aria-label={localize('com_config_ctl_entry_undo_a11y', { name: removal.title })}
           className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md border border-(--cui-color-stroke-default) bg-transparent px-2 py-1 text-xs text-(--cui-color-text-default) hover:bg-(--cui-color-background-hover)"
         >
@@ -214,6 +219,7 @@ function EndpointListRow({
   onReveal,
   onDelete,
   onRevert,
+  override,
 }: t.EndpointListRowProps) {
   const localize = useLocalize();
   const rowRef = useRef<HTMLLIElement>(null);
@@ -229,13 +235,17 @@ function EndpointListRow({
     return () => element.removeEventListener('config:expand', reveal);
   }, [row]);
 
+  const viewOnly = disabled || (row.origin === 'inherited' && !row.overridden);
   const menu: t.KebabMenuItem[] = [
     {
-      label: localize(disabled ? 'com_config_ce_action_view' : 'com_config_ce_action_edit'),
-      icon: 'pencil',
+      label: localize(viewOnly ? 'com_config_ce_action_view' : 'com_config_ce_action_edit'),
+      icon: viewOnly ? 'eye' : 'pencil',
       onClick: () => onOpen(row),
     },
   ];
+  if (!disabled && override && row.origin === 'inherited' && !row.overridden && !row.edited) {
+    menu.push({ label: override.label, icon: 'pencil', onClick: () => override.onSelect(row) });
+  }
   if (!disabled && row.overridden) {
     menu.push({
       label: localize('com_config_ce_action_revert'),
@@ -246,7 +256,7 @@ function EndpointListRow({
   if (!disabled) {
     const deletable = isDeletable(row);
     menu.push({
-      label: localize('com_config_ce_action_delete'),
+      label: localize('com_config_ce_menu_delete'),
       icon: 'trash',
       danger: deletable,
       disabled: !deletable,
@@ -266,9 +276,9 @@ function EndpointListRow({
       ref={rowRef}
       id={`${idPrefix}-${row.index}`}
       data-endpoint-row={row.identity ?? ''}
-      className="group relative flex items-center gap-3 rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) px-3 py-2 transition-colors focus-within:border-(--cui-color-outline) hover:bg-(--cui-color-background-hover)"
+      className="group relative flex items-center gap-3 rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) px-3 py-2 transition-colors hover:bg-(--cui-color-background-hover)"
     >
-      {!isOpen && <span className="config-section-grid-closed" style={{ display: 'none' }} />}
+      {!isOpen && <span className="config-section-grid-closed" style={{ display: 'none' }} inert />}
       <Monogram title={row.title} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -277,7 +287,7 @@ function EndpointListRow({
             aria-haspopup="dialog"
             aria-describedby={detailsId}
             onClick={() => onOpen(row)}
-            className="max-w-full cursor-pointer truncate border-none bg-transparent p-0 text-left text-sm font-medium text-(--cui-color-text-default) outline-none after:absolute after:inset-0 after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:outline-(--cui-color-outline)"
+            className="row-link max-w-full cursor-pointer truncate border-none bg-transparent p-0 text-left text-sm font-medium text-(--cui-color-text-default) after:absolute after:inset-0 after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:outline-offset-1 focus-visible:after:outline-(--cui-color-outline)"
             title={row.title}
           >
             {row.title}
@@ -325,6 +335,7 @@ export function EndpointList({
   onReveal,
   onDelete,
   onRevert,
+  override,
   onUndoRemoval,
   idPrefix,
 }: t.EndpointListProps) {
@@ -358,6 +369,7 @@ export function EndpointList({
             disabled={disabled}
             onOpen={onOpen}
             onReveal={onReveal}
+            override={override}
             onDelete={onDelete}
             onRevert={onRevert}
           />

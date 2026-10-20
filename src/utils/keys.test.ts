@@ -53,7 +53,7 @@ describe('findUnsafeKeys', () => {
 });
 
 describe('findBlankText', () => {
-  it('finds whitespace-only strings and keys, not empty or non-blank text', () => {
+  it('finds whitespace-only strings and keys, and empty values under an object', () => {
     expect(
       findBlankText(
         { a: '   ', b: '', c: ' x ', headers: { '  ': 'v', ok: '\t' }, list: ['ok', ' '] },
@@ -61,10 +61,19 @@ describe('findBlankText', () => {
       ),
     ).toEqual([
       { path: 'root.a' },
+      { path: 'root.b' },
       { path: 'root.headers', key: '  ' },
       { path: 'root.headers.ok' },
       { path: 'root.list.1' },
     ]);
+  });
+
+  it('flags a header with a key but no value, not an empty value on its own', () => {
+    expect(findBlankText({ 'X-A': 'a', 'X-C': '' }, 'mcpServers.s.headers')).toEqual([
+      { path: 'mcpServers.s.headers.X-C' },
+    ]);
+    expect(findBlankText([{ key: 'X-C', value: '' }], 'h')).toEqual([{ path: 'h.X-C' }]);
+    expect(findBlankText('', 'endpoints.custom.0.iconURL')).toEqual([]);
   });
 
   it('finds blank keys and values in key/value pairs', () => {

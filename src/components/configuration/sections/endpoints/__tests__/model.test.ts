@@ -8,6 +8,7 @@ import {
   validateEndpoint,
   hasBlockingIssue,
 } from '../model';
+import { monogram } from '../List';
 
 const complete: t.ConfigRecord = {
   name: 'OpenRouter',
@@ -74,6 +75,18 @@ describe('validateEndpoint', () => {
     });
     expect(issues).toEqual([
       { field: 'name', code: 'nameSimilar', severity: 'warning', params: { name: 'openrouter' } },
+    ]);
+  });
+
+  it('rejects a name LibreChat serves under the same key as another (any case of "ollama")', () => {
+    const issues = validateEndpoint({
+      entry: { ...complete, name: 'ollama' },
+      otherNames: ['Ollama'],
+      fromLowerLayer: false,
+      storedSecret: false,
+    });
+    expect(issues).toEqual([
+      { field: 'name', code: 'nameMerged', severity: 'error', params: { name: 'Ollama' } },
     ]);
   });
 
@@ -151,5 +164,14 @@ describe('list row helpers', () => {
   it('recognizes usable base URLs', () => {
     expect(isUsableBaseURL('http://host.docker.internal:11434/v1')).toBe(true);
     expect(isUsableBaseURL('ftp://x')).toBe(false);
+  });
+});
+
+describe('monogram', () => {
+  it('takes the initials of words, skipping punctuation', () => {
+    expect(monogram('Azure (DeepSeek)')).toBe('AD');
+    expect(monogram('open_router')).toBe('OR');
+    expect(monogram('Mistral')).toBe('MI');
+    expect(monogram('(x)')).toBe('X');
   });
 });

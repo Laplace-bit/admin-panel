@@ -55,6 +55,7 @@ function reviewFor(
     open: true,
     saving: false,
     sessionExpired: false,
+    termsUrl: null,
     saveIssues: [],
     title: 'Review',
     blocked: issues.some((issue) => issue.blocking),
@@ -81,6 +82,20 @@ describe('ChangeReview', () => {
     );
     const link = screen.getByRole('link', { name: /sign in again/i });
     expect(link).toHaveAttribute('href', '/login');
+    expect(link).toHaveAttribute('target', '_blank');
+  });
+
+  it('links to LibreChat to accept its terms when a save was refused until the admin does', () => {
+    render(
+      <ChangeReview
+        review={reviewFor([{ fieldPath: 'registration.socialLogins', value: ['openid'] }], {
+          termsUrl: 'https://chat.example.com',
+          saveIssues: [{ message: 'LibreChat refused the save', blocking: false }],
+        })}
+      />,
+    );
+    const link = screen.getByRole('link', { name: /accept the terms/i });
+    expect(link).toHaveAttribute('href', 'https://chat.example.com');
     expect(link).toHaveAttribute('target', '_blank');
   });
 

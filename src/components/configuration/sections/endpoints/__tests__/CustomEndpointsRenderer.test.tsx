@@ -189,6 +189,35 @@ describe('CustomEndpointsRenderer', () => {
     expect(onChange).toHaveBeenLastCalledWith('endpoints.custom', [...remaining, saved[2]]);
   });
 
+  it('keeps a pending deletion the list filter matches listed, with Undo', () => {
+    const layers = baseLayers();
+    const saved = savedList(layers);
+    const extra = ['E1', 'E2', 'E3', 'E4'].map((name) => ({ ...ADMIN_ENTRY, name }));
+    const remaining = [...saved.slice(0, 2), ...extra];
+    const edits: t.CollectionEdits = {
+      'endpoints.custom': {
+        baseline: saved,
+        origins: remaining.map((entry, i) =>
+          i < 2 ? { identity: ['GPT', 'Claude'][i], baseline: entry } : null,
+        ),
+        detached: [{ value: saved[2], origin: { identity: 'Mine', baseline: saved[2] } }],
+      },
+    };
+    render(<Harness layers={layers} initial={remaining} collectionEdits={edits} />);
+    fireEvent.change(screen.getByLabelText('com_config_ce_filter_a11y'), {
+      target: { value: 'mine' },
+    });
+    expect(
+      screen.getByRole('button', { name: 'com_config_ctl_entry_undo_a11y:Mine' }),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('com_config_ce_filter_a11y'), {
+      target: { value: 'E1' },
+    });
+    expect(
+      screen.queryByRole('button', { name: 'com_config_ctl_entry_undo_a11y:Mine' }),
+    ).not.toBeInTheDocument();
+  });
+
   it('opens an inherited endpoint read-only until it is overridden for the profile (CE-8)', () => {
     render(<Harness layers={scopeLayersFixture()} />);
     const drawer = openRow('Claude');

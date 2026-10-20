@@ -280,6 +280,8 @@ export interface ResetBaseConfigDialogProps {
   open: boolean;
   resetting: boolean;
   error?: string | null;
+  /** Where to accept LibreChat's terms, when it refused the reset until the admin does. */
+  termsUrl?: string | null;
   /** The overrides the reset removes, listed with what each setting reverts to (WS7). */
   overrides?: BaseOverridesState;
   onConfirm: () => void;
@@ -395,6 +397,8 @@ export interface ImportYamlDialogProps {
   schemaPathSet: ReadonlySet<string>;
   /** Writes the chosen leaves to the target; rejects with the reason when nothing was written. */
   onImport: (request: ImportRequest) => Promise<void>;
+  /** MCP servers of the configuration shown, so a sparse override of one validates merged onto it. */
+  knownMcpServers?: ConfigRecord;
 }
 
 export type ImportTab = 'upload' | 'paste';
@@ -562,6 +566,11 @@ export interface FieldGroupDef {
 
 /** One named provider (openAI, anthropic, …) on the AI Providers tab. */
 export type ProviderSectionProps = Omit<FieldRendererProps, 'fields'> & { field: SchemaField };
+
+export interface OtherSettingsProps extends FieldRendererProps {
+  /** The keys of `fields` the renderer shows itself. */
+  placed: ReadonlySet<string>;
+}
 
 export interface UnknownSettingsProps {
   /** Every schema field of the object (the full list, not a filtered subset). */

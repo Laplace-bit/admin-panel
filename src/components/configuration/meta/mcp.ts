@@ -87,7 +87,6 @@ const CATALOG_NUMBERS = [
 /** MCP settings (MCP-13): an operational-tuning label and help for catalog recovery, plain labels for its knobs. */
 function settingsMeta(): t.FieldMetaRegistry {
   const entries: t.FieldMetaRegistry = {
-    'mcpSettings.allowedDomains': { descriptionKey: 'com_config_mcp_settings_domains_desc' },
     'mcpSettings.allowedAddresses': { descriptionKey: 'com_config_mcp_settings_addresses_desc' },
     'mcpSettings.catalogRecovery': {
       labelKey: 'com_config_mcp_label_catalogRecovery',

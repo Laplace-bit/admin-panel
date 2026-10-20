@@ -1,10 +1,10 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type * as t from '@/types';
+import { useListKeys, useLocalize, useEntryMarkers } from '@/hooks';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { getEntryIdentity, getEntryTitle } from './entries';
 import { AddItemButton } from '@/components/shared';
 import { ObjectEntryCard } from './ObjectEntryCard';
-import { useListKeys, useLocalize, useEntryMarkers } from '@/hooks';
 import { isRowVisible } from '@/utils';
 
 /**
@@ -51,6 +51,12 @@ export function ArrayObjectField({
   const [removed, setRemoved] = useState<Array<t.PendingRemoval<string> & { focus: boolean }>>([]);
   const prevRef = useRef({ length: items.length, session: editSessionId, keys });
   const undoingRef = useRef(false);
+  const undoFocusRef = useRef<{ item: t.ConfigValue } | null>(null);
+  const moveFocusRef = useRef<{
+    index: number;
+    item: t.ConfigValue;
+    direction: 'up' | 'down';
+  } | null>(null);
 
   /** Entries back in the list (Undo, a removal reverted from the review) are no longer pending deletion. */
   const liveIdentities = new Set(items.map(getEntryIdentity));
@@ -121,6 +127,7 @@ export function ArrayObjectField({
     const at = Math.min(ghost.index, current.length);
     setRemoved((list) => list.filter((entry) => entry.key !== ghost.key));
     undoingRef.current = true;
+    undoFocusRef.current = { item: ghost.value };
     onChange([...current.slice(0, at), ghost.value, ...current.slice(at)]);
   };
 
@@ -129,8 +136,59 @@ export function ArrayObjectField({
     const current = [...itemsRef.current];
     if (target < 0 || target >= current.length) return;
     [current[index], current[target]] = [current[target], current[index]];
+    moveFocusRef.current = {
+      index: target,
+      item: current[target],
+      direction: offset < 0 ? 'up' : 'down',
+    };
     onChange(current);
   };
+
+  /** After Undo, focus goes to the restored entry's header (its Undo button is gone), once it is back. */
+  useEffect(() => {
+    const undone = undoFocusRef.current;
+    if (!undone) return;
+    const restoredItem = undone.item;
+    const index = items.findIndex(
+      (item) =>
+        item === restoredItem ||
+        (getEntryIdentity(item) != null &&
+          getEntryIdentity(item) === getEntryIdentity(restoredItem)),
+    );
+    if (index < 0) return;
+    undoFocusRef.current = null;
+    const cardId = entryCardId(index);
+    requestAnimationFrame(() => {
+      const card = cardId ? document.getElementById(cardId) : null;
+      card?.querySelector<HTMLElement>('button[aria-expanded]')?.focus();
+    });
+  });
+
+  /**
+   * Keyboard focus follows the moved entry, once the list shows it at its new
+   * place: its same move button, or the other one at either end of the list.
+   */
+  useEffect(() => {
+    const move = moveFocusRef.current;
+    if (!move) return;
+    const landed = items[move.index];
+    const sameEntry =
+      landed === move.item ||
+      (getEntryIdentity(landed) != null &&
+        getEntryIdentity(landed) === getEntryIdentity(move.item));
+    if (!sameEntry) return;
+    moveFocusRef.current = null;
+    const cardId = entryCardId(move.index);
+    /** Not cancelled by the next render: the page re-renders as the move is staged. */
+    requestAnimationFrame(() => {
+      const card = cardId ? document.getElementById(cardId) : null;
+      const other = move.direction === 'up' ? 'down' : 'up';
+      const button =
+        card?.querySelector(`[data-move="${move.direction}"]`) ??
+        card?.querySelector(`[data-move="${other}"]`);
+      if (button instanceof HTMLElement) button.focus();
+    });
+  });
 
   const handleEntryChange = (index: number, newValue: t.ConfigValue) => {
     if (onEntryChange) {

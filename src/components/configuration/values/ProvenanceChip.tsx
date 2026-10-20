@@ -1,5 +1,5 @@
-import { useContext } from 'react';
 import { HoverCard } from '@clickhouse/click-ui';
+import { useContext, useId, useState } from 'react';
 import type * as t from '@/types';
 import { describeStack, sourceLabel, formatLayerValue, formatConfigValue } from './labels';
 import { useLocalize, useFieldState, useValuesScope, useHasValueLayers } from '@/hooks';
@@ -39,44 +39,77 @@ export function showsShadow(
   return state.shadowedBy != null && (state.isConfigured || state.isOverride || state.isEdited);
 }
 
+/** How a shadowed value's source is named in the reason: "Edited" while it is a pending edit. */
+export function shadowedSourceLabel(
+  state: t.FieldState,
+  localize: t.LocalizeFn,
+  scope?: Pick<t.ScopeLayer, 'principalType' | 'name'> | null,
+): string {
+  if (state.isEdited) return localize('com_config_ui_state_edited');
+  return sourceLabel(state.source, localize, scope);
+}
+
+/** Why a value is ignored: what Global sets (or that it sets nothing, so LibreChat's default applies). */
+function shadowReason(shadowedBy: t.ShadowedBy, source: string, localize: t.LocalizeFn): string {
+  const field = labelForPath(shadowedBy.path, localize);
+  if (shadowedBy.value === undefined) {
+    return localize('com_config_providers_shadow_block_unset', { field, source });
+  }
+  const value = formatConfigValue(shadowedBy.value, localize, shadowedBy.path);
+  return localize(
+    shadowedBy.precedence === 'block'
+      ? 'com_config_providers_shadow_block'
+      : 'com_config_providers_shadow_field',
+    { field, value, source },
+  );
+}
+
 /**
  * "Overridden by Global: gpt-5.6-luna" (D11): a value Global overrides
- * (`endpoints.all`) take precedence over. The row's own provenance
- * (`source`, e.g. librechat.yaml) is folded into the reason on hover, so the
- * row carries one chip. On the AI providers tab it links to the Global value.
+ * (`endpoints.all`) take precedence over. The chip is a disclosure: pressing
+ * it (mouse, keyboard or touch) shows why the value is ignored, naming the
+ * row's own source (`source`, e.g. librechat.yaml), so the row carries one
+ * chip; screen readers hear the reason as its description. On the AI
+ * providers tab it links to the Global value.
  */
 export function ShadowBadge({ shadowedBy, source }: t.ShadowBadgeProps) {
   const localize = useLocalize();
   const reveal = useContext(GlobalRevealContext);
+  const reasonId = useId();
+  const [open, setOpen] = useState(false);
   const field = labelForPath(shadowedBy.path, localize);
   const value = formatConfigValue(shadowedBy.value, localize, shadowedBy.path);
-  const hasValue = shadowedBy.value !== undefined;
-  const hint = localize(
-    shadowedBy.precedence === 'block'
-      ? 'com_config_providers_shadow_block'
-      : 'com_config_providers_shadow_field',
-    { field, value, source: source ?? localize('com_config_ui_state_edited') },
-  );
+  const reason = shadowReason(shadowedBy, source, localize);
   return (
-    <span title={hint} className="state-chip state-chip-shadowed" data-state-chip="shadowed">
-      <span className="max-w-52 truncate">
-        {hasValue
-          ? localize('com_config_providers_shadow_label_value', { value })
-          : localize('com_config_providers_shadow_label')}
-      </span>
-      <span className="sr-only">{`, ${hint}`}</span>
-      {reveal && (
+    <>
+      <span className="state-chip state-chip-shadowed" data-state-chip="shadowed">
         <button
           type="button"
-          className="state-chip-link"
-          onClick={() => reveal(shadowedBy.path)}
-          aria-label={localize('com_config_providers_shadow_go', { field })}
-          title={localize('com_config_providers_shadow_go', { field })}
+          className="state-chip-link m-0 max-w-52 truncate"
+          aria-expanded={open}
+          aria-describedby={reasonId}
+          onClick={() => setOpen((current) => !current)}
         >
-          <DecorativeIcon name="arrow-right" size="xs" />
+          {shadowedBy.value !== undefined
+            ? localize('com_config_providers_shadow_label_value', { value })
+            : localize('com_config_providers_shadow_label')}
         </button>
-      )}
-    </span>
+        {reveal && (
+          <button
+            type="button"
+            className="state-chip-link"
+            onClick={() => reveal(shadowedBy.path)}
+            aria-label={localize('com_config_providers_shadow_go', { field })}
+            title={localize('com_config_providers_shadow_go', { field })}
+          >
+            <DecorativeIcon name="arrow-right" size="xs" />
+          </button>
+        )}
+      </span>
+      <span id={reasonId} hidden={!open} className="state-chip-reason">
+        {reason}
+      </span>
+    </>
   );
 }
 
@@ -88,7 +121,13 @@ export function ShadowBadge({ shadowedBy, source }: t.ShadowBadgeProps) {
  * shadowed by `endpoints.all` gets an extra warning badge. WS6 places it in
  * the settings row's `chips` slot.
  */
-export function ProvenanceChip({ state, scope, hideDefault, path = '' }: t.ProvenanceChipProps) {
+export function ProvenanceChip({
+  state,
+  scope,
+  hideDefault,
+  path = '',
+  formatLayer,
+}: t.ProvenanceChipProps) {
   const localize = useLocalize();
   if (state.ignoredOverride) {
     return (
@@ -105,12 +144,19 @@ export function ProvenanceChip({ state, scope, hideDefault, path = '' }: t.Prove
   const text = state.isHidden
     ? localize('com_config_values_source_hidden')
     : sourceLabel(state.source, localize, scope);
-  if (showsShadow(state)) return <ShadowBadge shadowedBy={state.shadowedBy} source={text} />;
+  if (showsShadow(state)) {
+    return (
+      <ShadowBadge
+        shadowedBy={state.shadowedBy}
+        source={shadowedSourceLabel(state, localize, scope)}
+      />
+    );
+  }
   if (hideDefault && isDefaultValue(state) && !state.isHidden) return null;
 
   const chip = state.isHidden ? 'hidden' : SOURCE_CHIPS[state.source];
   const stack = state.stack ?? [];
-  const summary = describeStack(state, localize, path, scope);
+  const summary = describeStack(state, localize, path, scope, formatLayer);
   const topIndex = stack.length - 1;
 
   return (
@@ -147,7 +193,9 @@ export function ProvenanceChip({ state, scope, hideDefault, path = '' }: t.Prove
                     )}
                   >
                     <span>{sourceLabel(layer.source, localize, scope)}</span>
-                    <span className="truncate">{formatLayerValue(layer, localize, path)}</span>
+                    <span className="truncate">
+                      {formatLayer?.(layer) ?? formatLayerValue(layer, localize, path)}
+                    </span>
                   </li>
                 ))}
               </ol>
@@ -163,10 +211,18 @@ export function ProvenanceChip({ state, scope, hideDefault, path = '' }: t.Prove
  * The provenance chip of one field, read from the nearest `ConfigValuesProvider`;
  * nothing outside a provider that has the layer model.
  */
-export function FieldProvenance({ path, hideDefault }: t.FieldProvenanceProps) {
+export function FieldProvenance({ path, hideDefault, formatLayer }: t.FieldProvenanceProps) {
   const state = useFieldState(path);
   const scope = useValuesScope();
   const hasLayers = useHasValueLayers();
   if (!hasLayers) return null;
-  return <ProvenanceChip state={state} scope={scope} hideDefault={hideDefault} path={path} />;
+  return (
+    <ProvenanceChip
+      state={state}
+      scope={scope}
+      hideDefault={hideDefault}
+      path={path}
+      formatLayer={formatLayer}
+    />
+  );
 }

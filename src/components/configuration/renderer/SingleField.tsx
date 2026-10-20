@@ -281,6 +281,7 @@ export function SingleFieldRenderer({
         renderFields={(variantFields, variantValue, onVariantChange) => (
           <InlineFieldRenderer
             fields={variantFields}
+            knownFields={field.children ?? variantFields}
             parentValue={variantValue}
             parentPath={path}
             onChange={onVariantChange}

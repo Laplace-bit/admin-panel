@@ -10,6 +10,10 @@ export const CUSTOM_KEY = 'custom';
 const GROUPS_KEY = 'groups';
 const ENUM_LIST = /^array<enum\(/;
 const MAX_LIST_PREVIEW = 2;
+const SHADOW_SUMMARY_KEYS = {
+  wins: 'com_config_providers_summary_shadowed',
+  ignored: 'com_config_providers_summary_shadowed_ignored',
+} as const;
 
 /** The purpose groups declared for a provider (the shared endpoint groups for an unknown one). */
 export function providerLayout(provider: string): readonly t.ProviderGroupDef[] {
@@ -125,11 +129,10 @@ export function summarizeFields(
     const value = read.valueAt(path);
     if (value === undefined) continue;
     const text = summaryValue(field, value, localize);
+    const shadow = read.shadowOf?.(path) ?? null;
     items.push({
       label: labelForPath(path, localize),
-      value: read.isShadowed?.(path)
-        ? localize('com_config_providers_summary_shadowed', { value: text })
-        : text,
+      value: shadow ? localize(SHADOW_SUMMARY_KEYS[shadow], { value: text }) : text,
     });
   }
   return items;
@@ -186,12 +189,16 @@ export function createSummaryReader({
     isSet: (path) => isPathSet(path, configuredPaths, editedValues),
     valueAt: (path) =>
       getValue(path, getValueAtPath(providerValue, path.slice(providerPath.length + 1))),
-    isShadowed: (path) => resolveShadowedBy(path, root, editedValues) != null,
+    shadowOf: (path) => {
+      const shadow = resolveShadowedBy(path, root, editedValues);
+      if (!shadow) return null;
+      return shadow.value === undefined ? 'ignored' : 'wins';
+    },
   };
 }
 
 /** Global overrides first, then the built-in providers in their usual order, then any new ones. */
-export function providerRank(key: string): number {
+function providerRank(key: string): number {
   if (key === GLOBAL_PROVIDER_KEY) return -1;
   const index = BUILT_IN_PROVIDERS.indexOf(key);
   return index === -1 ? BUILT_IN_PROVIDERS.length : index;

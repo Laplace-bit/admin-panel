@@ -19,18 +19,19 @@ import {
   EndpointRefRow,
 } from './Fields';
 import { ConfigErrorsProvider, ConfigErrorsContext } from '@/contexts/ConfigErrorsContext';
+import { getEntryKey, getValueAtPath, asConfigRecord, hasConfigValue } from '@/utils';
 import { EntryFieldChipsContext } from '@/contexts/EntryFieldChipsContext';
-import { getEntryKey, getValueAtPath, isConfigRecord } from '@/utils';
 import { renderInlineField, toFieldId } from '../../renderer';
 import { ParamDefinitionsRow } from './ParamDefinitions';
 import { UnknownSettings } from '../../UnknownSettings';
+import { FieldChips, ShadowChip } from './Chips';
 import { HeaderPlaceholders } from './Request';
 import { SelectField } from '../../fields';
+import { EndpointSectionNav } from './Nav';
 import { labelForPath } from '../../meta';
 import { describeIssue } from './issues';
 import { PricingRow } from './Pricing';
 import { useLocalize } from '@/hooks';
-import { FieldChips } from './Chips';
 import { modelNames } from './model';
 import { Banner } from './Banner';
 
@@ -48,33 +49,9 @@ const MODEL_ENDPOINT_KEYS: Readonly<Record<string, string[]>> = {
   reasoningLabelModel: ['reasoningLabelEndpoint', 'activityEndpoint', 'titleEndpoint'],
 };
 
-function asRecord(value: t.ConfigValue): t.ConfigRecord {
-  return isConfigRecord(value) ? value : {};
-}
-
-function hasValue(value: t.ConfigValue): boolean {
-  if (value === undefined || value === null || value === '') return false;
-  if (Array.isArray(value)) return value.length > 0;
-  if (isConfigRecord(value)) return Object.keys(value).length > 0;
-  return true;
-}
-
-interface ResolvedField {
-  key: string;
-  field: t.SchemaField;
-  parentKey?: string;
-}
-
-interface SectionLayout {
-  section: t.EndpointSectionDef;
-  visible: t.EndpointFieldDef[];
-  hidden: t.EndpointFieldDef[];
-  warnings: string[];
-}
-
 /** Schema fields by entry key, nested ones as `models.default`. */
-function indexFields(fields: t.SchemaField[]): Map<string, ResolvedField> {
-  const index = new Map<string, ResolvedField>();
+function indexFields(fields: t.SchemaField[]): Map<string, t.EndpointResolvedField> {
+  const index = new Map<string, t.EndpointResolvedField>();
   for (const field of fields) {
     index.set(field.key, { key: field.key, field });
     const isGroup = field.children?.length && !field.isArray && field.type !== 'record';
@@ -87,19 +64,31 @@ function indexFields(fields: t.SchemaField[]): Map<string, ResolvedField> {
   return index;
 }
 
-/** Schema keys no section places (newer LibreChat settings), for "Other settings". */
-function unplacedKeys(index: Map<string, ResolvedField>): t.EndpointFieldDef[] {
+/**
+ * Schema keys no section places (newer LibreChat settings), for "Other
+ * settings": a new top-level setting (a new object renders as its group of
+ * rows), or a new key of an object a section places (`customParams`).
+ */
+function unplacedKeys(index: Map<string, t.EndpointResolvedField>): t.EndpointFieldDef[] {
   const placed = new Set(ENDPOINT_SECTIONS.flatMap((section) => section.fields.map((f) => f.key)));
-  const parents = new Set([...index.values()].flatMap((entry) => entry.parentKey ?? []));
   const defs: t.EndpointFieldDef[] = [];
   for (const [key, resolved] of index) {
-    if (placed.has(key) || HIDDEN_ENDPOINT_KEYS.has(key) || parents.has(key)) continue;
+    if (placed.has(key) || HIDDEN_ENDPOINT_KEYS.has(key)) continue;
     const top = resolved.parentKey ?? key;
     if (resolved.parentKey === undefined && PLACED_TOP_KEYS.has(key)) continue;
     if (resolved.parentKey !== undefined && !PLACED_TOP_KEYS.has(top)) continue;
     defs.push({ key, optional: true });
   }
   return defs;
+}
+
+/** The objects whose keys sections place one by one (`models`, `customParams`). */
+function placedGroups(index: Map<string, t.EndpointResolvedField>): t.SchemaField[] {
+  const parents = new Set([...index.values()].flatMap((entry) => entry.parentKey ?? []));
+  return [...parents].flatMap((key) => {
+    const field = index.get(key)?.field;
+    return field && PLACED_TOP_KEYS.has(key) ? [field] : [];
+  });
 }
 
 /** The endpoint a model setting names models of: the first endpoint setting that is set, else this one. */
@@ -113,21 +102,21 @@ function modelEndpoint(key: string, entry: t.ConfigRecord, own: string): string 
 
 /** Keys of the parameter definitions an endpoint defines. */
 function definitionKeys(entry: t.ConfigRecord | undefined): ReadonlySet<string> {
-  const list = asRecord(entry?.customParams).paramDefinitions;
+  const list = asConfigRecord(entry?.customParams).paramDefinitions;
   if (!Array.isArray(list)) return new Set();
   return new Set(list.flatMap((item) => getEntryKey(item, 'key') ?? []));
 }
 
 /** The parameter set users of the endpoint get: `defaultParamsEndpoint`, else its native provider's. */
 function paramSetOf(entry: t.ConfigRecord): string {
-  const chosen = asRecord(entry.customParams).defaultParamsEndpoint;
+  const chosen = asConfigRecord(entry.customParams).defaultParamsEndpoint;
   if (typeof chosen === 'string' && chosen !== '' && chosen !== 'custom') return chosen;
   return typeof entry.provider === 'string' ? entry.provider : 'custom';
 }
 
 /**
  * The custom endpoint editor (WS10 CE-7): Connection, Models, Request
- * shaping, Behaviour, Labels & reasoning, Parameters and Token pricing.
+ * shaping, Behavior, Labels & reasoning, Parameters and Token pricing.
  * Optional settings show only when set or added from "Add setting". Problems
  * show at their field (errors) or atop their section (warnings), and every
  * value the target overrides offers its revert (CE-2).
@@ -140,7 +129,6 @@ export function EndpointEditor({
   issues,
   origin,
   disabled,
-  endpointNames,
   storedSecret,
   lowerEntry,
   savedEntry,
@@ -220,7 +208,7 @@ export function EndpointEditor({
     (parentKey: string) =>
     (childPath: string, childValue: t.ConfigValue): void => {
       const leaf = childPath.split('.').pop() ?? childPath;
-      const next = { ...asRecord(latestRef.current[parentKey]), [leaf]: childValue };
+      const next = { ...asConfigRecord(latestRef.current[parentKey]), [leaf]: childValue };
       if (childValue === undefined) delete next[leaf];
       latestRef.current = { ...latestRef.current, [parentKey]: next };
       onFieldChange(parentKey, Object.keys(next).length > 0 ? next : undefined);
@@ -235,7 +223,7 @@ export function EndpointEditor({
     const resolved = index.get(key);
     if (!resolved) return null;
     const { field, parentKey } = resolved;
-    const parentValue = parentKey ? asRecord(value[parentKey]) : value;
+    const parentValue = parentKey ? asConfigRecord(value[parentKey]) : value;
     const parentPath = parentKey ? `${path}.${parentKey}` : path;
     const change = parentKey ? nestedChange(parentKey) : topChange;
     const dataPath = `${parentPath}.${field.key}`;
@@ -276,9 +264,14 @@ export function EndpointEditor({
     if (key === 'apiKey' && fromLower && !storedSecret && lowerEntry?.apiKey === undefined) {
       return <HiddenKeyRow key={key} {...common} />;
     }
+    const refChips = (
+      <>
+        <ShadowChip path={dataPath} value={current} />
+        {chips}
+      </>
+    );
     if (ENDPOINT_REFERENCE_KEYS.has(key)) {
-      const others = endpointNames.filter((other) => other !== name);
-      return <EndpointRefRow key={key} {...common} names={others} />;
+      return <EndpointRefRow key={key} {...common} chips={refChips} self={name} />;
     }
     if (key === 'customParams.defaultParamsEndpoint') {
       return <ParamSetRow key={key} {...common} />;
@@ -302,16 +295,25 @@ export function EndpointEditor({
     if (MODEL_REFERENCE_KEYS.has(key)) {
       const endpoint = modelEndpoint(key, value, name);
       const models = endpoint === name ? modelNames(value) : (modelsOf?.(endpoint) ?? []);
-      return <ModelRefRow key={key} {...common} endpointName={endpoint} models={models} />;
+      return (
+        <ModelRefRow
+          key={key}
+          {...common}
+          chips={refChips}
+          endpointName={endpoint}
+          models={models}
+        />
+      );
     }
     if (key === 'tokenConfig') {
       return (
         <PricingRow
           key={key}
           path={dataPath}
+          field={field}
           value={current}
           models={modelNames(value)}
-          lockedModels={new Set(Object.keys(asRecord(lowerEntry?.tokenConfig)))}
+          lockedModels={new Set(Object.keys(asConfigRecord(lowerEntry?.tokenConfig)))}
           onChange={write}
           disabled={disabled}
           chips={chips}
@@ -345,7 +347,7 @@ export function EndpointEditor({
   const isShown = (def: t.EndpointFieldDef): boolean => {
     if (!def.optional || shown.has(def.key)) return true;
     const [head, child] = def.key.split('.');
-    return hasValue(child === undefined ? value[head] : asRecord(value[head])[child]);
+    return hasConfigValue(child === undefined ? value[head] : asConfigRecord(value[head])[child]);
   };
 
   const warnings = new Map<string, string[]>();
@@ -355,7 +357,7 @@ export function EndpointEditor({
     warnings.set(section, [...(warnings.get(section) ?? []), describeIssue(issue, localize)]);
   }
 
-  const layout: SectionLayout[] = ENDPOINT_SECTIONS.filter(
+  const layout: t.EndpointSectionLayout[] = ENDPOINT_SECTIONS.filter(
     (section) => !essentialsOnly || ESSENTIAL_SECTION_IDS.has(section.id),
   ).flatMap((section) => {
     const defs = (section.catchAll ? unplacedKeys(index) : section.fields).filter((def) =>
@@ -379,37 +381,14 @@ export function EndpointEditor({
       <EntryFieldChipsContext.Provider value={renderChips}>
         <div className="flex flex-col gap-6">
           {!essentialsOnly && layout.length > 1 && (
-            <nav
-              aria-label={localize('com_config_ce_sections_nav')}
-              className="sticky top-0 z-10 -mx-4 -mt-4 flex gap-1 overflow-x-auto border-b border-(--cui-color-stroke-default) bg-(--cui-color-background-panel) px-4 py-2"
-            >
-              {layout.map(({ section }) => {
-                const count = errorCount(section.id);
-                return (
-                  <a
-                    key={section.id}
-                    href={`#${sectionDomId(section.id)}`}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      document
-                        .getElementById(sectionDomId(section.id))
-                        ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-                    }}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap text-(--cui-color-text-muted) no-underline hover:bg-(--cui-color-background-hover) hover:text-(--cui-color-text-default)"
-                  >
-                    {localize(section.labelKey)}
-                    {count > 0 && (
-                      <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-(--settings-danger-bg) px-1 text-[0.6875rem] font-semibold text-(--settings-danger-fg)">
-                        <span aria-hidden="true">{count}</span>
-                        <span className="sr-only">
-                          {localize('com_config_ce_section_errors', { count })}
-                        </span>
-                      </span>
-                    )}
-                  </a>
-                );
-              })}
-            </nav>
+            <EndpointSectionNav
+              idPrefix={toFieldId(path)}
+              sections={layout.map(({ section }) => ({
+                id: section.id,
+                label: localize(section.labelKey),
+                errorCount: errorCount(section.id),
+              }))}
+            />
           )}
           {layout.map(({ section, visible, hidden, warnings: sectionWarnings }) => {
             const headingId = `${sectionDomId(section.id)}-heading`;
@@ -470,7 +449,19 @@ export function EndpointEditor({
               </section>
             );
           })}
-          {!essentialsOnly && <UnknownSettings fields={fields} value={value} path={path} />}
+          {!essentialsOnly && (
+            <>
+              <UnknownSettings fields={fields} value={value} path={path} />
+              {placedGroups(index).map((group) => (
+                <UnknownSettings
+                  key={group.key}
+                  fields={group.children ?? []}
+                  value={value[group.key]}
+                  path={`${path}.${group.key}`}
+                />
+              ))}
+            </>
+          )}
         </div>
       </EntryFieldChipsContext.Provider>
     </ConfigErrorsProvider>

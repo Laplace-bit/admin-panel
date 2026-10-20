@@ -174,12 +174,15 @@ export interface ProvenanceChipProps {
   hideDefault?: boolean;
   /** The field's path, so credential values are masked in the hover card. */
   path?: string;
+  /** Each layer's value as the row shows it (a mode name instead of the flag behind it). */
+  formatLayer?: (layer: FieldLayer) => string;
 }
 
 /** Props of `FieldProvenance`: the chip for one path, read from the nearest provider (WS4). */
 export interface FieldProvenanceProps {
   path: string;
   hideDefault?: boolean;
+  formatLayer?: (layer: FieldLayer) => string;
 }
 
 /** Label and accessible name of a field's revert action (WS4, EV-4). */
@@ -221,4 +224,26 @@ export interface ResolvedConfigData {
   overrides: ConfigRecord;
   /** Paths the profile hides from what it inherits. */
   tombstones: string[];
+}
+
+/** One setting of a read-only summary: its label ("Group › Setting"), display text and data path. */
+export interface SettingRow {
+  label: string;
+  value: string;
+  path: string;
+}
+
+export interface SettingListProps {
+  rows: SettingRow[];
+  /** Names the list for assistive technology. */
+  label: string;
+}
+
+export interface SettingRowsOptions {
+  /** The data path of `source` (each row's path is under it). */
+  path: string;
+  /** Keys of `source` the summary states elsewhere. */
+  skip?: ReadonlySet<string>;
+  /** The label of `source` itself, prefixed to each row's label. */
+  prefix?: string;
 }

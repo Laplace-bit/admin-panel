@@ -115,7 +115,7 @@ export function GroupsTab({ onCreateGroup }: t.GroupsTabProps) {
               <button
                 type="button"
                 onClick={() => setEditTarget(group)}
-                className="-my-2 -ml-2 min-w-0 flex-1 cursor-pointer rounded py-3 pl-3 text-left outline-none focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--cui-color-outline)"
+                className="-my-2 -ml-2 min-w-0 flex-1 cursor-pointer rounded py-3 pl-3 text-left outline-none focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--cui-color-outline) focus-visible:outline-solid"
               >
                 <div className="text-sm font-medium text-(--cui-color-text-default) hover:underline">
                   {group.name}

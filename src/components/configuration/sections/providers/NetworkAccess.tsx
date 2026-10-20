@@ -1,20 +1,15 @@
 import { useContext } from 'react';
 import type * as t from '@/types';
+import { isConfigRecord, isRowVisible, addressItemError, isStringList } from '@/utils';
 import { useLocalize, useFieldState, usePersistentExpanded } from '@/hooks';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { ADDRESS_ISSUE_KEYS, addressIssue } from './network';
-import { PROVIDERS_STORAGE_KEY } from './ProviderGroup';
 import { SettingsSection } from '../../SettingsSection';
-import { isConfigRecord, isRowVisible } from '@/utils';
 import { ListField } from '../../fields/ListField';
+import { PROVIDERS_STORAGE_KEY } from './Group';
 import { ConfigRow } from '../../ConfigRow';
 import { toFieldId } from '../../renderer';
 import { labelForPath } from '../../meta';
 import { summaryValue } from './layout';
-
-function isStringList(value: t.ConfigValue): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string');
-}
 
 /**
  * "Network access" card for `endpoints.allowedAddresses` (AP-7): the private
@@ -73,11 +68,6 @@ export function NetworkAccessCard({
     return true;
   };
 
-  const validateItem = (entry: string): string | null => {
-    const issue = addressIssue(entry);
-    return issue ? localize(ADDRESS_ISSUE_KEYS[issue]) : null;
-  };
-
   const label = labelForPath(path, localize);
   const summary =
     isExpanded || values.length === 0 ? undefined : summaryValue(field, values, localize);
@@ -129,7 +119,7 @@ export function NetworkAccessCard({
           disabled={disabled}
           placeholder={localize('com_config_providers_network_placeholder')}
           itemLabel={localize('com_config_providers_network_item')}
-          validateItem={validateItem}
+          validateItem={(entry) => addressItemError(entry, localize)}
           width="M"
           aria-label={label}
         />

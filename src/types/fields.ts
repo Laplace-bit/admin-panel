@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 import type React from 'react';
-import type { KeySuggestion, KeyValidator } from './files';
 import type {
   ConfigValue,
   SchemaField,
@@ -12,6 +11,7 @@ import type {
   FieldUnit,
   OptionSource,
 } from './config';
+import type { KeySuggestion, KeyValidator } from './files';
 
 /**
  * Returns a field to "Default" (removes the edit target's own value). Returns
@@ -36,6 +36,9 @@ export interface SelectFieldProps {
   'aria-label'?: string;
   'aria-describedby'?: string;
 }
+
+/** Called with how many rows of the field `fieldId` have a problem (0 once fixed or unmounted). */
+export type RowProblemReporter = (fieldId: string, count: number) => void;
 
 export interface KeyValueFieldProps {
   id: string;
@@ -386,3 +389,6 @@ export interface ListRecordFieldProps {
 export interface RefListFieldProps extends Omit<ListFieldProps, 'options'> {
   source: OptionSource;
 }
+
+/** A model list's mode: the provider's defaults (no list set), or only the models listed. */
+export type ModelListMode = 'defaults' | 'only';

@@ -1,27 +1,40 @@
 import { configSchema } from 'librechat-data-provider';
 import type * as t from '@/types';
+import { getValueAtPath, isConfigRecord } from './format';
+import { RUNTIME_NUMBER_LIMITS } from '@/constants';
 import { resolveSubSchema } from './schema';
-import { isConfigRecord } from './format';
 
 const MAX_UNION_DEPTH = 10;
 
-type ParseableSchema = t.ZodSchemaLike & { safeParse: (value: unknown) => t.SchemaParseResult };
+function isParseable(schema: t.ZodSchemaLike | null | undefined): schema is t.ParseableSchema {
+  return schema != null && typeof (schema as Partial<t.ParseableSchema>).safeParse === 'function';
+}
 
-function isParseable(schema: t.ZodSchemaLike | null | undefined): schema is ParseableSchema {
-  return schema != null && typeof (schema as Partial<ParseableSchema>).safeParse === 'function';
+/**
+ * `schema.safeParse(value)`, where a refinement that throws (LibreChat's
+ * WebSocket URL check runs `new URL()` on any text a union tries it with)
+ * fails the value with that error instead of throwing.
+ */
+export function parseSafely(schema: t.ParseableSchema, value: t.ConfigValue): t.SchemaParseResult {
+  try {
+    return schema.safeParse(value);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Validation failed';
+    return { success: false, error: { issues: [{ code: 'custom', path: [], message }] } };
+  }
 }
 
 /** Validates a value against the bundled config schema at `fieldPath` (unknown paths pass). */
 export function validateFieldValue(
   fieldPath: string,
-  value: unknown,
+  value: t.ConfigValue,
 ): { success: true } | { success: false; error: string } {
   const segments = fieldPath.split('.');
   const subSchema = resolveSubSchema(configSchema as t.ZodSchemaLike, segments);
 
   if (!isParseable(subSchema)) return { success: true };
 
-  const result = subSchema.safeParse(value);
+  const result = parseSafely(subSchema, value);
   if (!result.success && result.error) {
     const messages = result.error.issues.map((issue) => {
       const issuePath = issue.path.reduce<string>(
@@ -193,7 +206,7 @@ function parseIssues(
   basePath: string,
 ): t.ConfigIssue[] {
   if (!isParseable(schema)) return [];
-  const result = schema.safeParse(value);
+  const result = parseSafely(schema, value);
   if (result.success || !result.error) return [];
   return toConfigIssues(result.error.issues, basePath);
 }
@@ -272,7 +285,35 @@ export function validateLoadableEndpoint(
 export function validateSection(section: string, value: t.ConfigValue): t.ConfigIssue[] {
   if (value === undefined) return [];
   const shape = (configSchema as t.ZodSchemaLike).shape;
-  return parseIssues(shape?.[section], value, section);
+  return [...parseIssues(shape?.[section], value, section), ...runtimeLimitIssues(section, value)];
+}
+
+/** Values of a section outside `RUNTIME_NUMBER_LIMITS` (limits the schema doesn't state). */
+function runtimeLimitIssues(section: string, value: t.ConfigValue): t.ConfigIssue[] {
+  const prefix = `${section}.`;
+  return Object.entries(RUNTIME_NUMBER_LIMITS).flatMap(([path, limits]): t.ConfigIssue[] => {
+    if (!path.startsWith(prefix)) return [];
+    const number = getValueAtPath(value, path.slice(prefix.length));
+    if (typeof number !== 'number') return [];
+    if (limits.int && !Number.isInteger(number)) {
+      const params = { expected: TYPE_NAMES.integer };
+      return [
+        {
+          path,
+          code: 'invalid_type',
+          params,
+          message: describeIssueCode('invalid_type', params, ''),
+        },
+      ];
+    }
+    if (limits.min !== undefined && number < limits.min) {
+      const params = { minimum: limits.min };
+      return [
+        { path, code: 'too_small', params, message: describeIssueCode('too_small', params, '') },
+      ];
+    }
+    return [];
+  });
 }
 
 /** Where an issue is, for plain-text summaries: `endpoints.custom › GPT › provider` inside an entry. */

@@ -116,6 +116,45 @@ export function isConfigRecord(value: t.ConfigValue): value is t.ConfigRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** The value as an object, or an empty one. */
+export function asConfigRecord(value: t.ConfigValue): t.ConfigRecord {
+  return isConfigRecord(value) ? value : {};
+}
+
+/** Whether a value sets something: not unset, blank, or an empty list or object. */
+export function hasConfigValue(value: t.ConfigValue): boolean {
+  if (value === undefined || value === null || value === '') return false;
+  if (Array.isArray(value)) return value.length > 0;
+  return !isConfigRecord(value) || Object.keys(value).length > 0;
+}
+
+/** The value as text, untrimmed; `''` when it isn't text. */
+export function stringOf(value: t.ConfigValue): string {
+  return typeof value === 'string' ? value : '';
+}
+
+/** The value as trimmed text; `''` when it isn't text. */
+export function trimmedText(value: t.ConfigValue): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** The value when it is text that says something (not blank), else undefined. */
+export function filledText(value: t.ConfigValue): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+/** Whether the value is a list of strings. */
+export function isStringList(value: t.ConfigValue): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+/** The strings of a list; anything else has none. */
+export function stringItems(value: t.ConfigValue): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
 /** Value at a dot-path, stepping into arrays by index. */
 export function getValueAtPath(root: t.ConfigValue, path: string): t.ConfigValue {
   let current: t.ConfigValue = root;

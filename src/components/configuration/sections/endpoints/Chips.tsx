@@ -1,9 +1,9 @@
 import type * as t from '@/types';
 import { useLocalize, useFieldState, useValuesScope, useRevertLabels } from '@/hooks';
-import { layerRevertTarget, lowerLayerValue } from '../../renderer/defaults';
+import { ShadowBadge, sourceLabel, shadowedSourceLabel } from '../../values';
 import { DecorativeIcon, StateChip } from '@/components/shared';
 import { isConfigRecord, isConfigValueEqual } from '@/utils';
-import { sourceLabel } from '../../values';
+import { layerValueBeneath } from '../../renderer/defaults';
 
 /** Unset, empty text and empty lists or objects all read as "not set" when comparing with the saved value. */
 function normalize(value: t.ConfigValue): t.ConfigValue {
@@ -41,10 +41,7 @@ export function FieldChips({
       onRevert();
       return;
     }
-    const target = state.isOverride
-      ? layerRevertTarget(state.revertTarget)
-      : lowerLayerValue(state);
-    onChange(target?.value);
+    onChange(layerValueBeneath(state)?.value);
   };
 
   if (!isConfigValueEqual(normalize(value), normalize(saved))) {
@@ -80,5 +77,24 @@ export function FieldChips({
         </button>
       )}
     </>
+  );
+}
+
+/**
+ * "Overridden by Global" (D11) on the editor's own reference rows (title,
+ * activity and reasoning endpoints and models), which the shared entry row
+ * that draws it for the other fields does not render. Shown only while the
+ * endpoint sets a value of its own.
+ */
+export function ShadowChip({ path, value }: t.ShadowChipProps) {
+  const localize = useLocalize();
+  const scope = useValuesScope();
+  const state = useFieldState(path);
+  if (!state.shadowedBy || value === undefined) return null;
+  return (
+    <ShadowBadge
+      shadowedBy={state.shadowedBy}
+      source={shadowedSourceLabel(state, localize, scope)}
+    />
   );
 }

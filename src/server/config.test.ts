@@ -1247,6 +1247,15 @@ describe('parseConfigYaml (import)', () => {
     });
   });
 
+  it('accepts a sparse override of an MCP server the configuration has, as written', () => {
+    const yamlText = 'mcpServers:\n  github:\n    timeout: 120000\n';
+    expect(parseConfigYaml(yamlText).success).toBe(false);
+    const known = { github: { type: 'http', url: 'https://api.githubcopilot.com/mcp/' } };
+    const result = parseConfigYaml(yamlText, known);
+    expect(result.success).toBe(true);
+    expect(result.appConfig).toEqual({ mcpServers: { github: { timeout: 120000 } } });
+  });
+
   it('does not require a version key', () => {
     expect(parseConfigYaml('balance:\n  enabled: true\n').success).toBe(true);
   });

@@ -1,6 +1,6 @@
 import { Button, Dialog } from '@clickhouse/click-ui';
 import type * as t from '@/types';
-import { useLocalize } from '@/hooks';
+import { useReturnFocus, useLocalize } from '@/hooks';
 
 /**
  * Asks before a change with consequences beyond the field (switching file
@@ -15,6 +15,7 @@ export function ConfirmChoiceDialog({
   onCancel,
 }: t.ConfirmChoiceDialogProps) {
   const localize = useLocalize();
+  const returnFocus = useReturnFocus(open);
   return (
     <Dialog
       open={open}
@@ -22,7 +23,13 @@ export function ConfirmChoiceDialog({
         if (!isOpen) onCancel();
       }}
     >
-      <Dialog.Content title={title} showClose onClose={onCancel} className="modal-frost">
+      <Dialog.Content
+        title={title}
+        showClose
+        onClose={onCancel}
+        onCloseAutoFocus={returnFocus}
+        className="modal-frost"
+      >
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2 text-sm leading-relaxed text-(--cui-color-text-default)">
             {children}

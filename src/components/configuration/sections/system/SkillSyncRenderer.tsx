@@ -1,7 +1,7 @@
 import { useCallback, useContext, useRef } from 'react';
 import type * as t from '@/types';
 import { NestedGroup, FieldRenderer, toFieldId, renderCollectionEntryFields } from '../../renderer';
-import { getValueAtPath, isConfigRecord, isRowVisible } from '@/utils';
+import { filledText, getValueAtPath, isConfigRecord, isRowVisible } from '@/utils';
 import { ArrayObjectField } from '../../fields/ArrayObjectField';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { UnknownSettings } from '../../UnknownSettings';
@@ -13,17 +13,13 @@ const SECTION = 'skillSync';
 const GITHUB = 'skillSync.github';
 const SOURCES = 'skillSync.github.sources';
 
-function text(value: t.ConfigValue): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
-}
-
 /** A source card's title: `owner/repo`, else its ID. */
 function sourceTitle(item: t.ConfigValue): string | null {
   if (!isConfigRecord(item)) return null;
-  const owner = text(item.owner);
-  const repo = text(item.repo);
+  const owner = filledText(item.owner);
+  const repo = filledText(item.repo);
   if (owner && repo) return `${owner}/${repo}`;
-  return text(item.id) ?? repo ?? owner ?? null;
+  return filledText(item.id) ?? repo ?? owner ?? null;
 }
 
 /**
@@ -60,7 +56,7 @@ function SourcesGroup({
       return localize('com_config_skillsync_source_folders', { count: paths.length });
     })();
     return localize('com_config_skillsync_source_summary', {
-      ref: text(item.ref) ?? 'main',
+      ref: filledText(item.ref) ?? 'main',
       paths: folders,
     });
   };
@@ -132,6 +128,9 @@ export function SkillSyncRenderer(props: t.FieldRendererProps) {
             parentPath={GITHUB}
           />
           <SourcesGroup field={sources} fieldProps={props} />
+          {!rowFilter && (
+            <UnknownSettings fields={github.children} value={githubValue} path={GITHUB} />
+          )}
         </NestedGroup>
       )}
       {others.length > 0 && <FieldRenderer {...props} fields={others} />}

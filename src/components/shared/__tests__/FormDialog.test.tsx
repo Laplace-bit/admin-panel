@@ -43,4 +43,25 @@ describe('FormDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'com_ui_cancel' }));
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('asks before discarding typed input, and discards on the second request', () => {
+    const onClose = vi.fn();
+    renderDialog({ onClose, discardPrompt: 'Discard this new server?' });
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_cancel' }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('Discard this new server?');
+    expect(screen.getByRole('button', { name: 'com_ui_keep_editing' })).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_keep_editing' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_discard' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps Enter in a text field from submitting when asked to', () => {
+    renderDialog({ submitOnEnter: false });
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    screen.getByLabelText('Name').dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(true);
+  });
 });

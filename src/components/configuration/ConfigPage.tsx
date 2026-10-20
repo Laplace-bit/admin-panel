@@ -35,12 +35,14 @@ import {
   formatScopeParam,
   findScopeByParam,
   getKeyedCollection,
+  isConfigRecord,
   isConfigValueEqual,
 } from '@/utils';
 import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
 import { ConfigErrorsProvider } from '@/contexts/ConfigErrorsContext';
 import { buildTocEntries, findTocEntry, toJumpTargets } from './toc';
 import { RevealTargetContext } from '@/contexts/RevealTargetContext';
+import { GlobalRevealContext } from '@/contexts/GlobalRevealContext';
 import { ConfigTableOfContents } from './ConfigTableOfContents';
 import { ResetBaseConfigDialog } from './ResetBaseConfigDialog';
 import { NavigationGuardDialog } from './NavigationGuardDialog';
@@ -400,6 +402,15 @@ export function ConfigPage({
     if (highlightField && filterPaths && !isRowVisible(filterPaths, highlightField)) clearFilter();
   }, [highlightField, filterPaths, clearFilter]);
 
+  /** "Overridden by Global →" chips, on any tab, open the Global overrides setting that wins (D11). */
+  const revealGlobal = useCallback(
+    (path: string) =>
+      navigate({
+        search: (prev: t.ConfigSearchParams) => ({ ...prev, tab: tabForPath(path), field: path }),
+      }),
+    [navigate],
+  );
+
   const configuredPaths = layers.activeConfiguredPaths;
   const revealSetting = useCallback(
     (item: t.ConfigSearchItem) => {
@@ -572,47 +583,49 @@ export function ConfigPage({
                 {isReady && (
                   <ScopeActionsProvider value={scopeActions}>
                     <RevealTargetContext.Provider value={highlightField ?? null}>
-                      <CollectionEditsContext.Provider value={edits.collectionEdits}>
-                        <ConfigTabContent
-                          sections={sectionsForActiveTab}
-                          configValues={activeConfigValues}
-                          editedValues={editedValues}
-                          onFieldChange={edits.handleFieldChange}
-                          onResetField={edits.handleResetField}
-                          onDiscardField={edits.handleDiscardField}
-                          previewMode={false}
-                          previewScope={editingScope}
-                          previewChangedPaths={layers.scopeChangedPaths}
-                          resolvedValues={layers.scopeResolvedValues}
-                          permissions={permissions}
-                          showChangedOnly={false}
-                          readOnly={!canEditActiveTab || scopeNotFound != null}
-                          configuredPaths={layers.activeConfiguredPaths}
-                          dbOverridePaths={layers.overridePaths}
-                          listOverrideCounts={layers.listOverrideCounts}
-                          touchedPaths={edits.touchedPaths}
-                          pendingResets={edits.pendingResets}
-                          sectionPermissions={sectionPermissions}
-                          schemaDefaults={layers.schemaDefaults}
-                          showConfiguredOnly={customizedOnly}
-                          isEditingScope={isEditingScope}
-                          baseRecordKeys={layers.baseRecordKeys}
-                          onValidationError={notifyError}
-                          editSessionId={edits.editSessionId}
-                          unknownSettings={topLevelUnknown}
-                          onShowAll={showAllSettings}
-                          filterText={filterText}
-                          onClearFilter={clearFilter}
-                          visibleSectionIds={filterSectionIds}
-                          filterPaths={filterPaths}
-                          valueLayers={layers.valueLayers}
-                          visibilityEdits={edits.visibilityEdits}
-                          onHideField={permissions.canAssign ? edits.handleHideField : undefined}
-                          onUnhideField={
-                            permissions.canAssign ? edits.handleUnhideField : undefined
-                          }
-                        />
-                      </CollectionEditsContext.Provider>
+                      <GlobalRevealContext.Provider value={revealGlobal}>
+                        <CollectionEditsContext.Provider value={edits.collectionEdits}>
+                          <ConfigTabContent
+                            sections={sectionsForActiveTab}
+                            configValues={activeConfigValues}
+                            editedValues={editedValues}
+                            onFieldChange={edits.handleFieldChange}
+                            onResetField={edits.handleResetField}
+                            onDiscardField={edits.handleDiscardField}
+                            previewMode={false}
+                            previewScope={editingScope}
+                            previewChangedPaths={layers.scopeChangedPaths}
+                            resolvedValues={layers.scopeResolvedValues}
+                            permissions={permissions}
+                            showChangedOnly={false}
+                            readOnly={!canEditActiveTab || scopeNotFound != null}
+                            configuredPaths={layers.activeConfiguredPaths}
+                            dbOverridePaths={layers.overridePaths}
+                            listOverrideCounts={layers.listOverrideCounts}
+                            touchedPaths={edits.touchedPaths}
+                            pendingResets={edits.pendingResets}
+                            sectionPermissions={sectionPermissions}
+                            schemaDefaults={layers.schemaDefaults}
+                            showConfiguredOnly={customizedOnly}
+                            isEditingScope={isEditingScope}
+                            baseRecordKeys={layers.baseRecordKeys}
+                            onValidationError={notifyError}
+                            editSessionId={edits.editSessionId}
+                            unknownSettings={topLevelUnknown}
+                            onShowAll={showAllSettings}
+                            filterText={filterText}
+                            onClearFilter={clearFilter}
+                            visibleSectionIds={filterSectionIds}
+                            filterPaths={filterPaths}
+                            valueLayers={layers.valueLayers}
+                            visibilityEdits={edits.visibilityEdits}
+                            onHideField={permissions.canAssign ? edits.handleHideField : undefined}
+                            onUnhideField={
+                              permissions.canAssign ? edits.handleUnhideField : undefined
+                            }
+                          />
+                        </CollectionEditsContext.Provider>
+                      </GlobalRevealContext.Provider>
                     </RevealTargetContext.Provider>
                   </ScopeActionsProvider>
                 )}
@@ -650,6 +663,11 @@ export function ConfigPage({
             onImport={imports.handleImport}
             schemaTree={schemaTree}
             schemaPathSet={layers.schemaPathSet}
+            knownMcpServers={
+              isConfigRecord(layers.baseActiveConfigValues?.mcpServers)
+                ? layers.baseActiveConfigValues.mcpServers
+                : undefined
+            }
           />
 
           <NavigationGuardDialog
@@ -665,6 +683,7 @@ export function ConfigPage({
             open={resetBase.resetBaseOpen}
             resetting={resetBase.resettingBase}
             error={resetBase.resetBaseError}
+            termsUrl={resetBase.resetBaseTermsUrl}
             onConfirm={resetBase.handleResetBaseConfig}
             onCancel={resetBase.cancelResetBase}
             overrides={baseOverrides}

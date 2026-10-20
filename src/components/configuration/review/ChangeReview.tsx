@@ -2,12 +2,12 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { Button, Icon, Link } from '@clickhouse/click-ui';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
+import { useReturnFocus, useLocalize } from '@/hooks';
 import { CloseButton } from '@/components/shared';
 import { getScopeTypeConfig } from '@/constants';
+import { cn, activeConfigTab } from '@/utils';
 import { ReviewList } from './ReviewList';
 import { scopeTypeLabel } from './group';
-import { useLocalize } from '@/hooks';
-import { cn } from '@/utils';
 
 function ScopeChip({ scope }: { scope?: t.ConfigScope }) {
   const localize = useLocalize();
@@ -67,6 +67,26 @@ function IssueList({
   );
 }
 
+/** The way out of a save LibreChat refused: sign in again, or accept its terms of service. */
+function SaveFailureAction({ review }: { review: t.ChangeReviewState }) {
+  const localize = useLocalize();
+  if (review.sessionExpired) {
+    return (
+      <Link href="/login" target="_blank" rel="noopener" size="sm" weight="medium">
+        {localize('com_config_session_sign_in')}
+      </Link>
+    );
+  }
+  if (review.termsUrl) {
+    return (
+      <Link href={review.termsUrl} target="_blank" rel="noopener" size="sm" weight="medium">
+        {localize('com_config_terms_open')}
+      </Link>
+    );
+  }
+  return null;
+}
+
 /**
  * The change review drawer (WS7): what Save writes to the open target,
  * grouped tab › section › entry, with BEFORE → AFTER, the value a reset
@@ -78,6 +98,7 @@ export function ChangeReview({ review }: t.ChangeReviewProps) {
   const { model, open, saving, blocked } = review;
   const blocking = model.issues.filter((issue) => issue.blocking);
   const isEmpty = model.count === 0;
+  const returnFocus = useReturnFocus(open, activeConfigTab);
 
   return (
     <Dialog.Root
@@ -94,6 +115,7 @@ export function ChangeReview({ review }: t.ChangeReviewProps) {
           )}
         />
         <Dialog.Content
+          onCloseAutoFocus={returnFocus}
           className={cn(
             'fixed top-0 right-0 z-(--z-overlay) flex h-full w-full flex-col bg-(--cui-color-background-panel) shadow-xl sm:w-xl',
             'border-l border-(--cui-color-stroke-default)',
@@ -138,13 +160,7 @@ export function ChangeReview({ review }: t.ChangeReviewProps) {
                 title={localize('com_config_review_save_failed')}
                 issues={review.saveIssues}
                 onGoTo={review.goToRow}
-                footer={
-                  review.sessionExpired ? (
-                    <Link href="/login" target="_blank" rel="noopener" size="sm" weight="medium">
-                      {localize('com_config_session_sign_in')}
-                    </Link>
-                  ) : undefined
-                }
+                footer={<SaveFailureAction review={review} />}
               />
             )}
             {isEmpty && (

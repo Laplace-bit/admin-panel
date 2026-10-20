@@ -6,14 +6,11 @@ import {
   mimeEndpointKey,
   DEFAULT_MIME_LISTS,
   usesDefaultEntryList,
+  isStringList,
 } from '@/utils';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
 
 const DEFAULT_ENTRY_LIST = 'fileConfig.endpoints.default.supportedMimeTypes';
-
-function isStringList(value: t.ConfigValue): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string');
-}
 
 /**
  * The MIME list a field uses while it has no list of its own (FX-7): the

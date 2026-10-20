@@ -9,6 +9,22 @@ vi.mock('@/hooks/useLocalize', () => ({
 }));
 
 describe('SettingsRow', () => {
+  it("keeps the control's own description current as the row error comes and goes", () => {
+    const control = (warning: boolean) => (
+      <input id="name" aria-label="Name" aria-describedby={warning ? 'name-rename' : undefined} />
+    );
+    const { rerender } = render(
+      <SettingsRow label="Name" htmlFor="name" control={control(true)} />,
+    );
+    const input = screen.getByRole('textbox');
+    rerender(<SettingsRow label="Name" htmlFor="name" control={control(true)} error="Required" />);
+    expect(input.getAttribute('aria-describedby')).toBe('name-rename name-error');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    rerender(<SettingsRow label="Name" htmlFor="name" control={control(false)} />);
+    expect(input).not.toHaveAttribute('aria-describedby');
+    expect(input).not.toHaveAttribute('aria-invalid');
+  });
+
   it('renders every slot in its grid cell', () => {
     const { container } = render(
       <SettingsRow

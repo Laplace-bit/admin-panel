@@ -1,5 +1,6 @@
+import { EModelEndpoint, defaultAssistantsVersion } from 'librechat-data-provider';
 import type * as t from '@/types';
-import { BUILT_IN_PROVIDERS, GLOBAL_PROVIDER_KEY } from '@/constants';
+import { MODEL_PROVIDERS, GLOBAL_PROVIDER_KEY, DEFAULT_RECURSION_LIMIT } from '@/constants';
 import { GENERIC_FIELD_META } from './generic';
 
 /** Settings shared by every endpoint, in the order admins think about them. */
@@ -300,12 +301,6 @@ const MODEL_REFERENCE_FIELDS = [
   'reasoningLabelModel',
 ];
 
-/** Providers whose own models the title, activity and reasoning models default to. */
-const MODEL_PROVIDERS = BUILT_IN_PROVIDERS.filter(
-  (provider) =>
-    provider !== 'agents' && provider !== 'assistants' && provider !== 'azureAssistants',
-);
-
 function modelReferenceMeta(): t.FieldMetaRegistry {
   /** Global's model fields suggest the models of the endpoint set beside them, if any. */
   const entries: t.FieldMetaRegistry = Object.fromEntries(
@@ -451,6 +446,11 @@ const STATIC_META: t.FieldMetaRegistry = {
   'endpoints.allowedAddresses': {
     labelKey: 'com_config_providers_network_addresses',
     descriptionKey: 'com_config_providers_network_addresses_desc',
+  },
+  'endpoints.agents.recursionLimit': { runtimeDefault: DEFAULT_RECURSION_LIMIT },
+  /** LibreChat runs Azure Assistants on API v1 unless set (`defaultAssistantsVersion`), not the schema's 2. */
+  'endpoints.azureAssistants.version': {
+    runtimeDefault: defaultAssistantsVersion[EModelEndpoint.azureAssistants],
   },
   'endpoints.agents.checkpointer.ttl': { unit: 's' },
   'endpoints.agents.fileSharing.maxPrivateBytes': { width: 'M' },

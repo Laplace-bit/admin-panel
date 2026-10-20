@@ -1,22 +1,33 @@
-import { useMemo, useState } from 'react';
 import { TextField } from '@clickhouse/click-ui';
+import { useMemo, useState, useCallback } from 'react';
 import {
   SSEOptionsSchema,
   WebSocketOptionsSchema,
   StreamableHTTPOptionsSchema,
 } from 'librechat-data-provider';
 import type * as t from '@/types';
+import {
+  cn,
+  parseSafely,
+  isConfigRecord,
+  findUnsafeKeys,
+  serializeKVPairs,
+  toConfigIssues,
+  asConfigRecord,
+  hasConfigValue,
+  isConfigValueEqual,
+} from '@/utils';
 import { planTransportSwitch, transportLabelKey, transportOf, TRANSPORTS } from './transport';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
 import { ConfigErrorsProvider } from '@/contexts/ConfigErrorsContext';
+import { RowProblemsContext } from '@/contexts/RowProblemsContext';
 import { deepClone, isPlainObject, setLeaf } from './validation';
-import { cn, isConfigRecord, toConfigIssues } from '@/utils';
 import { FormDialog } from '@/components/shared';
+import { toFieldId } from '../../renderer/paths';
 import { serverNameProblem } from './names';
 import { McpServerEditor } from './Editor';
 import { labelForPath } from '../../meta';
 import { useLocalize } from '@/hooks';
-import { hasValue } from './values';
 import { McpNote } from './Note';
 
 /** Data path of the draft: field ids and the tri-states' names derive from it ("New server: Startup"). */
@@ -31,54 +42,126 @@ const DESCRIPTION_KEYS: Readonly<Record<string, string>> = {
   stdio: 'com_config_mcp_transport_stdio_desc',
 };
 
-type ParseableSchema = t.ZodSchemaLike & {
-  safeParse: (value: t.ConfigValue) => t.SchemaParseResult;
-};
-
 /** The schema a new server of each transport must satisfy (stdio can't be created here). */
-function schemaFor(transport: t.McpTransport): ParseableSchema | undefined {
-  if (transport === 'sse') return SSEOptionsSchema as ParseableSchema;
-  if (transport === 'websocket') return WebSocketOptionsSchema as ParseableSchema;
+function schemaFor(transport: t.McpTransport): t.ParseableSchema | undefined {
+  if (transport === 'sse') return SSEOptionsSchema as t.ParseableSchema;
+  if (transport === 'websocket') return WebSocketOptionsSchema as t.ParseableSchema;
   if (transport === 'streamable-http' || transport === 'http') {
-    return StreamableHTTPOptionsSchema as ParseableSchema;
+    return StreamableHTTPOptionsSchema as t.ParseableSchema;
   }
   return undefined;
 }
 
 const NEW_SERVER: t.ConfigRecord = { type: 'streamable-http' };
 
-/** The draft as it would be saved: blank values and empty objects and lists left out. */
-function toEntry(value: t.ConfigRecord): t.ConfigRecord {
+/** A record whose values are objects (`customUserVars`): each entry is one the admin added by name. */
+function isRecordOfObjects(field: t.SchemaField | undefined): boolean {
+  return field?.type === 'record' && (field.children?.length ?? 0) > 0;
+}
+
+/** A draft value as saved: key/value rows (headers, OAuth headers) become the record LibreChat reads. */
+function cleanValue(value: t.ConfigValue, field: t.SchemaField | undefined): t.ConfigValue {
+  const serialized = serializeKVPairs(value);
+  if (serialized !== value) return { ...asConfigRecord(serialized) };
+  if (!isPlainObject(value)) return value;
+  if (!isRecordOfObjects(field)) return toEntry(value, field?.children);
+  /** An added entry stays even while empty, so the schema check says what it still needs. */
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      isPlainObject(item) ? toEntry(item, field?.children) : item,
+    ]),
+  );
+}
+
+/**
+ * The draft as it would be saved: blank values and empty objects and lists
+ * left out, except an entry added to a record of objects (a user variable),
+ * which is checked like the rest instead of being dropped.
+ */
+function toEntry(value: t.ConfigRecord, fields?: t.SchemaField[]): t.ConfigRecord {
   const entry: t.ConfigRecord = {};
   for (const [key, child] of Object.entries(value)) {
-    const cleaned = isPlainObject(child) ? toEntry(child) : child;
-    if (hasValue(cleaned)) entry[key] = cleaned;
+    const field = fields?.find((candidate) => candidate.key === key);
+    const cleaned = cleanValue(child, field);
+    if (hasConfigValue(cleaned) || (isRecordOfObjects(field) && isConfigRecord(cleaned))) {
+      if (isConfigRecord(cleaned) && Object.keys(cleaned).length === 0) continue;
+      entry[key] = cleaned;
+    }
   }
   return entry;
 }
 
-interface DraftCheck {
-  /** Labels of required fields still empty ("URL", "Scopes"). */
-  missing: string[];
-  /** Inline errors of fields that hold a value. */
-  errors: t.PathErrors;
+/**
+ * The label of a missing field: under a record of objects it names the
+ * entry ("User variables › MY_KEY › Title"), else the field ("Server URL").
+ */
+function missingLabel(rest: string, fields: t.SchemaField[], localize: t.LocalizeFn): string {
+  const [head, entryKey, ...leaf] = rest.split('.');
+  const field = fields.find((candidate) => candidate.key === head);
+  if (!isRecordOfObjects(field) || entryKey === undefined || leaf.length === 0) {
+    return labelForPath(`mcpServers.{}.${rest}`, localize);
+  }
+  return [
+    labelForPath(`mcpServers.{}.${head}`, localize),
+    entryKey,
+    labelForPath(`mcpServers.{}.${head}.{}.${leaf.join('.')}`, localize),
+  ].join(' › ');
+}
+
+/** Missing labels with a shared entry prefix joined ("User variables › MY_KEY › Title, Description"). */
+function joinMissing(labels: string[]): string[] {
+  const groups = new Map<string, string[]>();
+  for (const label of labels) {
+    const at = label.lastIndexOf(' › ');
+    const prefix = at === -1 ? label : label.slice(0, at);
+    const leaf = at === -1 ? '' : label.slice(at + 3);
+    groups.set(prefix, [...(groups.get(prefix) ?? []), ...(leaf ? [leaf] : [])]);
+  }
+  return [...groups].map(([prefix, leaves]) =>
+    leaves.length === 0 ? prefix : `${prefix} › ${leaves.join(', ')}`,
+  );
 }
 
 /** Validates the draft with its transport's schema: what is missing, and what is wrong where it was typed. */
-function checkDraft(entry: t.ConfigRecord, localize: t.LocalizeFn): DraftCheck {
-  const result = schemaFor(transportOf(entry))?.safeParse(entry);
+function checkDraft(
+  entry: t.ConfigRecord,
+  fields: t.SchemaField[],
+  localize: t.LocalizeFn,
+): t.McpDraftCheck {
+  const schema = schemaFor(transportOf(entry));
+  const result = schema ? parseSafely(schema, entry) : undefined;
   if (!result || result.success || !result.error) return { missing: [], errors: {} };
   const missing: string[] = [];
   const errors: t.PathErrors = {};
   for (const issue of toConfigIssues(result.error.issues, DRAFT_PATH)) {
     const rest = issue.path.slice(DRAFT_PATH.length + 1);
     if (issue.code === 'required' && valueAt(entry, rest) === undefined) {
-      missing.push(labelForPath(`mcpServers.{}.${rest}`, localize));
+      missing.push(missingLabel(rest, fields, localize));
     } else if (!(issue.path in errors)) {
       errors[issue.path] = issue.message;
     }
   }
-  return { missing, errors };
+  return { missing: joinMissing(missing), errors };
+}
+
+/** Key/value rows with a key but no value yet ("Headers › X-Org"), which Create would leave out. */
+function rowsWithoutValue(entry: t.ConfigRecord, localize: t.LocalizeFn, base = ''): string[] {
+  return Object.entries(entry).flatMap(([key, value]) => {
+    if (value === '' && base !== '') {
+      return [`${labelForPath(`mcpServers.{}.${base}`, localize)} › ${key}`];
+    }
+    if (!isConfigRecord(value)) return [];
+    return rowsWithoutValue(value, localize, base ? `${base}.${key}` : key);
+  });
+}
+
+/** The label of a draft field from its control id (`mcpDraft-headers` → "Headers"). */
+function labelOfFieldId(fieldId: string, localize: t.LocalizeFn): string {
+  const rest = fieldId.startsWith(`${DRAFT_PATH}-`)
+    ? fieldId.slice(DRAFT_PATH.length + 1)
+    : fieldId;
+  return labelForPath(`mcpServers.{}.${rest}`, localize);
 }
 
 function valueAt(entry: t.ConfigRecord, path: string): t.ConfigValue {
@@ -177,19 +260,47 @@ export function CreateMcpServerDialog({
   const localize = useLocalize();
   const [name, setName] = useState('');
   const [draft, setDraft] = useState<t.ConfigRecord>(NEW_SERVER);
+  const [rowProblems, setRowProblems] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const reportRowProblems = useCallback<t.RowProblemReporter>((fieldId, count) => {
+    setRowProblems((prev) => {
+      if ((prev.get(fieldId) ?? 0) === count) return prev;
+      const next = new Map(prev);
+      if (count === 0) next.delete(fieldId);
+      else next.set(fieldId, count);
+      return next;
+    });
+  }, []);
   const trimmed = name.trim();
   const isHidden = hiddenKeys.has(trimmed);
   const isInherited = !isHidden && inheritedKeys.has(trimmed);
   const nameProblem = isHidden || isInherited ? null : serverNameProblem(trimmed, existingKeys);
-  const entry = useMemo(() => toEntry(draft), [draft]);
-  const check = useMemo(() => checkDraft(entry, localize), [entry, localize]);
-  const missing =
-    trimmed === '' ? [localize('com_config_server_name'), ...check.missing] : check.missing;
-  const shownNameProblem = trimmed === '' ? null : nameProblem;
+  const entry = useMemo(() => toEntry(draft, fields), [draft, fields]);
+  const check = useMemo(() => checkDraft(entry, fields, localize), [entry, fields, localize]);
+  const missing = [
+    ...(trimmed === '' ? [localize('com_config_server_name')] : []),
+    ...check.missing,
+    ...rowsWithoutValue(entry, localize),
+  ];
+  const shownNameProblem = trimmed === '' || nameProblem == null ? null : localize(nameProblem);
+  /** Rows the key/value editors flag (blank, missing, repeated or dotted keys), by field label. */
+  const rowsToFix = useMemo(() => {
+    const unsafe = findUnsafeKeys(entry, DRAFT_PATH).map(({ path }) => toFieldId(path));
+    const ids = new Set([...rowProblems.keys(), ...unsafe]);
+    return [...ids].map((fieldId) => labelOfFieldId(fieldId, localize));
+  }, [entry, rowProblems, localize]);
+  const isDirty = name !== '' || !isConfigValueEqual(draft, NEW_SERVER);
+  const blocked =
+    !isInherited &&
+    !isHidden &&
+    (nameProblem != null ||
+      missing.length > 0 ||
+      rowsToFix.length > 0 ||
+      Object.keys(check.errors).length > 0);
 
   const reset = () => {
     setName('');
     setDraft(NEW_SERVER);
+    setRowProblems(new Map());
   };
   const close = () => {
     reset();
@@ -224,7 +335,7 @@ export function CreateMcpServerDialog({
       close();
       return;
     }
-    if (nameProblem || missing.length > 0 || Object.keys(check.errors).length > 0) return;
+    if (blocked) return;
     onCreate(trimmed, entry);
     close();
   };
@@ -234,10 +345,18 @@ export function CreateMcpServerDialog({
     if (isHidden) return localize('com_config_mcp_create_unhide', { name: trimmed });
     return localize('com_ui_create');
   })();
-  const blocked =
-    !isInherited &&
-    !isHidden &&
-    (nameProblem != null || missing.length > 0 || Object.keys(check.errors).length > 0);
+  const hint = (() => {
+    if (isInherited || isHidden) return undefined;
+    const parts = [
+      missing.length > 0
+        ? localize('com_config_mcp_create_missing', { fields: missing.join(', ') })
+        : null,
+      rowsToFix.length > 0
+        ? localize('com_config_mcp_create_fix_rows', { fields: rowsToFix.join(', ') })
+        : null,
+    ].filter((part): part is string => part != null);
+    return parts.length > 0 ? parts.join(' · ') : undefined;
+  })();
 
   return (
     <FormDialog
@@ -246,74 +365,90 @@ export function CreateMcpServerDialog({
       submitLabel={submitLabel}
       submitDisabled={blocked}
       saving={false}
-      error={shownNameProblem ? localize(shownNameProblem) : undefined}
-      hint={
-        !isInherited && !isHidden && missing.length > 0
-          ? localize('com_config_mcp_create_missing', { fields: missing.join(', ') })
+      error={
+        shownNameProblem
+          ? localize('com_config_mcp_create_field_error', {
+              field: localize('com_config_server_name'),
+              message: shownNameProblem,
+            })
           : undefined
       }
+      hint={hint}
       size="lg"
+      discardPrompt={isDirty ? localize('com_config_mcp_create_discard') : undefined}
+      submitOnEnter={false}
       onSubmit={submit}
       onClose={close}
     >
       <ConfiguredOnlyContext.Provider value={false}>
-        <ConfigErrorsProvider value={check.errors}>
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor={NAME_ID}
-                className="text-sm font-medium text-(--cui-color-text-default)"
-              >
-                {localize('com_config_server_name')}
-                <span aria-hidden="true" className="ml-0.5 text-(--cui-color-text-danger)">
-                  *
+        <RowProblemsContext.Provider value={reportRowProblems}>
+          <ConfigErrorsProvider value={check.errors}>
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor={NAME_ID}
+                  className="text-sm font-medium text-(--cui-color-text-default)"
+                >
+                  {localize('com_config_server_name')}
+                  <span aria-hidden="true" className="ml-0.5 text-(--cui-color-text-danger)">
+                    *
+                  </span>
+                </label>
+                <div className="cui-field flex w-full flex-col gap-1">
+                  <TextField
+                    id={NAME_ID}
+                    value={name}
+                    onChange={setName}
+                    placeholder={localize('com_config_mcp_create_name_placeholder')}
+                    aria-describedby={
+                      shownNameProblem ? `${NAME_ID}-error ${NAME_ID}-hint` : `${NAME_ID}-hint`
+                    }
+                    aria-invalid={shownNameProblem ? true : undefined}
+                    autoFocus
+                  />
+                </div>
+                {shownNameProblem && (
+                  <span id={`${NAME_ID}-error`} className="text-xs text-(--cui-color-text-danger)">
+                    {shownNameProblem}
+                  </span>
+                )}
+                <span id={`${NAME_ID}-hint`} className="text-xs text-(--cui-color-text-muted)">
+                  {localize('com_config_mcp_name_hint')}
                 </span>
-              </label>
-              <TextField
-                id={NAME_ID}
-                value={name}
-                onChange={setName}
-                placeholder={localize('com_config_mcp_create_name_placeholder')}
-                aria-describedby={`${NAME_ID}-hint`}
-                aria-invalid={shownNameProblem ? true : undefined}
-                autoFocus
-              />
-              <span id={`${NAME_ID}-hint`} className="text-xs text-(--cui-color-text-muted)">
-                {localize('com_config_mcp_name_hint')}
-              </span>
+              </div>
+              {isInherited && (
+                <McpNote tone="warning">
+                  {localize('com_config_mcp_create_inherited', { name: trimmed })}
+                </McpNote>
+              )}
+              {isHidden && (
+                <McpNote tone="warning">
+                  {localize('com_config_mcp_create_hidden', { name: trimmed })}
+                </McpNote>
+              )}
+              {!isInherited && !isHidden && (
+                <>
+                  <TransportCards
+                    value={transportOf(draft)}
+                    onChange={(next) => applyPlan(planTransportSwitch(draft, next, undefined))}
+                  />
+                  <McpServerEditor
+                    fields={fields}
+                    entryPath={DRAFT_PATH}
+                    entry={draft}
+                    lower={undefined}
+                    onChange={change}
+                    onSwitch={applyPlan}
+                    typeLocked
+                    hideType
+                    isDraft
+                    quiet
+                  />
+                </>
+              )}
             </div>
-            {isInherited && (
-              <McpNote tone="warning">
-                {localize('com_config_mcp_create_inherited', { name: trimmed })}
-              </McpNote>
-            )}
-            {isHidden && (
-              <McpNote tone="warning">
-                {localize('com_config_mcp_create_hidden', { name: trimmed })}
-              </McpNote>
-            )}
-            {!isInherited && !isHidden && (
-              <>
-                <TransportCards
-                  value={transportOf(draft)}
-                  onChange={(next) => applyPlan(planTransportSwitch(draft, next, undefined))}
-                />
-                <McpServerEditor
-                  fields={fields}
-                  entryPath={DRAFT_PATH}
-                  entry={draft}
-                  lower={undefined}
-                  onChange={change}
-                  onSwitch={applyPlan}
-                  typeLocked
-                  hideType
-                  isDraft
-                  quiet
-                />
-              </>
-            )}
-          </div>
-        </ConfigErrorsProvider>
+          </ConfigErrorsProvider>
+        </RowProblemsContext.Provider>
       </ConfiguredOnlyContext.Provider>
     </FormDialog>
   );

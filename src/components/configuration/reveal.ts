@@ -10,6 +10,12 @@ const RETRY_MS = 90;
 const MAX_ATTEMPTS = 45;
 const HIGHLIGHT_CLASS = 'cmdk-highlight';
 const HIGHLIGHT_MS = 3000;
+/** When to check that a revealed target is still in view, as expanding groups settle. */
+const SETTLE_MS = [350, 900] as const;
+/** The re-checks of the latest reveal in each scroll container; a newer reveal there ends them. */
+const settling = new WeakMap<HTMLElement, () => void>();
+/** The user scrolling or reaching for the page: a reveal stops correcting the scroll and keeps focus where they put it. */
+const USER_INPUT_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
 const CLOSED_GRID = '.config-section-grid-closed';
 const FOCUSABLE =
   'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), [role="switch"], [role="combobox"], [tabindex]:not([tabindex="-1"])';
@@ -117,7 +123,12 @@ function expandChildGroups(scope: HTMLElement, tried: WeakSet<HTMLElement>): boo
   return expanded;
 }
 
-function scrollIntoContainer(container: HTMLElement, el: HTMLElement, align: 'center' | 'start') {
+/** Scrolls `el` into the container; returns the scroll position it heads for. */
+function scrollIntoContainer(
+  container: HTMLElement,
+  el: HTMLElement,
+  align: 'center' | 'start',
+): number {
   const containerRect = container.getBoundingClientRect();
   const rect = el.getBoundingClientRect();
   const offsetTop = rect.top - containerRect.top + container.scrollTop;
@@ -126,7 +137,9 @@ function scrollIntoContainer(container: HTMLElement, el: HTMLElement, align: 'ce
       ? offsetTop - containerRect.height / 2 + rect.height / 2
       : offsetTop - stickyHeaderHeight(el, container) - 8;
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-  container.scrollTo({ top: Math.max(0, top), behavior: reduceMotion ? 'auto' : 'smooth' });
+  const destination = Math.max(0, top);
+  container.scrollTo({ top: destination, behavior: reduceMotion ? 'auto' : 'smooth' });
+  return destination;
 }
 
 /**
@@ -151,14 +164,47 @@ function stickyHeaderHeight(el: HTMLElement, container: HTMLElement): number {
   return height;
 }
 
+/** Whether `el` is within the container's visible area. */
+function isInView(container: HTMLElement, el: HTMLElement): boolean {
+  const box = container.getBoundingClientRect();
+  const rect = el.getBoundingClientRect();
+  return rect.top >= box.top && rect.top < box.bottom - Math.min(rect.height, box.height / 4);
+}
+
 /** Sections, groups and cards land at the top; field controls are centred. */
 function autoAlign(el: HTMLElement): 'center' | 'start' {
   return el.id.startsWith('section-') || el.hasAttribute('data-state') ? 'start' : 'center';
 }
 
+/** Whether focus went to another control in the container since `before` (the user moved on). */
+function focusMovedInto(container: HTMLElement, before: Element | null): boolean {
+  const active = document.activeElement;
+  return active !== before && active != null && container.contains(active);
+}
+
+/** A choice group's current option (a radio's checked one, a button group's pressed one), so landing on it reads the value. */
+const CHECKED_RADIO =
+  'input[type="radio"]:checked, [role="radio"][aria-checked="true"], [role="group"] button[aria-pressed="true"]';
+
+/**
+ * Focuses the target's control; a read-only setting (no control) focuses its
+ * row instead, so keyboard and screen-reader users land where the page shows
+ * it rather than at the top of the page.
+ */
 function focusTarget(el: HTMLElement) {
-  const control = el.matches(FOCUSABLE) ? el : el.querySelector<HTMLElement>(FOCUSABLE);
-  control?.focus({ preventScroll: true });
+  const control = el.matches(FOCUSABLE)
+    ? el
+    : (el.querySelector<HTMLElement>(CHECKED_RADIO) ?? el.querySelector<HTMLElement>(FOCUSABLE));
+  if (control) {
+    control.focus({ preventScroll: true });
+    return;
+  }
+  const row = el.closest<HTMLElement>('.settings-row, .config-row') ?? el;
+  if (!row.hasAttribute('tabindex')) {
+    row.setAttribute('tabindex', '-1');
+    row.addEventListener('blur', () => row.removeAttribute('tabindex'), { once: true });
+  }
+  row.focus({ preventScroll: true });
 }
 
 function highlight(el: HTMLElement) {
@@ -178,19 +224,75 @@ export function revealConfigPath(
   target: t.RevealTarget,
   { align = 'auto', focus = true, highlight: flash = true, onDone }: t.RevealOptions = {},
 ): () => void {
+  settling.get(container)?.();
   const tried = new WeakSet<HTMLElement>();
   const prefixes = pathPrefixes(target.path);
   let attempts = 0;
   let timer: number | undefined;
   let cancelled = false;
+  let landed = false;
+  const settleTimers: number[] = [];
+  let unwatch: (() => void) | undefined;
+
+  const stopSettling = () => {
+    settleTimers.forEach((id) => window.clearTimeout(id));
+    settleTimers.length = 0;
+    unwatch?.();
+    unwatch = undefined;
+    if (settling.get(container) === stopSettling) settling.delete(container);
+  };
+
+  /**
+   * Groups opened on the way finish laying out after the first scroll: check
+   * twice that the target is still in view and scroll again if it moved, then
+   * focus it. Any scroll, click or key from the user ends this, so the page
+   * never jumps back to a target they have moved away from.
+   */
+  const settleOn = (el: HTMLElement, alignment: 'center' | 'start', heading: number) => {
+    const focusedBefore = document.activeElement;
+    let destination = heading;
+    let closest = Math.abs(container.scrollTop - destination);
+    const settle = () => {
+      if (!el.isConnected || isInView(container, el)) return;
+      destination = scrollIntoContainer(container, el, alignment);
+      closest = Math.abs(container.scrollTop - destination);
+    };
+    /** A reveal's own scrolling only nears its destination: moving well away from it is the user. */
+    const onScroll = () => {
+      const distance = Math.abs(container.scrollTop - destination);
+      if (distance < closest) closest = distance;
+      else if (distance - closest > container.clientHeight / 3) stopSettling();
+    };
+    USER_INPUT_EVENTS.forEach((type) =>
+      container.addEventListener(type, stopSettling, { passive: true }),
+    );
+    container.addEventListener('scroll', onScroll, { passive: true });
+    settling.set(container, stopSettling);
+    unwatch = () => {
+      USER_INPUT_EVENTS.forEach((type) => container.removeEventListener(type, stopSettling));
+      container.removeEventListener('scroll', onScroll);
+    };
+    settleTimers.push(
+      window.setTimeout(() => {
+        settle();
+        if (focus && !focusMovedInto(container, focusedBefore)) focusTarget(el);
+      }, SETTLE_MS[0]),
+      window.setTimeout(() => {
+        settle();
+        stopSettling();
+      }, SETTLE_MS[1]),
+    );
+  };
 
   const finish = (el: HTMLElement | null) => {
     if (cancelled) return;
     cancelled = true;
+    landed = true;
     if (el) {
-      scrollIntoContainer(container, el, align === 'auto' ? autoAlign(el) : align);
+      const alignment = align === 'auto' ? autoAlign(el) : align;
+      const heading = scrollIntoContainer(container, el, alignment);
       if (flash) highlight(el);
-      if (focus) window.setTimeout(() => focusTarget(el), 350);
+      settleOn(el, alignment, heading);
     }
     onDone?.(el);
   };
@@ -205,21 +307,22 @@ export function revealConfigPath(
     }
 
     let changed = false;
-    /** The target exists but sits in a collapsed group no path names (a purpose group around flat rows). */
-    const enclosing = el && !isShown(el) ? el.closest(CLOSED_GRID)?.parentElement : null;
-    if (enclosing instanceof HTMLElement) changed = expandContainer(enclosing, tried);
     if (target.sectionId) {
       const section = byId(container.ownerDocument, `section-${target.sectionId}`);
       if (section && container.contains(section)) changed = expandContainer(section, tried);
     }
-    /** Rendered inside a collapsed group (eagerly rendered bodies): open the groups around it. */
-    if (el && !isShown(el)) {
-      for (let grid = el.closest<HTMLElement>(CLOSED_GRID); grid; ) {
+    /**
+     * Rendered inside collapsed groups no path names (purpose groups around
+     * flat rows, eagerly rendered bodies): open every group around it.
+     */
+    const openAround = (inner: HTMLElement) => {
+      for (let grid = inner.closest<HTMLElement>(CLOSED_GRID); grid; ) {
         const owner = grid.parentElement;
         if (owner) changed = expandContainer(owner, tried) || changed;
         grid = owner?.closest<HTMLElement>(CLOSED_GRID) ?? null;
       }
-    }
+    };
+    if (el && !isShown(el)) openAround(el);
     let deepest: HTMLElement | null = null;
     for (const prefix of prefixes) {
       const ancestor = findPathElement(container, prefix);
@@ -227,6 +330,8 @@ export function revealConfigPath(
       deepest = ancestor;
       changed = expandContainer(ancestor, tried) || changed;
     }
+    /** The target renders once the closed group around its nearest rendered ancestor opens (an MCP server's User variables). */
+    if (!el && deepest && !isShown(deepest)) openAround(deepest);
     if (!changed && deepest && !el) changed = expandChildGroups(deepest, tried);
 
     if (attempts >= MAX_ATTEMPTS) {
@@ -237,8 +342,14 @@ export function revealConfigPath(
   };
 
   attempt();
+  /**
+   * Cancelling stops a reveal still looking for its target. Once it has landed,
+   * its last re-checks and focus still run (a deep link drops `?field=` when it
+   * lands, which cancels it); a newer reveal or the user's own scrolling ends them.
+   */
   return () => {
     cancelled = true;
     window.clearTimeout(timer);
+    if (!landed) stopSettling();
   };
 }

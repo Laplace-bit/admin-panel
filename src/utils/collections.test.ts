@@ -266,6 +266,55 @@ describe('resolveCollectionOps — merge-by-key (endpoints.custom)', () => {
     expect(created.issues.map((i) => i.code)).toEqual(['DUPLICATE_ENTRY']);
   });
 
+  it('rejects a name LibreChat serves as an existing entry (ollama / Ollama), on create and rename', () => {
+    const lower = [...yamlEndpoints, { name: 'Ollama', baseURL: 'http://ollama:11434/v1' }];
+    const created = resolve(
+      [upsert('ollama', null, { name: 'ollama', baseURL: 'https://shadow' })],
+      undefined,
+      lower,
+    );
+    expect(created.issues).toEqual([
+      expect.objectContaining({
+        code: 'MERGED_ENTRY_NAME',
+        entryPath: 'name',
+        params: { name: 'ollama', other: 'Ollama' },
+      }),
+    ]);
+    expect(created.changed).toBe(false);
+
+    const shadow = { name: 'Shadow', apiKey: 'user_provided', baseURL: 'https://shadow' };
+    const renamed = resolve(
+      [upsert('OLLAMA', 'Shadow', { ...shadow, name: 'OLLAMA' }, shadow)],
+      [shadow],
+      lower,
+    );
+    expect(renamed.issues.map((i) => [i.code, i.entryIdentity])).toEqual([
+      ['MERGED_ENTRY_NAME', 'Shadow'],
+    ]);
+    expect(renamed.changed).toBe(false);
+  });
+
+  it('rejects a name with a leading or trailing space (an import of "Trail ")', () => {
+    const created = resolve([upsert('Trail ', null, { name: 'Trail ', baseURL: 'https://x' })]);
+    expect(created.issues.map((i) => [i.code, i.entryIdentity])).toEqual([
+      ['ENTRY_NAME_WHITESPACE', 'Trail '],
+    ]);
+  });
+
+  it('rejects the name of a built-in endpoint', () => {
+    const created = resolve([upsert('openAI', null, { name: 'openAI', baseURL: 'https://x' })]);
+    expect(created.issues.map((i) => i.code)).toEqual(['RESERVED_ENTRY_NAME']);
+  });
+
+  it('lets an entry keep or edit a name only it has', () => {
+    const shadow = { name: 'Shadow', apiKey: 'user_provided', baseURL: 'https://shadow' };
+    const result = resolve(
+      [upsert('Shadow 2', 'Shadow', { ...shadow, name: 'Shadow 2' }, shadow)],
+      [shadow],
+    );
+    expect(result.issues).toEqual([]);
+  });
+
   it('merges an upsert without a baseline (an import) into the current entry', () => {
     const stored = [
       { name: 'AdminA', apiKey: 'user_provided', baseURL: 'https://a', iconURL: 'i' },

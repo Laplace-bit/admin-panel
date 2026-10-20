@@ -11,6 +11,9 @@ export const SPEC_FIELD_META: t.FieldMetaRegistry = {
   /** The provider's own search tool, apart from the spec's Web search capability. */
   'modelSpecs.list[].preset.web_search': { labelKey: 'com_config_specs_provider_web_search' },
   'modelSpecs.list[].preset.greeting': { multiline: true },
+  'modelSpecs.list[].preset.modelLabel': {
+    placeholderKey: 'com_config_specs_model_label_placeholder',
+  },
   /** Unset, the spec's agent gets no ask-the-user tool. */
   'modelSpecs.list[].askUserQuestion': { runtimeDefault: false },
   /** Unset, LibreChat lets the provider pick (the parameter panel's "Auto"). */

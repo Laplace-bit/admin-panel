@@ -126,7 +126,7 @@ function collectionItems(
     items.findIndex((item) => getEntryKey(item, collection.key) === key);
   const current = layers.baselineAt(collection.path);
   const currentList = Array.isArray(current) ? current : [];
-  return changeSet.ops
+  const rows = changeSet.ops
     .filter((op) => op.path === collection.path)
     .flatMap((op): t.ChangeSummaryItem[] => {
       if (op.op === 'removeEntry') {
@@ -178,6 +178,21 @@ function collectionItems(
       return [...renamed, ...fields];
     })
     .map((item) => withWarnings(item, warningsFor(plan, collection.path, item.entryIdentity)));
+  return items.length === 0 ? withEmptyListWarning(collection.path, rows) : rows;
+}
+
+/** An emptied spec list: users get the endpoint menu whatever the selection mode says. */
+const EMPTY_LIST_WARNINGS: Readonly<Record<string, t.ChangeWarning>> = {
+  'modelSpecs.list': 'emptySpecs',
+};
+
+/** The list's own warning on its last row, once the save leaves it with no entries. */
+function withEmptyListWarning(path: string, rows: t.ChangeSummaryItem[]): t.ChangeSummaryItem[] {
+  const warning = EMPTY_LIST_WARNINGS[path];
+  if (!warning || rows.length === 0) return rows;
+  const last = rows[rows.length - 1];
+  const warnings = [...new Set([...(last.warnings ?? []), warning])];
+  return [...rows.slice(0, -1), { ...last, warnings }];
 }
 
 /**

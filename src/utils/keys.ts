@@ -67,8 +67,8 @@ function blankPairs(pairs: t.KeyValuePair[], basePath: string): t.BlankConfigTex
       return [{ path: basePath, key: pair.key }];
     }
     const valuePath = `${basePath}.${pair.key}`;
-    if (typeof pair.value !== 'string' || pair.value === '' || !isBlankText(pair.value)) return [];
-    return isWhitespaceSignificantPath(valuePath) ? [] : [{ path: valuePath }];
+    if (typeof pair.value !== 'string' || !isBlankText(pair.value)) return [];
+    return isWhitespaceSignificantPath(valuePath) && pair.value !== '' ? [] : [{ path: valuePath }];
   });
 }
 
@@ -76,20 +76,31 @@ function blankPairs(pairs: t.KeyValuePair[], basePath: string): t.BlankConfigTex
  * Whitespace-only strings and object keys under `value`: LibreChat would
  * store them and read them as values (a Base URL of `"   "`, a header named
  * `"  "`). A blank key reports the path of the object holding it; a blank
- * string, its own path. Stop sequences keep their whitespace and pass.
+ * string, its own path. Stop sequences keep their whitespace and pass. An
+ * empty string under an object (a header row with a key but no value) is
+ * blank as well: saved, LibreChat would send it as an empty header.
  */
 export function findBlankText(value: t.ConfigValue, basePath: string): t.BlankConfigText[] {
+  return blankTextIn(value, basePath, false);
+}
+
+function blankTextIn(
+  value: t.ConfigValue,
+  basePath: string,
+  isEntry: boolean,
+): t.BlankConfigText[] {
   if (typeof value === 'string') {
-    if (value === '' || !isBlankText(value) || isWhitespaceSignificantPath(basePath)) return [];
+    if (value === '') return isEntry ? [{ path: basePath }] : [];
+    if (!isBlankText(value) || isWhitespaceSignificantPath(basePath)) return [];
     return [{ path: basePath }];
   }
   if (value == null || typeof value !== 'object') return [];
   if (Array.isArray(value)) {
     if (isKeyValuePairList(value)) return blankPairs(value, basePath);
-    return value.flatMap((item, index) => findBlankText(item, `${basePath}.${index}`));
+    return value.flatMap((item, index) => blankTextIn(item, `${basePath}.${index}`, false));
   }
   return Object.entries(value).flatMap(([key, child]) => {
     if (isBlankText(key)) return [{ path: basePath, key }];
-    return findBlankText(child, basePath ? `${basePath}.${key}` : key);
+    return blankTextIn(child, basePath ? `${basePath}.${key}` : key, true);
   });
 }

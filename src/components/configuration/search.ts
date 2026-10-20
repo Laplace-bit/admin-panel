@@ -181,6 +181,13 @@ function collectionEntries(
   return Object.keys(value).map((key) => ({ segment: key, title: key }));
 }
 
+/**
+ * Collections shown read-only as a table (Azure groups, D13): their entries
+ * are found by name and land on their row; the fields inside each are only in
+ * its details drawer, so they aren't search results of their own.
+ */
+const TABLE_COLLECTIONS: ReadonlySet<string> = new Set(['endpoints.azureOpenAI.groups']);
+
 function walkChildren(
   ctx: WalkContext,
   fields: t.SchemaField[],
@@ -219,6 +226,7 @@ function walkField(ctx: WalkContext, field: t.SchemaField, path: string, breadcr
       pushItem(ctx, { label: title, breadcrumb: entryCrumbs, path: entryPath, kind: 'entry' }, [
         segment,
       ]);
+      if (TABLE_COLLECTIONS.has(path)) continue;
       const children =
         path === 'modelSpecs.list'
           ? specSearchFields(

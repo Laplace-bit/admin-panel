@@ -145,6 +145,19 @@ describe('ProvidersRenderer', () => {
     expect(citations.querySelector('[aria-expanded="false"]')).toBeTruthy();
   });
 
+  it('says when the max recursion limit caps the recursion limit', () => {
+    const limits = {
+      ...CONFIG,
+      endpoints: { agents: { recursionLimit: 75, maxRecursionLimit: 60 } },
+    };
+    renderProviders({ getValue: (path, fallback) => fallback ?? getValueAtPath(limits, path) });
+    fireEvent.click(trigger('agents'));
+    const features = document.getElementById('section-endpoints.agents-features') as HTMLElement;
+    expect(
+      within(features).getByText('com_config_providers_recursion_capped:{"max":60,"limit":75}'),
+    ).toBeTruthy();
+  });
+
   it('shows Azure groups read-only, with a drawer that never shows a key', () => {
     renderProviders();
     fireEvent.click(trigger('azureOpenAI'));

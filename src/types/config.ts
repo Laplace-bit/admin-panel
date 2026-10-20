@@ -241,8 +241,20 @@ export interface FieldMetaGroup {
   toggle?: string;
 }
 
-/** Where a reference select gets its options (WS9 implements `useOptionSources`; WS3 consumes it). */
-export type OptionSource = 'endpoints' | `models:${string}` | 'mcpServers' | 'specGroups' | 'tools';
+/**
+ * Where a reference select gets its options (WS9 implements `useOptionSources`;
+ * WS3 consumes it). `endpoints` is every endpoint users can pick (agents and
+ * the Assistants endpoints included); `providers` only those that run models
+ * themselves, for settings LibreChat resolves to a provider (`titleEndpoint`,
+ * `allowedProviders`, a memory agent's `provider`).
+ */
+export type OptionSource =
+  | 'endpoints'
+  | 'providers'
+  | `models:${string}`
+  | 'mcpServers'
+  | 'specGroups'
+  | 'tools';
 
 /** Options of an `OptionSource` (WS9). */
 export interface OptionSourceResult {
@@ -260,6 +272,8 @@ export interface FieldMeta {
   runtimeDefault?: ConfigValue;
   /** Label of the Default choice when an unset value falls back to another setting ("Same as File strategy"). */
   defaultLabelKey?: string;
+  /** Locale key of an example shown in an empty text input ("https://api.example.com/v1"). */
+  placeholderKey?: string;
   /** Enum value → locale key of its display label (else `com_config_enum_<value>` is tried). */
   enumLabels?: Record<string, string>;
   /** Enum value → locale key of a one-line description (checkbox grids such as agent capabilities). */
