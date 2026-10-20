@@ -460,10 +460,10 @@ describe('issue display and summary', () => {
   });
 
   it('blames Base, not librechat.yaml, for an inherited value a profile empties', () => {
-    const inherited = { ...root, registration: { socialLogins: ['github'] } };
+    const inherited = { ...root, filteredTools: ['github'] };
     const changeSet = buildConfigChanges(
-      new Set(['registration.socialLogins']),
-      { 'registration.socialLogins': [] },
+      new Set(['filteredTools']),
+      { filteredTools: [] },
       schemaPaths,
       context({
         isScope: true,
@@ -472,7 +472,7 @@ describe('issue display and summary', () => {
       }),
     );
     expect(changeSet.payload.skipped).toEqual([
-      { fieldPath: 'registration.socialLogins', reason: 'inheritedValue' },
+      { fieldPath: 'filteredTools', reason: 'inheritedValue' },
     ]);
   });
 

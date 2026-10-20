@@ -30,6 +30,7 @@ const ALLOWLIST_KEYS: ReadonlySet<string> = new Set([
   'allowedAddresses',
   'addedEndpoints',
   'allowedProviders',
+  'supportedMimeTypes',
 ]);
 
 const INDEX_SEGMENT_RE = /^\d+$/;
@@ -132,10 +133,13 @@ function withEntry(
   };
 }
 
+/** An empty list here lets everyone in rather than no one. */
+const OPEN_WHEN_EMPTY: ReadonlySet<string> = new Set(['registration.allowedDomains']);
+
 function allowlistWarning(path: string, after: t.ConfigValue): t.ChangeWarning[] {
-  return Array.isArray(after) && after.length === 0 && ALLOWLIST_KEYS.has(lastSegment(path))
-    ? ['emptyAllowlist']
-    : [];
+  if (!Array.isArray(after) || after.length > 0) return [];
+  if (OPEN_WHEN_EMPTY.has(path)) return ['openRegistration'];
+  return ALLOWLIST_KEYS.has(lastSegment(path)) ? ['emptyAllowlist'] : [];
 }
 
 /**

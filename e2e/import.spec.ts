@@ -53,13 +53,13 @@ test('imports a snippet into Base, previewing exactly its keys', async ({ page }
   await page.getByRole('radio', { name: /^Base configuration/ }).click();
   const { dialog, apply } = await previewAndApply(page, /into Base configuration$/);
   await expect(dialog.getByRole('checkbox')).toHaveCount(1);
-  await expect(dialog.getByText('Start balance')).toBeVisible();
+  await expect(dialog.getByText('Starting credits')).toBeVisible();
   await expect(dialog.getByText(/Prompts: managed with role permissions/)).toBeVisible();
   await apply.click();
   await expect(
     page.getByText(/Imported 1 value into the base configuration/).first(),
   ).toBeVisible();
-  await expect(await startBalanceIn(page)).toHaveValue(String(value));
+  await expect(await startBalanceIn(page)).toHaveValue(value.toLocaleString('en-US'));
 });
 
 test('imports into an existing profile, comparing with its own values', async ({ page }) => {
@@ -73,7 +73,7 @@ test('imports into an existing profile, comparing with its own values', async ({
   const { apply } = await previewAndApply(page, /into Role: USER$/);
   await apply.click();
   await expect(page.getByText(/Imported 1 value into Role: USER/).first()).toBeVisible();
-  await expect(await startBalanceIn(page, 'role:USER')).toHaveValue(String(value));
+  await expect(await startBalanceIn(page, 'role:USER')).toHaveValue(value.toLocaleString('en-US'));
 });
 
 test('imports into a role that has no profile yet', async ({ page }) => {

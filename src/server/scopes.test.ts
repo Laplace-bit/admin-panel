@@ -110,12 +110,12 @@ describe('profile writes and scope gating (WS8)', () => {
       admin,
       sets([
         ['interface.parameters', true],
-        ['registration.socialLogins', ['github']],
+        ['registration.allowedDomains', ['example.com']],
       ]),
     );
     expect(result).toMatchObject({
       applied: 1,
-      skipped: [{ fieldPath: 'registration.socialLogins', reason: 'baseScope' }],
+      skipped: [{ fieldPath: 'registration.allowedDomains', reason: 'baseScope' }],
     });
     expect(api.current!.stored('role/ADMIN')).toEqual({ interface: { parameters: true } });
   });

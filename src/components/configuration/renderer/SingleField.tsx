@@ -114,9 +114,13 @@ export function SingleFieldRenderer({
     meta,
     schemaDefault,
   );
-  /** A control whose Default choice names the default (or a custom control, which shows its own) needs no hint. */
+  /**
+   * A control whose Default choice names the default (or a custom control,
+   * which shows its own) needs no hint, and the row keeps its height when
+   * edited; nor does a read-only value, which already reads "Default (…)".
+   */
   const defaultHint =
-    renderControl || SHOWS_DEFAULT_CHOICE.has(kind)
+    renderControl || SHOWS_DEFAULT_CHOICE.has(kind) || disabled
       ? null
       : getDefaultHint(field, schemaDefault, localize);
 

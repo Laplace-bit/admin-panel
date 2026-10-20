@@ -36,6 +36,8 @@ export function ObjectEntryCard({
   onValueChange,
   onRemove,
   onRename,
+  validateKey,
+  keyListId,
   lockedNote,
   onUndoRemove,
   onMoveUp,
@@ -146,6 +148,11 @@ export function ObjectEntryCard({
       setRenameError(localize('com_config_unsafe_key_error'));
       return;
     }
+    const problem = trimmed && trimmed !== entryKey ? (validateKey?.(trimmed) ?? null) : null;
+    if (problem) {
+      setRenameError(problem);
+      return;
+    }
     setRenameError(null);
     setIsEditing(false);
     if (trimmed && trimmed !== entryKey && onRename) {
@@ -153,7 +160,7 @@ export function ObjectEntryCard({
     } else {
       setEditKey(entryKey);
     }
-  }, [editKey, entryKey, onRename, localize]);
+  }, [editKey, entryKey, onRename, validateKey, localize]);
 
   const cancelRename = useCallback(() => {
     setEditKey(entryKey);
@@ -233,6 +240,7 @@ export function ObjectEntryCard({
             <input
               ref={inputRef}
               type="text"
+              list={keyListId}
               value={editKey}
               onChange={(e) => {
                 setEditKey(e.target.value);

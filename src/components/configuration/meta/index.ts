@@ -7,6 +7,8 @@ import { ENDPOINT_FIELD_META } from './endpoints';
 import { GENERIC_FIELD_META } from './generic';
 import { SPEC_FIELD_META } from './specs';
 import { MCP_FIELD_META } from './mcp';
+import { SYSTEM_FIELD_META } from './system';
+import { FILES_FIELD_META } from './files';
 
 /** Registries merged in order; area files are appended here (WS2 owns, WS9–13 contribute). */
 const META_SOURCES: t.FieldMetaRegistry[] = [
@@ -16,6 +18,8 @@ const META_SOURCES: t.FieldMetaRegistry[] = [
   SPEC_FIELD_META,
   MCP_FIELD_META,
   FEATURES_FIELD_META,
+  FILES_FIELD_META,
+  SYSTEM_FIELD_META,
 ];
 
 const REGISTRY = buildFieldMetaRegistry(META_SOURCES);

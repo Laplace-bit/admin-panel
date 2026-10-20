@@ -58,6 +58,8 @@ export interface ApplyConfigChangesRequest {
 export type ChangeWarning =
   | 'ownershipChange'
   | 'emptyAllowlist'
+  /** Empties the allowed sign-up domains, so anyone with an email address can sign up (WS14). */
+  | 'openRegistration'
   | 'yamlOnly'
   | 'baseOnly'
   | 'unsafeKey'

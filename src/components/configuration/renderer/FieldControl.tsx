@@ -30,8 +30,9 @@ import { TextareaField } from '../fields/TextareaField';
 import { KeyValueField } from '../fields/KeyValueField';
 import { RefListField } from '../fields/RefListField';
 import { LiteralField } from '../fields/LiteralField';
+import { MimeListField } from '../fields/MimeListField';
 import { isWhitespaceSignificantPath } from '@/utils';
-import { useLocalize, useFieldError } from '@/hooks';
+import { useLocalize, useFieldError, useInheritedMimeList } from '@/hooks';
 import { NumberField } from '../fields/NumberField';
 import { SelectField } from '../fields/SelectField';
 import { ToggleField } from '../fields/ToggleField';
@@ -401,6 +402,18 @@ export function FieldControl({
           clearOnEmpty={false}
         />
       );
+    case 'mime-list':
+      return (
+        <MimeListControl
+          id={id}
+          path={path}
+          label={label}
+          value={fieldDefault.hasOwnValue && isStringArray(value) ? value : undefined}
+          fieldDefault={fieldDefault}
+          onChange={onChange}
+          onClear={onClear}
+        />
+      );
     case 'model-list':
       return (
         <ModelListField
@@ -494,6 +507,32 @@ export function FieldControl({
   }
   return (
     <CodeField id={id} value={value} onChange={onChange} disabled={disabled} aria-label={label} />
+  );
+}
+
+/** The MIME list editor with the list it inherits (FX-7). */
+function MimeListControl({
+  id,
+  path,
+  label,
+  value,
+  fieldDefault,
+  onChange,
+  onClear,
+}: Pick<t.FieldControlProps, 'id' | 'path' | 'label' | 'fieldDefault' | 'onChange' | 'onClear'> & {
+  value: string[] | undefined;
+}) {
+  const inherited = useInheritedMimeList(path, fieldDefault);
+  return (
+    <MimeListField
+      id={id}
+      path={path}
+      value={value}
+      inherited={inherited}
+      onChange={onChange}
+      onClear={onClear}
+      aria-label={label}
+    />
   );
 }
 

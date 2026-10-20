@@ -4,8 +4,7 @@ import type * as t from '@/types';
 import { buildFieldMetaRegistry, resolveFieldMeta } from './registry';
 
 const localize: t.LocalizeFn = (key) =>
-  ({ com_config_field_startBalance: 'Start balance', com_config_field_custom: 'Custom' })[key] ??
-  key;
+  ({ com_config_field_tokenLimit: 'Token limit', com_config_field_custom: 'Custom' })[key] ?? key;
 
 describe('resolveFieldMeta', () => {
   const root = buildFieldMetaRegistry([
@@ -51,8 +50,8 @@ describe('resolveFieldMeta', () => {
 
 describe('getFieldMeta / labelForPath', () => {
   it('resolves generic metadata and suffix-derived units', () => {
-    expect(getFieldMeta('balance.startBalance')).toEqual({ unit: 'credits' });
-    expect(getFieldMeta('balance.reservationTtlMs')).toEqual({ unit: 'ms' });
+    expect(getFieldMeta('balance.startBalance')).toMatchObject({ unit: 'credits' });
+    expect(getFieldMeta('balance.reservationTtlMs')).toMatchObject({ unit: 'ms' });
     expect(getFieldMeta('rateLimits.fileUploads.ipWindowInMinutes')).toEqual({
       unit: 'minutes',
       runtimeDefault: 15,
@@ -62,7 +61,7 @@ describe('getFieldMeta / labelForPath', () => {
     expect(getFieldMeta('version')).toBeUndefined();
     expect(getFieldMeta('endpoints.openAI.titlePrompt')).toMatchObject({ multiline: true });
     expect(getFieldMeta('webSearch.jinaApiKey')).toEqual({ secret: true });
-    expect(getFieldMeta('fileStrategy')).toEqual({ confirmChange: true });
+    expect(getFieldMeta('fileStrategy')).toMatchObject({ confirmChange: true });
   });
 
   it('flags read-only sections and permission paths', () => {
@@ -93,7 +92,7 @@ describe('getFieldMeta / labelForPath', () => {
   });
 
   it('labels a path by its last named segment', () => {
-    expect(labelForPath('balance.startBalance', localize)).toBe('Start balance');
+    expect(labelForPath('memory.tokenLimit', localize)).toBe('Token limit');
     expect(labelForPath('endpoints.custom.3', localize)).toBe('Custom');
   });
 

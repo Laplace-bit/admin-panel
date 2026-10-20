@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type React from 'react';
+import type { KeySuggestion, KeyValidator } from './files';
 import type {
   ConfigValue,
   SchemaField,
@@ -276,6 +277,12 @@ export interface RecordObjectFieldProps {
   editSessionId?: number;
   /** Keys the layer beneath defines (D3): their values can change, but they can't be renamed or removed. */
   lockedKeys?: ReadonlySet<string>;
+  /** Suggested keys for adding and renaming entries (a combobox of known names). */
+  keyOptions?: KeySuggestion[];
+  /** Rejects a key being added or renamed to, with the reason; duplicates are always rejected. */
+  validateKey?: KeyValidator;
+  /** Label of the Add button ("Add endpoint"). */
+  addLabel?: string;
 }
 
 export type CollectionRenderFields = (
@@ -320,6 +327,10 @@ export interface ObjectEntryCardProps {
   onRename?: (newKey: string) => void;
   /** Why the entry can't be renamed or removed, shown in place of those actions. */
   lockedNote?: string;
+  /** Rejects a new key while renaming, with the reason shown under the input. */
+  validateKey?: KeyValidator;
+  /** Id of a `<datalist>` of key suggestions for the rename input. */
+  keyListId?: string;
   /** Renders the entry as pending deletion (struck title, Undo) until Save. */
   pendingRemoval?: boolean;
   onUndoRemove?: () => void;

@@ -7,6 +7,7 @@ import { useLocalize } from '@/hooks';
 
 export function NestedGroup({
   label,
+  description,
   sectionId,
   configuredCount = 0,
   totalCount = 0,
@@ -19,6 +20,8 @@ export function NestedGroup({
   children,
 }: {
   label: string;
+  /** Help text under the group heading. */
+  description?: string;
   sectionId?: string;
   configuredCount?: number;
   totalCount?: number;
@@ -67,6 +70,7 @@ export function NestedGroup({
       id={sectionId}
       sectionRef={sectionRef}
       title={label}
+      description={description}
       variant="group"
       badge={<CountBadge configured={configuredCount} total={totalCount} entries={entries} />}
       actions={addButton}

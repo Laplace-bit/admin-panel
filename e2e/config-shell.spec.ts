@@ -233,7 +233,7 @@ test.describe('Configuration shell: profile scope and guard', () => {
     await expect(guard).toBeVisible();
     await guard.getByRole('button', { name: 'Cancel' }).click();
     await expect(page).toHaveURL(/configuration/);
-    await expect(page.locator('#balance-startBalance')).toHaveValue('424242');
+    await expect(page.locator('#balance-startBalance')).toHaveValue('424,242');
     await page.locator('aside a[href*="/access"]').first().click();
     await page.getByRole('dialog').getByRole('button', { name: 'Discard changes' }).click();
     await expect(page).toHaveURL(/access/);

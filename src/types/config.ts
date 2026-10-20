@@ -224,7 +224,9 @@ export type ControlKind =
   | 'ref-select'
   | 'model-list'
   /** A domain allowlist as validated chips (WS13 FX-16). */
-  | 'domain-list';
+  | 'domain-list'
+  /** A MIME pattern list with its effective defaults, presets and a tester (WS14 FX-7). */
+  | 'mime-list';
 
 /** Display unit for numeric fields (WS2). */
 export type FieldUnit = 'MB' | 'ms' | 's' | 'minutes' | 'px' | 'hours' | 'credits';
