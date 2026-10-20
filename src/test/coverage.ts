@@ -9,6 +9,9 @@ const ARRAY_MARKER = '[]';
 const RECORD_MARKER = '{}';
 
 /** The page's English texts, outside React (labels a test looks for). */
+/** Per-test timeout for full-tab coverage renders, which run several times slower on CI runners. */
+export const COVERAGE_TEST_TIMEOUT_MS = 30_000;
+
 export const localizeEn: t.LocalizeFn = (key, values) => i18n.t(key, values ?? {});
 
 /** A new string setting and a new object holding a boolean, as a newer LibreChat schema may add them. */

@@ -4,6 +4,7 @@ import { fireEvent, screen } from '@testing-library/react';
 import type { HiddenFields } from '@/test/coverage';
 import type * as t from '@/types';
 import {
+  COVERAGE_TEST_TIMEOUT_MS,
   UNKNOWN_KEY,
   SYNTHETIC_FLAG,
   SYNTHETIC_TEXT,
@@ -25,6 +26,8 @@ import {
 } from '@/test/coverage';
 import { renderTab, PAGE_TREE, RAW_TREE } from '@/test/page';
 import { setValueAtPath } from '@/utils';
+
+vi.setConfig({ testTimeout: COVERAGE_TEST_TIMEOUT_MS });
 
 vi.mock('@tanstack/react-router', async (importOriginal) =>
   (await import('@/test/router')).routerless(importOriginal),

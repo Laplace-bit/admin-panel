@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { HiddenFields } from '@/test/coverage';
 import type * as t from '@/types';
 import {
+  COVERAGE_TEST_TIMEOUT_MS,
   UNKNOWN_KEY,
   SYNTHETIC_FLAG,
   SYNTHETIC_TEXT,
@@ -23,6 +24,8 @@ import { READ_ONLY_CONFIG_SECTIONS, YAML_MANAGED_FIELDS } from '@/constants';
 import { SECTION_META } from '@/components/configuration/configMeta';
 import { renderTab, PAGE_TREE, RAW_TREE } from '@/test/page';
 import { setValueAtPath } from '@/utils';
+
+vi.setConfig({ testTimeout: COVERAGE_TEST_TIMEOUT_MS });
 
 vi.mock('@tanstack/react-router', async (importOriginal) =>
   (await import('@/test/router')).routerless(importOriginal),

@@ -4,6 +4,7 @@ import { fireEvent, screen, within } from '@testing-library/react';
 import type { CoverageFixture, HiddenFields } from '@/test/coverage';
 import type * as t from '@/types';
 import {
+  COVERAGE_TEST_TIMEOUT_MS,
   turnOn,
   typeInto,
   planWrites,
@@ -24,6 +25,8 @@ import {
 import { setValueAtPath, isInterfacePermissionPath } from '@/utils';
 import { renderTab, PAGE_TREE, RAW_TREE } from '@/test/page';
 import { labelForPath } from '@/components/configuration';
+
+vi.setConfig({ testTimeout: COVERAGE_TEST_TIMEOUT_MS });
 
 vi.mock('@tanstack/react-router', async (importOriginal) =>
   (await import('@/test/router')).routerless(importOriginal),
