@@ -304,10 +304,35 @@ export function trackCollectionEdit(
 }
 
 /**
+ * Whether the pending items keep loaded entries in a different order than
+ * they were loaded in. Only lists whose order matters (model specs: list
+ * order is menu order) send it.
+ */
+function isReordered(
+  collection: t.KeyedCollection,
+  items: t.ConfigValue[],
+  edit: t.CollectionEdit,
+): boolean {
+  if (collection.merge !== 'replace') return false;
+  const pending = items.flatMap((_, index) => {
+    const origin = edit.origins[index];
+    return origin ? [origin.identity] : [];
+  });
+  const kept = new Set(pending);
+  const loaded = edit.baseline.flatMap((entry) => {
+    const identity = getEntryKey(entry, collection.key);
+    return identity !== undefined && kept.has(identity) ? [identity] : [];
+  });
+  return pending.some((identity, i) => identity !== loaded[i]);
+}
+
+/**
  * The entry ops for one collection: an upsert for each added or changed item
  * (keyed by the identity it was loaded with, with that loaded entry as the
  * baseline so only the edit is applied) and a remove for each loaded entry no
- * pending item came from. Items without a key are reported, not sent.
+ * pending item came from. Items without a key are reported, not sent. When a
+ * list whose order matters was reordered, every kept entry is sent with its
+ * new `index`, so applying the upserts in order rebuilds that order.
  */
 export function diffCollection(
   collection: t.KeyedCollection,
@@ -318,6 +343,7 @@ export function diffCollection(
   const ops: t.ConfigChange[] = [];
   const issues: t.ConfigIssue[] = [];
   const kept = new Set<string>();
+  const moved = isReordered(collection, items, edit);
   items.forEach((item, index) => {
     const origin = edit.origins[index] ?? null;
     if (origin) kept.add(origin.identity);
@@ -339,7 +365,7 @@ export function diffCollection(
       return;
     }
     const baseline = normalize(origin.baseline);
-    if (isConfigValueEqual(value, baseline)) return;
+    if (!moved && isConfigValueEqual(value, baseline)) return;
     ops.push({
       op: 'upsertEntry',
       path: collection.path,
@@ -347,6 +373,7 @@ export function diffCollection(
       identity: origin.identity,
       value,
       baseline,
+      ...(moved && { index }),
     });
   });
   for (const entry of edit.baseline) {

@@ -337,6 +337,33 @@ describe('deriveFieldValue', () => {
   });
 });
 
+describe('deriveFieldState for model specs (a list replaced whole)', () => {
+  const base = baseConfigFixture({
+    dbOverrides: {
+      modelSpecs: {
+        list: [
+          { name: 'spec-b', label: 'Spec B' },
+          { name: 'spec-a', label: 'Spec A (admin)' },
+        ],
+      },
+    },
+  });
+  const data = valuesDataFixture(baseLayersFixture(base));
+
+  it("reads each spec's lower value from the same spec, not from its index", () => {
+    expect(deriveFieldState('modelSpecs.list.0.label', data)).toMatchObject({
+      value: 'Spec B',
+      source: 'admin',
+      revertTarget: { value: undefined, source: 'default' },
+    });
+    expect(deriveFieldState('modelSpecs.list.1.label', data)).toMatchObject({
+      value: 'Spec A (admin)',
+      source: 'admin',
+      revertTarget: { value: 'Spec A', source: 'yaml' },
+    });
+  });
+});
+
 describe('deriveFieldState for custom endpoints (merged by name)', () => {
   const base = baseConfigFixture({
     dbOverrides: {

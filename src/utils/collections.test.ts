@@ -403,4 +403,37 @@ describe('resolveCollectionOps — replace (modelSpecs.list)', () => {
     const reverted = resolve([specOp('gpt', 'gpt', yamlSpecs[0], own[0])], own, yamlSpecs, specs);
     expect(reverted).toMatchObject({ next: undefined, changed: true });
   });
+
+  it('moves existing specs to their index, so a reorder alone is saved', () => {
+    const moves = [
+      { ...specOp('claude', 'claude', yamlSpecs[1], yamlSpecs[1]), index: 0 },
+      { ...specOp('gpt', 'gpt', yamlSpecs[0], yamlSpecs[0]), index: 1 },
+    ] as t.EntryChange[];
+    const result = resolve(moves, undefined, yamlSpecs, specs);
+    expect(result.changed).toBe(true);
+    expect(result.next?.map((s) => (s as t.ConfigRecord).name)).toEqual(['claude', 'gpt']);
+    const back = resolve(
+      [
+        { ...specOp('gpt', 'gpt', yamlSpecs[0], yamlSpecs[0]), index: 0 },
+        { ...specOp('claude', 'claude', yamlSpecs[1], yamlSpecs[1]), index: 1 },
+      ] as t.EntryChange[],
+      [yamlSpecs[1], yamlSpecs[0]],
+      yamlSpecs,
+      specs,
+    );
+    expect(back).toMatchObject({ next: undefined, changed: true });
+  });
+
+  it('rebuilds a reorder with an added and a removed spec in one batch', () => {
+    const third = { name: 'mini', label: 'Mini', preset: { endpoint: 'openAI' } };
+    const ops = [
+      { ...specOp('new', null, { name: 'new', label: 'New' }), index: 0 },
+      { ...specOp('claude', 'claude', yamlSpecs[1], yamlSpecs[1]), index: 1 },
+      { ...specOp('mini', 'mini', third, third), index: 2 },
+      { op: 'removeEntry', path: 'modelSpecs.list', key: 'gpt', identity: 'gpt' },
+    ] as t.EntryChange[];
+    const result = resolve(ops, undefined, [...yamlSpecs, third], specs);
+    expect(result.issues).toEqual([]);
+    expect(result.next?.map((s) => (s as t.ConfigRecord).name)).toEqual(['new', 'claude', 'mini']);
+  });
 });

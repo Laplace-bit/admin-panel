@@ -29,6 +29,8 @@ export function ArrayObjectField({
   editSessionId,
   getEntryTitle: getTitle,
   renderSummary,
+  renderLeading,
+  stackedSummary,
   reorderable,
   emptyLabel,
   isEntryLocked,
@@ -192,6 +194,8 @@ export function ArrayObjectField({
               reorderable && index < items.length - 1 ? () => handleMove(index, 1) : undefined
             }
             summary={renderSummary?.(item, index)}
+            leading={renderLeading?.(item, index)}
+            stackedSummary={stackedSummary}
             disabled={disabled}
             isNew={newKeys.has(key)}
             markers={newKeys.has(key) ? undefined : markersOf?.(item)}

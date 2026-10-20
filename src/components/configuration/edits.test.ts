@@ -205,6 +205,44 @@ describe('identity-keyed collection ops (SV-1)', () => {
     ]);
   });
 
+  it('sends a reordered spec list with every kept spec at its new index', () => {
+    const specList: t.ConfigRecord[] = [
+      { name: 'a', label: 'A', preset: { endpoint: 'openAI', model: 'm' } },
+      { name: 'b', label: 'B', preset: { endpoint: 'openAI', model: 'm' } },
+      { name: 'c', label: 'C', preset: { endpoint: 'openAI', model: 'm' } },
+    ];
+    const specRoot: t.ConfigRecord = { modelSpecs: { list: specList } };
+    const reordered = [specList[2], specList[0], specList[1]];
+    const collections = trackCollectionEdit({}, {}, 'modelSpecs.list', reordered, specRoot);
+    const { ops } = buildConfigChanges(
+      new Set(['modelSpecs.list']),
+      { 'modelSpecs.list': reordered },
+      schemaPaths,
+      context({ root: specRoot, collections }),
+    );
+    expect(ops).toEqual([
+      expect.objectContaining({ op: 'upsertEntry', identity: 'c', index: 0 }),
+      expect.objectContaining({ op: 'upsertEntry', identity: 'a', index: 1 }),
+      expect.objectContaining({ op: 'upsertEntry', identity: 'b', index: 2 }),
+    ]);
+    const plan = planConfigChanges(ops, { stored: {}, lower: specRoot, lowerKind: 'yaml' });
+    expect(plan.sets.map((set) => set.fieldPath)).toEqual(['modelSpecs.list']);
+    const saved = plan.sets[0].value as t.ConfigRecord[];
+    expect(saved.map((spec) => spec.name)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('sends no positions for a reordered custom endpoint list (merged by name)', () => {
+    const reordered = [endpoints[2], endpoints[0], endpoints[1]];
+    const collections = trackCollectionEdit({}, {}, 'endpoints.custom', reordered, root);
+    const { ops } = buildConfigChanges(
+      new Set(['endpoints.custom']),
+      { 'endpoints.custom': reordered },
+      schemaPaths,
+      context({ collections }),
+    );
+    expect(ops).toEqual([]);
+  });
+
   it('turns a reset of the whole collection into a reset op (revert list to librechat.yaml)', () => {
     const values = { 'modelSpecs.list': undefined };
     const { ops } = buildConfigChanges(

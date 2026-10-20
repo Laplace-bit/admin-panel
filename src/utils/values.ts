@@ -1,9 +1,8 @@
 import type * as t from '@/types';
 import { hasPathOrAncestor, pathIndexOverlaps } from './paths';
 import { getValueAtPath, isConfigRecord } from './format';
-import { getReadOnlyReason } from '@/constants';
+import { getReadOnlyReason, KEYED_COLLECTIONS } from '@/constants';
 import { toSecretPreviewKey } from './secrets';
-import { ARRAY_MERGE_KEYS } from './layers';
 
 /**
  * Value a field control shows: a pending edit first, then the merged tree
@@ -146,10 +145,12 @@ interface PathReader {
 
 /**
  * Where `path` points inside a keyed list, identified by the entry's key in
- * the displayed tree (indices differ between layers; names do not).
+ * the displayed tree (indices differ between layers; names do not). Lists
+ * LibreChat replaces whole (model specs) are read the same way: the layer
+ * beneath's value for a spec is that same spec's, not whichever sits at its index.
  */
 function locateKeyed(path: string, displayRoot: t.ConfigValue): KeyedLocation | null {
-  for (const [arrayPath, keyField] of Object.entries(ARRAY_MERGE_KEYS)) {
+  for (const { path: arrayPath, key: keyField } of KEYED_COLLECTIONS.values()) {
     if (!path.startsWith(`${arrayPath}.`)) continue;
     const tail = path.slice(arrayPath.length + 1);
     const dot = tail.indexOf('.');

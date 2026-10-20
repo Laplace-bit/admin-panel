@@ -493,8 +493,11 @@ function upsertInList(op: UpsertEntryOp, state: ResolveState): void {
     return;
   }
   const updated = withKey(desiredEntry(op, state.entries[index], state), key, op.key);
-  if (isConfigValueEqual(updated, state.entries[index])) return;
-  state.entries = state.entries.map((entry, i) => (i === index ? updated : entry));
+  const changed = !isConfigValueEqual(updated, state.entries[index]);
+  const others = state.entries.filter((_, i) => i !== index);
+  const at = op.index === undefined ? index : Math.min(Math.max(op.index, 0), others.length);
+  if (!changed && at === index) return;
+  state.entries = [...others.slice(0, at), updated, ...others.slice(at)];
   state.effective++;
 }
 
@@ -512,7 +515,8 @@ function upsertInList(op: UpsertEntryOp, state: ResolveState): void {
  * `replace` (model specs): the result is the whole list, starting from the
  * target's own list or, without one, the list it inherits; taking over an
  * inherited list is reported as an `ownershipChange` warning, and a list
- * equal to the inherited one is no override at all.
+ * equal to the inherited one is no override at all. An upsert with an `index`
+ * also moves its entry there (applied in order, they rebuild a reordering).
  *
  * An identity missing from the current layers is a conflict (`ENTRY_NOT_FOUND`).
  */

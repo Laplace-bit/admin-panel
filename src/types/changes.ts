@@ -17,7 +17,8 @@ export type ConfigChange =
    * its key afterwards, so `key !== identity` is a rename. `baseline` is the
    * entry as the editor loaded it: only what changed since then is applied, on
    * top of the entry as it is stored at save time. `index` places a new entry
-   * in a replace-semantics list (appended when absent).
+   * in a replace-semantics list (appended when absent), and moves an existing
+   * one there (a reordered list sends every kept entry with its position).
    */
   | {
       op: 'upsertEntry';
