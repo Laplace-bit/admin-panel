@@ -821,7 +821,7 @@ function sampleValueForControl(field: t.SchemaField, path?: string): unknown {
     case 'scalar-union':
       return true;
     case 'model-list':
-      return ['item', { name: 'item-2' }];
+      return getArrayItemType(field.type) === 'string' ? ['item'] : ['item', { name: 'item-2' }];
     case 'array':
     case 'multi-enum': {
       const itemType = getArrayItemType(field.type);

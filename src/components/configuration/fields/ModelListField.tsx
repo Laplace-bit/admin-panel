@@ -2,9 +2,9 @@ import { useId, useState } from 'react';
 import { ButtonGroup, TextField as CUITextField } from '@clickhouse/click-ui';
 import type * as t from '@/types';
 import { AddItemButton, DecorativeIcon } from '@/components/shared';
+import { useLocalize, useModelListDefaults } from '@/hooks';
 import { TextField } from './TextField';
 import { FieldNotice } from './Notice';
-import { useLocalize } from '@/hooks';
 
 const SEPARATORS = /[,\n]/;
 
@@ -59,7 +59,10 @@ type Mode = 'defaults' | 'only';
 export function ModelListField({
   id,
   value,
-  defaults,
+  defaults: givenDefaults,
+  path,
+  source,
+  namesOnly,
   onChange,
   onClear,
   disabled,
@@ -68,7 +71,12 @@ export function ModelListField({
 }: t.ModelListFieldProps) {
   const localize = useLocalize();
   const inputId = useId();
+  const listId = useId();
+  const fetched = useModelListDefaults(path ?? '', givenDefaults ? undefined : source);
+  const defaults = givenDefaults ?? fetched.defaults;
   const items = toModelItems(value);
+  const itemNames = new Set(items.map(modelName));
+  const suggestions = fetched.suggestions.filter((name) => !itemNames.has(name));
   const hasList = Array.isArray(value);
   const [pendingOnly, setPendingOnly] = useState(false);
   const [draft, setDraft] = useState('');
@@ -233,21 +241,24 @@ export function ModelListField({
                 onChange={(name) => updateAt(editing, { name: name.trim() })}
                 aria-label={localize('com_config_ctl_models_name')}
               />
-              <TextField
-                key={`description-${editing}`}
-                id={`${id}-edit-description`}
-                value={typeof editingItem === 'string' ? '' : (editingItem.description ?? '')}
-                onChange={(description) => updateAt(editing, { description })}
-                onClear={() => updateAt(editing, { description: '' })}
-                placeholder={localize('com_config_ctl_models_description')}
-                aria-label={localize('com_config_ctl_models_description')}
-              />
+              {!namesOnly && (
+                <TextField
+                  key={`description-${editing}`}
+                  id={`${id}-edit-description`}
+                  value={typeof editingItem === 'string' ? '' : (editingItem.description ?? '')}
+                  onChange={(description) => updateAt(editing, { description })}
+                  onClear={() => updateAt(editing, { description: '' })}
+                  placeholder={localize('com_config_ctl_models_description')}
+                  aria-label={localize('com_config_ctl_models_description')}
+                />
+              )}
             </div>
           )}
           {!disabled && (
             <div className="cui-field max-w-100">
               <CUITextField
                 id={inputId}
+                list={suggestions.length > 0 ? listId : undefined}
                 value={draft}
                 onChange={setDraft}
                 onBlur={() => addNames(draft)}
@@ -265,6 +276,13 @@ export function ModelListField({
                 placeholder={localize('com_config_ctl_models_add')}
                 aria-label={localize('com_config_ctl_models_add')}
               />
+              {suggestions.length > 0 && (
+                <datalist id={listId}>
+                  {suggestions.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+              )}
             </div>
           )}
           {items.length === 0 && (

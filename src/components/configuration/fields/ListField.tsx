@@ -33,6 +33,7 @@ export function ListField({
   multiline,
   keepsWhitespace,
   width,
+  validateItem,
   'aria-label': ariaLabel,
 }: t.ListFieldProps) {
   const localize = useLocalize();
@@ -66,7 +67,7 @@ export function ListField({
   const duplicateError = (value: string, index: number) =>
     values.some((existing, i) => i !== index && existing === value)
       ? localize('com_config_ctl_list_duplicate')
-      : null;
+      : (validateItem?.(value) ?? null);
   const removeAt = (index: number) => emit(values.filter((_, i) => i !== index));
   const replaceAt = (index: number, value: string) => {
     if (isBlank(value)) {
@@ -146,6 +147,7 @@ export function ListField({
         label={label}
         isBlank={isBlank}
         isDuplicate={(value) => values.includes(value)}
+        validate={validateItem}
         onCommit={appendDraft}
         onCancel={() => setAdding(false)}
         onContinue={(value) => {
@@ -211,6 +213,7 @@ function DraftInput({
   label,
   isBlank,
   isDuplicate,
+  validate,
   onCommit,
   onCancel,
   onContinue,
@@ -220,6 +223,7 @@ function DraftInput({
   label: string;
   isBlank: (value: string) => boolean;
   isDuplicate: (value: string) => boolean;
+  validate?: (value: string) => string | null;
   onCommit: (value: string) => void;
   onCancel: () => void;
   onContinue: (value: string) => void;
@@ -235,7 +239,9 @@ function DraftInput({
       setError(localize('com_config_ctl_list_duplicate'));
       return false;
     }
-    return true;
+    const problem = validate?.(next) ?? null;
+    setError(problem);
+    return problem == null;
   };
 
   return (

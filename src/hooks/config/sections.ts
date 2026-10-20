@@ -7,7 +7,7 @@ import {
   compareSections,
   fallbackSectionTitle,
 } from '@/components/configuration/configMeta';
-import { labelForPath } from '@/components/configuration/meta';
+import { providerTocItems } from '@/components/configuration/sections/providers';
 import { getValueAtPath, isConfigRecord } from '@/utils';
 import { READ_ONLY_CONFIG_SECTIONS } from '@/constants';
 import { useLocalize } from '../useLocalize';
@@ -88,14 +88,7 @@ function collectionTocItems(
     }));
   }
   if (activeTab === 'providers' && section.schemaKey === 'endpoints') {
-    return section.fields
-      .filter((f) => f.key !== 'custom' && f.children && f.children.length > 0)
-      .map((f) => ({
-        id: `section-${dataKey}.${f.key}`,
-        label: labelForPath(`${dataKey}.${f.key}`, localize),
-        dataPath: `${dataKey}.${f.key}`,
-        path: `${dataKey}.${f.key}`,
-      }));
+    return providerTocItems(section.fields, dataKey, localize);
   }
   return undefined;
 }

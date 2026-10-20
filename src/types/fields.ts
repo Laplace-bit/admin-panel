@@ -9,6 +9,7 @@ import type {
   ControlWidth,
   ControlKind,
   FieldUnit,
+  OptionSource,
 } from './config';
 
 /**
@@ -210,6 +211,8 @@ export interface ListFieldProps {
   /** Items are whitespace-significant (stop sequences): a blank item is kept, only an empty one is dropped. */
   keepsWhitespace?: boolean;
   width?: ControlWidth;
+  /** An item's problem shown inline as it is entered (e.g. "Add a port"); it is not added until fixed. */
+  validateItem?: (value: string) => string | null;
   'aria-label'?: string;
 }
 
@@ -358,4 +361,9 @@ export interface ListRecordFieldProps {
   onChange: (value: ConfigValue) => void;
   disabled?: boolean;
   'aria-label'?: string;
+}
+
+/** A `ListField` whose items are picked from an option source (WS9). */
+export interface RefListFieldProps extends Omit<ListFieldProps, 'options'> {
+  source: OptionSource;
 }

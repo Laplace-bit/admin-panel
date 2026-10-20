@@ -1,6 +1,6 @@
 import { useId } from 'react';
 import type * as t from '@/types';
-import { useLocalize, useOptionSources } from '@/hooks';
+import { useLocalize, useModelSource, useOptionSources } from '@/hooks';
 import { TextField } from './TextField';
 
 /**
@@ -12,6 +12,7 @@ export function RefSelectField({
   id,
   value,
   source,
+  path,
   extraOptions,
   onChange,
   onClear,
@@ -23,7 +24,7 @@ export function RefSelectField({
   const localize = useLocalize();
   const listId = useId();
   const warningId = useId();
-  const { options, isLoading } = useOptionSources(source);
+  const { options, isLoading } = useOptionSources(useModelSource(source, path));
   const allOptions = extraOptions ? [...extraOptions, ...options] : options;
   const isUnknown =
     !isLoading &&

@@ -258,6 +258,8 @@ export interface FieldMeta {
   defaultLabelKey?: string;
   /** Enum value → locale key of its display label (else `com_config_enum_<value>` is tried). */
   enumLabels?: Record<string, string>;
+  /** Enum value → locale key of a one-line description (checkbox grids such as agent capabilities). */
+  enumDescriptions?: Record<string, string>;
   /** Enum values left out of selects unless currently set (aliases such as `d` for `day`). */
   hiddenOptions?: string[];
   /** Child keys in display order. */

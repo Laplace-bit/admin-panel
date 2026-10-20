@@ -59,6 +59,18 @@ function expand(element: HTMLElement): boolean {
   return true;
 }
 
+/** Opens the collapsed groups an element is rendered in (eagerly rendered group bodies); true when any was closed. */
+function expandEnclosing(element: HTMLElement): boolean {
+  let opened = false;
+  let grid = element.closest<HTMLElement>(CLOSED_GRID);
+  while (grid) {
+    grid.parentElement?.dispatchEvent(new Event('config:expand'));
+    opened = true;
+    grid = grid.parentElement?.closest<HTMLElement>(CLOSED_GRID) ?? null;
+  }
+  return opened;
+}
+
 /** Expands every collapsed ancestor of the path that is on the page; true when anything opened. */
 function expandAncestors(segments: string[]): boolean {
   let opened = false;
@@ -92,9 +104,10 @@ export function revealConfigPath(path: string, entry?: t.RevealEntry, round = 0)
   const segments = path.split('.');
   setTimeout(
     () => {
-      const opened = expandAncestors(segments);
+      const ancestorsOpened = expandAncestors(segments);
       const deepest = findDeepest(segments, entryFieldId(path, entry));
-      const reached = deepest?.depth === segments.length;
+      const opened = (deepest != null && expandEnclosing(deepest.element)) || ancestorsOpened;
+      const reached = deepest?.depth === segments.length && !opened;
       const retry = (!reached && opened) || !deepest;
       if (retry && round < MAX_ROUNDS) {
         revealConfigPath(path, entry, round + 1);
