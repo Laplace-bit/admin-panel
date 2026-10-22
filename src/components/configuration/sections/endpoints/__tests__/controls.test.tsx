@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { configSchema } from 'librechat-data-provider';
+import { configSchema, paramSettings } from 'librechat-data-provider';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import type * as t from '@/types';
@@ -128,14 +128,18 @@ describe('ParamDefinitionsRow (CE-6)', () => {
     expect(container.querySelector('button[aria-label^="com_ui_delete"]')).toBeNull();
   });
 
-  it('adds an override of a built-in parameter with its built-in default', () => {
+  it('adds an override of a built-in parameter as its complete definition, shown as a default override', () => {
     const onChange = vi.fn();
-    render(<Params initial={[]} onChange={onChange} />);
+    const { container } = render(<Params initial={[]} onChange={onChange} />);
     const select = screen.getByLabelText('com_config_ce_param_add_builtin');
     fireEvent.change(select, { target: { value: 'temperature' } });
     const [added] = onChange.mock.lastCall?.[0] as t.ConfigRecord[];
-    expect(added.key).toBe('temperature');
-    expect(typeof added.default).toBe('number');
+    const builtIn = paramSettings.custom?.find((setting) => setting.key === 'temperature');
+    expect(added).toEqual({ ...builtIn, optionType: 'custom' });
+    expect(added).toMatchObject({ type: 'number', component: 'slider', labelCode: true });
+    expandFirstCard(container);
+    expect(screen.getByText('com_config_ce_param_override_note')).toBeInTheDocument();
+    expect(container.querySelector(`#${PATH.replace(/\./g, '-')}-0-type`)).toBeNull();
   });
 });
 
