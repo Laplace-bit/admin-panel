@@ -108,6 +108,33 @@ describe('MemoryRenderer: memory agent', () => {
     expect(screen.getByLabelText('Agent ID')).toHaveValue('agent_yaml');
   });
 
+  it('switching back before saving keeps an agent ID the edit target stores', () => {
+    const { onChange, onDiscardField } = renderSection(MemoryRenderer, {
+      section: 'memory',
+      overrides: { memory: { agent: { id: 'agent_admin' } } },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Provider and model' }));
+    expect(onChange).toHaveBeenCalledWith('memory.agent.id', undefined);
+    fireEvent.click(screen.getByRole('button', { name: 'Existing agent' }));
+    expect(onDiscardField).toHaveBeenCalledWith('memory.agent.id');
+    expect(screen.getByLabelText('Agent ID')).toHaveValue('agent_admin');
+  });
+
+  it('forgets a definition chosen without values when the edit session ends', () => {
+    const { startNewSession } = renderSection(MemoryRenderer, {
+      section: 'memory',
+      yaml: { memory: { messageWindowSize: 3 } },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Provider and model' }));
+    expect(screen.getByLabelText('Provider')).toBeInTheDocument();
+    startNewSession();
+    expect(screen.queryByLabelText('Provider')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Provider and model' })).not.toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
   it('explains a pending hide, and reads a queued hide as the inline definition', () => {
     renderSection(MemoryRenderer, {
       section: 'memory',
