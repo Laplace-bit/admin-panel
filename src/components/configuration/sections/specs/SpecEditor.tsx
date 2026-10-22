@@ -1,5 +1,4 @@
 import { useMemo, useRef, useCallback } from 'react';
-import { EModelEndpoint } from 'librechat-data-provider';
 import type * as t from '@/types';
 import {
   NameField,
@@ -17,9 +16,9 @@ import { UnknownSettings } from '../../UnknownSettings';
 import { renderInlineField } from '../../renderer';
 import { PresetEditor } from './PresetEditor';
 import { useSpecList, specIndexOf } from './context';
+import { ASSISTANT_ENDPOINTS, specPromptKeys } from './params';
 import { useLocalize } from '@/hooks';
 import { SpecGroup } from './SpecGroup';
-import { promptKeyFor } from './params';
 import { isConfigRecord } from '@/utils';
 
 const BASICS = ['label', 'name', 'description', 'iconURL'];
@@ -56,11 +55,6 @@ const GROUPED: ReadonlySet<string> = new Set([
   ...ADVANCED,
   SUBAGENTS,
   'preset',
-]);
-
-const ASSISTANT_ENDPOINTS: ReadonlySet<string> = new Set([
-  EModelEndpoint.assistants,
-  EModelEndpoint.azureAssistants,
 ]);
 
 function hasValue(value: t.ConfigValue): boolean {
@@ -135,19 +129,7 @@ export function SpecEditor({
   const presetPath = `${path}.preset`;
   const endpoint = specEndpoint(spec);
   const isAgent = isAgentSpec(spec);
-  const promptKey = promptKeyFor(
-    endpoint,
-    typeof preset.model === 'string' ? preset.model : '',
-    options.customEndpoint(endpoint),
-  );
-  const promptKeys = [
-    promptKey,
-    'greeting',
-    ...(ASSISTANT_ENDPOINTS.has(endpoint) || hasValue(preset.instructions) ? ['instructions'] : []),
-    ...(ASSISTANT_ENDPOINTS.has(endpoint) || hasValue(preset.additional_instructions)
-      ? ['additional_instructions']
-      : []),
-  ];
+  const promptKeys = specPromptKeys(preset, endpoint, options.customEndpoint(endpoint));
   const errorFields = new Set(
     problemsOf(problems, index)
       .filter((problem) => problem.level === 'error')
