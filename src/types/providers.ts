@@ -88,6 +88,11 @@ export interface ProviderGroupSectionProps extends Omit<
   before?: ReactNode;
   /** Shown after the rows (read-only unknown keys in Advanced). */
   after?: ReactNode;
+  /**
+   * Group fields rendered by `before`/`after` instead of as rows (the Azure
+   * groups table): still counted, revealed and matched by the filters.
+   */
+  hiddenKeys?: ReadonlySet<string>;
 }
 
 export interface ProviderStatusBadgeProps {

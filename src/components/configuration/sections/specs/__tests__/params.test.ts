@@ -172,6 +172,23 @@ describe('specSearchFields', () => {
     ).toContain('system');
   });
 
+  it('indexes only the model fields the editor shows for the endpoint, plus set ones', () => {
+    const openAI = presetKeysFor({ preset: { endpoint: 'openAI', model: 'gpt-4o' } });
+    expect(openAI).toEqual(expect.arrayContaining(['endpoint', 'model', 'modelLabel']));
+    expect(openAI).not.toContain('agent_id');
+    expect(openAI).not.toContain('assistant_id');
+    const agents = presetKeysFor({ preset: { endpoint: 'agents', agent_id: 'agent_1' } });
+    expect(agents).toContain('agent_id');
+    expect(agents).not.toContain('model');
+    expect(presetKeysFor({ preset: { agent_id: 'agent_1' } })).not.toContain('model');
+    expect(presetKeysFor({ preset: { endpoint: 'azureAssistants', model: 'm' } })).toContain(
+      'assistant_id',
+    );
+    expect(
+      presetKeysFor({ preset: { endpoint: 'openAI', model: 'm', agent_id: 'stale' } }),
+    ).toContain('agent_id');
+  });
+
   it('follows a custom endpoint’s parameter set', () => {
     const root = {
       endpoints: {

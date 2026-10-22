@@ -1,8 +1,8 @@
 import type * as t from '@/types';
 import { ConfirmChoiceDialog } from '../../fields/ConfirmChoice';
 import { useLocalize, useValuesScope } from '@/hooks';
-import { STORAGE_BACKEND_LABELS } from '@/constants';
 import { sourceLabel } from '../../values';
+import { backendName } from './storage';
 import { EnvVars } from './EnvVars';
 
 /**
@@ -22,7 +22,7 @@ export function StorageConfirm({
   if (!request) return null;
   /** One backend by name; skill files split by type as "S3 (images) and Azure (documents)". */
   const nameOf = ([first, second]: readonly t.StorageBackend[]): string => {
-    const name = (backend: t.StorageBackend) => localize(STORAGE_BACKEND_LABELS[backend]);
+    const name = (backend: t.StorageBackend) => backendName(backend, localize);
     if (second === undefined) return name(first);
     return localize('com_config_storage_split', { image: name(first), document: name(second) });
   };

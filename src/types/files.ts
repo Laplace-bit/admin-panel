@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { ConfigSectionConfig, FieldRendererProps, SectionCount } from './config-ui';
 import type { FieldState, ProvenanceSource } from './values';
-import type { SelectOption } from './config';
+import type { SchemaField, SelectOption } from './config';
 
 /** Which MIME list a path holds; each has its own LibreChat default (WS14, FX-7). */
 export type MimeListKind = 'text' | 'ocr' | 'endpoint';
@@ -43,12 +43,15 @@ export interface MimeListFieldProps {
   'aria-label'?: string;
 }
 
-/** The storage backends LibreChat can keep files in (`FileSources` storage values). */
-export type StorageBackend = 'local' | 'firebase' | 's3' | 'azure_blob' | 'cloudfront';
+/** A storage backend the panel knows (`FileSources` storage values), with the server variables it needs. */
+export type KnownStorageBackend = 'local' | 'firebase' | 's3' | 'azure_blob' | 'cloudfront';
+
+/** A storage backend value: a known one, or one a newer LibreChat accepts (shown as written). */
+export type StorageBackend = string;
 
 /** What one storage backend needs on the LibreChat server. */
 export interface StorageBackendInfo {
-  backend: StorageBackend;
+  backend: KnownStorageBackend;
   /** Environment variables the server must have for this backend. */
   envVars: string[];
   /** Locale key of the alternatives and optional variables (IAM role, managed identity). */
@@ -137,6 +140,8 @@ export interface BackendRowProps {
   inheritLabel: string;
   /** LibreChat set up CloudFront at startup, so it can be chosen. */
   cloudFrontReady: boolean;
+  /** The setting's schema field, whose choices (a newer schema's included) the row offers. */
+  field?: SchemaField;
   fieldProps: FieldRendererProps;
   onRequestChange: (request: StorageChangeRequest) => void;
 }

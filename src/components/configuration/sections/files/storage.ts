@@ -1,16 +1,43 @@
 import type * as t from '@/types';
+import { STORAGE_BACKENDS, STORAGE_BACKEND_LABELS, DEFAULT_STORAGE_BACKEND } from '@/constants';
 import { ownValue, lowerValue, getValueAtPath, isConfigRecord } from '@/utils';
-import { STORAGE_BACKENDS, DEFAULT_STORAGE_BACKEND } from '@/constants';
+import { getFieldOptions } from '../../controls';
 
-const BACKEND_IDS: ReadonlySet<string> = new Set(STORAGE_BACKENDS.map((info) => info.backend));
+const BACKEND_INFO: ReadonlyMap<string, t.StorageBackendInfo> = new Map(
+  STORAGE_BACKENDS.map((info) => [info.backend, info]),
+);
 
+/** A backend value: any name, since a newer LibreChat can accept backends the panel doesn't know. */
 export function isStorageBackend(value: t.ConfigValue): value is t.StorageBackend {
-  return typeof value === 'string' && BACKEND_IDS.has(value);
+  return typeof value === 'string' && value !== '';
 }
 
-/** What a backend needs on the server. */
-export function backendInfo(backend: t.StorageBackend): t.StorageBackendInfo {
-  return STORAGE_BACKENDS.find((info) => info.backend === backend) ?? STORAGE_BACKENDS[0];
+/** What a backend needs on the server, for the backends the panel knows. */
+export function backendInfo(backend: t.StorageBackend): t.StorageBackendInfo | undefined {
+  return BACKEND_INFO.get(backend);
+}
+
+/** A backend's proper name ("Amazon S3"), else its value as written. */
+export function backendName(backend: t.StorageBackend, localize: t.LocalizeFn): string {
+  const info = BACKEND_INFO.get(backend);
+  return info ? localize(STORAGE_BACKEND_LABELS[info.backend]) : backend;
+}
+
+/**
+ * The backends a storage row offers: the ones the panel knows, in its order,
+ * then any other its schema field accepts or a layer already sets (a newer
+ * LibreChat's), so such a backend shows as set and is never overwritten unasked.
+ */
+export function backendChoices(
+  field: t.SchemaField | undefined,
+  values: readonly t.ConfigValue[],
+): t.StorageBackend[] {
+  const choices = new Set<t.StorageBackend>(BACKEND_INFO.keys());
+  for (const option of field ? getFieldOptions(field) : []) choices.add(option.value);
+  for (const value of values) {
+    if (isStorageBackend(value)) choices.add(value);
+  }
+  return [...choices];
 }
 
 /** The backend a field uses: its own value, else the one beneath it, else `fallback`. */

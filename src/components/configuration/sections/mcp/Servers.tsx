@@ -5,10 +5,10 @@ import type * as t from '@/types';
 import { getValueAtPath, isConfigRecord, isRowVisible, asConfigRecord } from '@/utils';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
+import { previewedSecret, storedSecrets, usesSecret } from './validation';
 import { McpDeletedRow, McpHiddenRow, McpServerCard } from './Card';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { INSPECTOR_DERIVED, transportOf } from './transport';
-import { previewedSecret, storedSecrets } from './validation';
 import { copyName, serverNameProblem } from './names';
 import { buildServerList, leafEntries } from './list';
 import { useLocalize, useValuesScope } from '@/hooks';
@@ -47,6 +47,16 @@ function copyableLeaves(value: t.ConfigRecord): Array<[string[], t.ConfigValue]>
 
 function countLeaves(value: t.ConfigValue): number {
   return isConfigRecord(value) ? leafEntries(value).length : 0;
+}
+
+/** `record` without the servers that no longer have pending edits (the same object when none went). */
+function pendingOnly<T>(
+  record: Readonly<Record<string, T>>,
+  pending: ReadonlySet<string>,
+): Readonly<Record<string, T>> {
+  const entries = Object.entries(record);
+  if (entries.every(([key]) => pending.has(key))) return record;
+  return Object.fromEntries(entries.filter(([key]) => pending.has(key)));
 }
 
 /** Keys of the servers a set of tombstone paths hides (`mcpServers.github` → `github`). */
@@ -164,12 +174,16 @@ export function McpServersRenderer({
     return () => cancelAnimationFrame(frame);
   }, [focusHiddenKey]);
 
+  /** A new edit session (Save, Discard) starts clean: no Undo of an earlier session's deletion survives. */
   useEffect(() => {
     setRenaming(null);
     setRenamedFrom({});
     setUnlocked(EMPTY_KEYS);
     setJustAdded(null);
     setReenter({});
+    setLastDeleted(null);
+    stash.current.clear();
+    renameStash.current.clear();
   }, [editSessionId]);
 
   const discard = (editPath: string) => {
@@ -187,6 +201,17 @@ export function McpServersRenderer({
     }
     return keys;
   }, [edits, prefix]);
+
+  /**
+   * A renamed or duplicated server whose edits went from outside the card (a
+   * change review Revert) is gone: so is what it was renamed from and which
+   * secrets it had to re-enter, so a server created later under its name
+   * isn't taken for it.
+   */
+  useEffect(() => {
+    setRenamedFrom((prev) => pendingOnly(prev, pendingByServer));
+    setReenter((prev) => pendingOnly(prev, pendingByServer));
+  }, [pendingByServer]);
 
   const visibility = valuesData?.visibilityEdits ?? EMPTY_RECORD;
   /** Servers the profile hides (true while the hide is unsaved), and hidden ones it is about to show again. */
@@ -336,11 +361,11 @@ export function McpServersRenderer({
     setFocusKey(name);
   };
 
-  /** The secrets a duplicate still needs entered (none once each one has a value). */
+  /** The secrets a duplicate still needs entered (none once each one has a value, or its authentication is gone). */
   const missingSecretsOf = (key: string, value: t.ConfigRecord): string[] =>
     (reenter[key] ?? []).filter((secret) => {
       const current = getValueAtPath(value, secret);
-      return typeof current !== 'string' || current === '';
+      return usesSecret(value, secret) && (typeof current !== 'string' || current === '');
     });
 
   const handleCreate = (name: string, entry: t.ConfigRecord) => {

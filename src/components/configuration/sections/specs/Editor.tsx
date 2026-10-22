@@ -1,4 +1,5 @@
-import { useMemo, useRef, useCallback } from 'react';
+import { useMemo, useRef, useCallback, useContext } from 'react';
+import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import {
   NameField,
@@ -11,13 +12,14 @@ import {
   DefaultField,
   EndpointField,
 } from './Fields';
-import { isAgentSpec, problemsOf, specEndpoint, ASSISTANT_ENDPOINTS } from './validation';
-import { isConfigRecord, hasConfigValue } from '@/utils';
+import { MODEL_KEYS, presetParams, paramGroupKeys, specModelKeys, specPromptKeys } from './params';
+import { getUnknownConfigEntries, isConfigRecord, hasConfigValue, trimmedText } from '@/utils';
+import { isAgentSpec, problemsOf, specEndpoint } from './validation';
+import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { UnknownSettings } from '../../UnknownSettings';
 import { useSpecList, specIndexOf } from './context';
 import { renderInlineField } from '../../renderer';
 import { PresetEditor } from './PresetEditor';
-import { presetParams, specPromptKeys } from './params';
 import { useLocalize } from '@/hooks';
 import { SpecGroup } from './Group';
 
@@ -110,11 +112,16 @@ export function SpecEditor({
   editSessionId,
 }: t.SpecEditorProps) {
   const localize = useLocalize();
+  const rowFilter = useContext(RowFilterContext);
   const { problems, options, configuredOnly } = useSpecList();
   const index = specIndexOf(path);
   const spec = useMemo(() => (isConfigRecord(value) ? value : {}), [value]);
   const byKey = useMemo(() => new Map(fields.map((field) => [field.key, field])), [fields]);
   const presetField = byKey.get('preset');
+  const presetKeys = useMemo(
+    () => new Set((presetField?.children ?? []).map((child) => child.key)),
+    [presetField],
+  );
   const subagentsField = byKey.get(SUBAGENTS);
   const preset = isConfigRecord(spec.preset) ? spec.preset : {};
   const subagents = isConfigRecord(spec.subagents) ? spec.subagents : {};
@@ -123,7 +130,13 @@ export function SpecEditor({
   const presetPath = `${path}.preset`;
   const endpoint = specEndpoint(spec);
   const isAgent = isAgentSpec(spec);
+  const model = trimmedText(preset.model);
   const promptKeys = specPromptKeys(preset, endpoint, options.customEndpoint(endpoint));
+  const { params } = useMemo(
+    () => presetParams(endpoint, model, options.customEndpoint(endpoint), presetKeys),
+    [endpoint, model, options, presetKeys],
+  );
+  const paramKeys = paramGroupKeys(params, preset);
   const errorFields = new Set(
     problemsOf(problems, index)
       .filter((problem) => problem.level === 'error')
@@ -142,27 +155,18 @@ export function SpecEditor({
     !configuredOnly || hasConfigValue(record[key]) || errorFields.has(problemField);
   const showsPreset = (key: string) => shows(preset, key, `preset.${key}`);
   const showsGroup = (count: number) => !configuredOnly || count > 0;
-  const modelKeys = ['endpoint', 'model', 'agent_id', 'modelLabel', 'assistant_id'];
+  const modelKeys = specModelKeys(preset, endpoint);
   const setParams = Object.keys(preset).filter(
-    (key) => !modelKeys.includes(key) && !promptKeys.includes(key),
-  );
-  const presetKeys = useMemo(
-    () => new Set((presetField?.children ?? []).map((field) => field.key)),
-    [presetField],
-  );
-  /** The endpoint's own parameters, plus the other preset fields the spec sets (all listed in the group). */
-  const offered = new Set(
-    presetParams(
-      endpoint,
-      typeof preset.model === 'string' ? preset.model : '',
-      options.customEndpoint(endpoint),
-      presetKeys,
-    ).params.map((param) => param.key),
+    (key) => !MODEL_KEYS.includes(key) && !promptKeys.includes(key),
   );
   const paramCount = setParams.length;
-  const paramTotal = offered.size + setParams.filter((key) => !offered.has(key)).length;
+  /** The endpoint's own parameters, plus the other preset fields the spec sets (all listed in the group). */
+  const paramTotal = paramKeys.length;
   const subagentKeys = (subagentsField?.children ?? []).map((field) => field.key);
   const advancedKeys = [...ADVANCED, ...rest.map((field) => field.key)];
+  const unknownCount =
+    getUnknownConfigEntries(fields, spec).length +
+    getUnknownConfigEntries(presetField?.children ?? [], preset).length;
 
   const row = (key: string) => {
     const field = byKey.get(key);
@@ -198,6 +202,24 @@ export function SpecEditor({
     presetField?.children?.find((child) => child.key === key);
   const fieldProps = { spec, index, path, onChange, disabled };
   const presetProps = { ...fieldProps, onPresetChange: presetChange.change };
+  /** The endpoint row also stands for one LibreChat infers (agents, from an agent ID). */
+  const modelRow = (key: string): ReactNode => {
+    const field = presetChildField(key);
+    if (key === 'endpoint') {
+      return (
+        shows({ endpoint }, key, 'preset.endpoint') && (
+          <EndpointField key={key} {...presetProps} field={field} />
+        )
+      );
+    }
+    if (key === 'agent_id' && isAgent) {
+      return showsPreset(key) && <AgentField key={key} {...presetProps} field={field} />;
+    }
+    if (key === 'model' && !isAgent) {
+      return showsPreset(key) && <ModelField key={key} {...presetProps} field={field} />;
+    }
+    return presetRow(key);
+  };
 
   const basicsGroup =
     showsGroup(countSet(spec, BASICS)) || opensFor(BASICS) ? (
@@ -219,20 +241,7 @@ export function SpecEditor({
       paths={paths(modelKeys, presetPath)}
       defaultExpanded
     >
-      {showsPreset('endpoint') && (
-        <EndpointField {...presetProps} field={presetChildField('endpoint')} />
-      )}
-      {isAgent && showsPreset('agent_id') && (
-        <AgentField {...presetProps} field={presetChildField('agent_id')} />
-      )}
-      {!isAgent && showsPreset('model') && (
-        <ModelField {...presetProps} field={presetChildField('model')} />
-      )}
-      {isAgent && hasConfigValue(preset.model) && presetRow('model')}
-      {!isAgent && hasConfigValue(preset.agent_id) && presetRow('agent_id')}
-      {(ASSISTANT_ENDPOINTS.has(endpoint) || hasConfigValue(preset.assistant_id)) &&
-        presetRow('assistant_id')}
-      {presetRow('modelLabel')}
+      {modelKeys.map(modelRow)}
     </SpecGroup>
   );
 
@@ -241,11 +250,11 @@ export function SpecEditor({
       {basicsGroup}
       {modelGroup}
 
-      {presetField && showsGroup(paramCount) && (
+      {presetField && showsGroup(paramCount) && (paramKeys.length > 0 || !rowFilter) && (
         <SpecGroup
           title={localize('com_config_specs_group_params')}
           description={localize('com_config_specs_group_params_desc')}
-          paths={[presetPath]}
+          paths={paramKeys.length > 0 ? paths(paramKeys, presetPath) : [presetPath]}
           defaultExpanded={false}
           configuredCount={paramCount}
           totalCount={paramTotal}
@@ -253,6 +262,7 @@ export function SpecEditor({
           <PresetEditor
             presetField={presetField}
             preset={preset}
+            params={params}
             path={presetPath}
             onChange={presetChange.change}
             onReplace={presetChange.replace}
@@ -347,7 +357,7 @@ export function SpecEditor({
         </SpecGroup>
       )}
 
-      {showsGroup(countSet(spec, advancedKeys)) && (
+      {showsGroup(countSet(spec, advancedKeys) + unknownCount) && (
         <SpecGroup
           title={localize('com_config_specs_group_advanced')}
           paths={paths(advancedKeys)}

@@ -213,6 +213,49 @@ interface ResolveState {
   issues: t.ConfigIssue[];
   warnings: t.ConfigWarning[];
   effective: number;
+  /** Identities a later op of the batch renames. */
+  pendingRenames: Set<string>;
+  /** The temporary key of each entry moved aside until its own rename (`moveAside`). */
+  aside: Map<string, string>;
+}
+
+const ASIDE_KEY_PREFIX = '\u0000aside:';
+
+/** Where the entry loaded as `identity` is now (under its temporary key while moved aside). */
+function locate(state: ResolveState, identity: string): number {
+  const name = state.aside.get(identity) ?? identity;
+  return indexOfKey(state.entries, state.input.collection.key, name);
+}
+
+/**
+ * Frees `name` for a rename or an add when the entry holding it is renamed by
+ * a later op of the batch (a swap, `A → B` with `B → A`, or a chain): that
+ * entry waits under a temporary key until its own rename runs, so the batch
+ * is resolved as a whole and only names the final list repeats collide. An
+ * entry the lower layer also defines keeps its name (it can't be renamed).
+ */
+function moveAside(state: ResolveState, name: string, lowerEntries: t.ConfigValue[]): void {
+  if (!state.pendingRenames.has(name) || state.aside.has(name)) return;
+  const { key } = state.input.collection;
+  const index = indexOfKey(state.entries, key, name);
+  if (index < 0 || indexOfKey(lowerEntries, key, name) >= 0) return;
+  const temporary = `${ASIDE_KEY_PREFIX}${name}`;
+  state.entries = state.entries.map((entry, i) =>
+    i === index ? withKey(entry, key, temporary) : entry,
+  );
+  state.aside.set(name, temporary);
+}
+
+/** Gives entries still moved aside (their rename was refused) their names back. */
+function restoreAside(state: ResolveState): void {
+  if (state.aside.size === 0) return;
+  const { key } = state.input.collection;
+  const identities = new Map([...state.aside].map(([identity, name]) => [name, identity]));
+  state.entries = state.entries.map((entry) => {
+    const identity = identities.get(getEntryKey(entry, key) ?? '');
+    return identity === undefined ? entry : withKey(entry, key, identity);
+  });
+  state.aside.clear();
 }
 
 function entryIssue(
@@ -369,6 +412,7 @@ function upsertByKey(
   const { collection } = state.input;
   const { key } = collection;
   if (op.identity === null) {
+    moveAside(state, op.key, lowerEntries);
     if (hasKey(state, lowerEntries, op.key)) {
       state.issues.push(
         entryIssue(collection, 'DUPLICATE_ENTRY', op.key, `"${op.key}" already exists`),
@@ -386,7 +430,7 @@ function upsertByKey(
   }
   const identity = op.identity;
   const lowerEntry = lowerEntries.find((entry) => getEntryKey(entry, key) === identity);
-  const index = indexOfKey(state.entries, key, identity);
+  const index = locate(state, identity);
   if (op.key !== identity) {
     if (lowerEntry !== undefined) {
       state.issues.push(immutableIssue(state.input, identity, true));
@@ -396,6 +440,7 @@ function upsertByKey(
       state.issues.push(notFoundIssue(collection, identity));
       return;
     }
+    moveAside(state, op.key, lowerEntries);
     if (hasKey(state, lowerEntries, op.key)) {
       state.issues.push(renameTakenIssue(collection, identity, op.key));
       return;
@@ -418,6 +463,7 @@ function upsertByKey(
     }
     const renamed = withKey(desiredEntry(op, state.entries[index], state), key, op.key);
     state.entries = state.entries.map((entry, i) => (i === index ? renamed : entry));
+    state.aside.delete(identity);
     state.effective++;
     return;
   }
@@ -521,7 +567,7 @@ function removeEntry(op: RemoveEntryOp, state: ResolveState, lowerEntries: t.Con
     state.issues.push(immutableIssue(state.input, op.identity, false));
     return;
   }
-  const index = indexOfKey(state.entries, key, op.identity);
+  const index = locate(state, op.identity);
   if (index < 0) {
     state.issues.push(notFoundIssue(collection, op.identity));
     return;
@@ -533,7 +579,10 @@ function removeEntry(op: RemoveEntryOp, state: ResolveState, lowerEntries: t.Con
 function upsertInList(op: UpsertEntryOp, state: ResolveState): void {
   const { collection } = state.input;
   const { key } = collection;
-  const taken = (name: string) => indexOfKey(state.entries, key, name) >= 0;
+  const taken = (name: string) => {
+    moveAside(state, name, []);
+    return indexOfKey(state.entries, key, name) >= 0;
+  };
   if (op.identity === null) {
     if (taken(op.key)) {
       state.issues.push(
@@ -547,7 +596,7 @@ function upsertInList(op: UpsertEntryOp, state: ResolveState): void {
     state.effective++;
     return;
   }
-  const index = indexOfKey(state.entries, key, op.identity);
+  const index = locate(state, op.identity);
   if (index < 0) {
     state.issues.push(notFoundIssue(collection, op.identity));
     return;
@@ -556,6 +605,7 @@ function upsertInList(op: UpsertEntryOp, state: ResolveState): void {
     state.issues.push(renameTakenIssue(collection, op.identity, op.key));
     return;
   }
+  state.aside.delete(op.identity);
   const updated = withKey(desiredEntry(op, state.entries[index], state), key, op.key);
   const changed = !isConfigValueEqual(updated, state.entries[index]);
   const others = state.entries.filter((_, i) => i !== index);
@@ -601,12 +651,22 @@ export function resolveCollectionOps(input: t.CollectionOpsInput): t.CollectionR
     issues: [],
     warnings: [],
     effective: 0,
+    pendingRenames: new Set(
+      input.ops.flatMap((op) =>
+        op.op === 'upsertEntry' && op.identity !== null && op.key !== op.identity
+          ? [op.identity]
+          : [],
+      ),
+    ),
+    aside: new Map(),
   };
   for (const op of input.ops) {
+    if (op.op === 'upsertEntry' && op.identity !== null) state.pendingRenames.delete(op.identity);
     if (op.op === 'removeEntry') removeEntry(op, state, lowerEntries);
     else if (byKey) upsertByKey(op, state, lowerEntries, hiddenSecrets);
     else upsertInList(op, state);
   }
+  restoreAside(state);
   const next = resolveNext(state.entries, own, lowerEntries, byKey);
   if (!byKey && own === undefined && next !== undefined) {
     state.warnings.push({ path: collection.path, warning: 'ownershipChange' });

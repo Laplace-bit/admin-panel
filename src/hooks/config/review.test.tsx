@@ -28,8 +28,12 @@ const yaml: t.ConfigRecord = {
   endpoints: { custom: [moonshot, zai] },
 };
 
-/** The page's edit, save and review hooks over a base config that is librechat.yaml alone. */
-function renderPage(config: t.ConfigRecord = yaml) {
+/** The page's edit, save and review hooks over a base config: librechat.yaml, and what the panel stored. */
+function renderPage(
+  config: t.ConfigRecord = yaml,
+  dbOverrides: t.ConfigRecord = {},
+  yamlConfig: t.ConfigRecord = config,
+) {
   const client = new QueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -46,12 +50,12 @@ function renderPage(config: t.ConfigRecord = yaml) {
       });
       const layers = {
         configValues: config,
-        dbOverrides: {},
-        yamlConfig: config,
+        dbOverrides,
+        yamlConfig,
         yamlMcpServers: {},
         schemaDefaults: {},
         schemaPathSet,
-        overridePaths: new Set<string>(),
+        overridePaths: new Set(Object.keys(flattenObject(dbOverrides))),
         valueLayers: null,
         baseActiveConfigValues: config,
       };
@@ -128,5 +132,33 @@ describe('the change review over the save pipeline (WS1 × WS7)', () => {
     const { review } = result.current;
     expect(review.blocked).toBe(true);
     expect(review.model.issues.map((issue) => issue.message).join(' ')).toMatch(/Zai 2/);
+  });
+
+  it('undoes a server rename but keeps its field edit, under the old name again', () => {
+    const dbsrv = { type: 'streamable-http', url: 'https://db.example/mcp', title: 'DB' };
+    const stored = { mcpServers: { dbsrv } };
+    const { result } = renderPage(stored, stored, {});
+    act(() => {
+      const { edits } = result.current;
+      edits.handleFieldChange('mcpServers.dbsrv', undefined);
+      for (const [key, value] of Object.entries(dbsrv)) {
+        edits.handleFieldChange(`mcpServers.dbsrv2.${key}`, value);
+      }
+      edits.handleRenameEntry('mcpServers.dbsrv', 'mcpServers.dbsrv2');
+    });
+    act(() => result.current.edits.handleFieldChange('mcpServers.dbsrv2.title', 'Docs'));
+    const rows = result.current.review.model.tabs.flatMap((tab) =>
+      tab.sections.flatMap((section) => [
+        ...section.rows,
+        ...section.entries.flatMap((entry) => entry.rows),
+      ]),
+    );
+    expect(rows.map((row) => [row.item.kind, row.item.path])).toEqual([
+      ['renamed', 'mcpServers.dbsrv2'],
+      ['changed', 'mcpServers.dbsrv2.title'],
+    ]);
+    act(() => result.current.review.revertRow(rows[0]));
+    expect(result.current.edits.editedValues).toEqual({ 'mcpServers.dbsrv.title': 'Docs' });
+    expect(result.current.edits.renameEdits).toEqual({});
   });
 });

@@ -1,13 +1,12 @@
 import { useContext } from 'react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
-import { STORAGE_BACKENDS, STORAGE_BACKEND_LABELS } from '@/constants';
+import { backendChoices, backendName, isStorageBackend } from './storage';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { lowerValue, lowerSource, ownValue } from '@/utils';
 import { defaultChoiceLabel } from '../../fields/display';
 import { SelectField } from '../../fields/SelectField';
 import { useFieldState, useLocalize } from '@/hooks';
-import { isStorageBackend } from './storage';
 import { ConfigRow } from '../../ConfigRow';
 import { toFieldId } from '../../renderer';
 import { isRowShown } from './FieldRow';
@@ -30,6 +29,7 @@ export function BackendRow({
   inherited,
   inheritLabel,
   cloudFrontReady,
+  field,
   fieldProps,
   onRequestChange,
   children,
@@ -60,7 +60,7 @@ export function BackendRow({
   const current = ownBackend ? [ownBackend] : fallback;
   const fieldId = toFieldId(path);
   const hasPendingEdit = editedValues ? path in editedValues : false;
-  const nameOf = (backend: t.StorageBackend) => localize(STORAGE_BACKEND_LABELS[backend]);
+  const nameOf = (backend: t.StorageBackend) => backendName(backend, localize);
   /** "librechat.yaml (Amazon S3)" when a layer beneath sets it, else the renderer's "Inherit (…)". */
   const defaultLabel = isStorageBackend(lower)
     ? defaultChoiceLabel({ value: lower, source: lowerSource(state) }, localize, {
@@ -88,7 +88,7 @@ export function BackendRow({
     return true;
   };
 
-  const options: t.SelectOption[] = STORAGE_BACKENDS.map(({ backend }) => {
+  const options: t.SelectOption[] = backendChoices(field, [own, lower]).map((backend) => {
     const unavailable =
       backend === 'cloudfront' && !cloudFrontReady && !current.includes('cloudfront');
     return {

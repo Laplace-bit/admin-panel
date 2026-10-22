@@ -101,6 +101,19 @@ describe('MimeListField', () => {
     expect(onClear).toHaveBeenCalled();
   });
 
+  it('asks before emptying the list even when the list beneath is explicitly empty', () => {
+    const { onChange, onClear } = renderField({
+      value: ['image/.*'],
+      inherited: { patterns: [], origin: 'yaml' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove image/.*' }));
+    expect(onClear).not.toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog', { name: 'Accept no file types?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Accept no file types' }));
+    expect(onClear).toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('removes the own list when it goes back to the list it replaced', () => {
     const { onChange, onClear } = renderField({
       value: [...DEFAULT_MIME_LISTS.endpoint, 'application/x-custom'],

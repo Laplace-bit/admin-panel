@@ -4,10 +4,10 @@ import type * as t from '@/types';
 import { summarizeChanges, applySaves, isSecretPath } from './diff';
 import { buildReviewModel, describePath } from './group';
 import translation from '@/locales/en/translation.json';
+import { flattenObject, getValueAtPath } from '@/utils';
 import { extractSchemaTree } from '@/server/config';
 import { parseIssueMessages } from './issues';
 import { formatReviewValue } from './format';
-import { getValueAtPath } from '@/utils';
 import { planRevert } from './revert';
 
 const tree = extractSchemaTree(configSchema as t.ZodSchemaLike);
@@ -408,6 +408,46 @@ describe('summarizeChanges: MCP servers and secrets', () => {
       op: 'set',
       path: 'mcpServers.dbsrv2.title',
       value: 'DB',
+    });
+  });
+
+  it('undoes only the rename of a server, keeping its field changes under the old name', () => {
+    const dbsrv = {
+      type: 'streamable-http',
+      url: 'https://db.example/mcp',
+      title: 'DB',
+      description: 'Docs DB',
+      oauth: { client_id: 'id', client_secretPreview: 'sec...1234' },
+    };
+    const renamed = {
+      type: 'streamable-http',
+      url: 'https://db2.example/mcp',
+      title: 'DB',
+      oauth: { client_id: 'id' },
+    };
+    const leaves = Object.entries(flattenObject(renamed, 'mcpServers.dbsrv2'));
+    const items = summarizeChanges(
+      makeInput({
+        baseline: { mcpServers: { dbsrv } },
+        ownAt: (path) => (path === 'mcpServers.dbsrv' ? dbsrv : undefined),
+        saves: leaves.map(([fieldPath, value]) => ({ fieldPath, value })),
+        resets: ['mcpServers.dbsrv'],
+        renames: { 'mcpServers.dbsrv2': 'mcpServers.dbsrv' },
+      }),
+    );
+    const edited: t.FlatConfigMap = {
+      'mcpServers.dbsrv': undefined,
+      ...Object.fromEntries(leaves),
+    };
+    const row = items.find((item) => item.kind === 'renamed')!;
+    expect(planRevert(row, edited, { mcpServers: { dbsrv } })).toEqual({
+      op: 'unrename',
+      entryPath: 'mcpServers.dbsrv2',
+      discard: [...leaves.map(([path]) => path), 'mcpServers.dbsrv'],
+      writes: [
+        { path: 'mcpServers.dbsrv.url', value: 'https://db2.example/mcp' },
+        { path: 'mcpServers.dbsrv.description', value: undefined },
+      ],
     });
   });
 

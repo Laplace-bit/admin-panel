@@ -110,6 +110,18 @@ describe('RegistrationRenderer', () => {
     expect(attempts()).not.toHaveTextContent('9');
   });
 
+  it('lists a startup setting the schema does not know inside its group', () => {
+    renderSections({
+      sections: ['registration'],
+      yaml: { registration: { openidDiscovery: { startupAttempts: 3, backoffJitter: 0.2 } } },
+    });
+    const group = document
+      .getElementById('section-registration.openidDiscovery')!
+      .closest('section') as HTMLElement;
+    expect(within(group).getByText('backoffJitter')).toBeInTheDocument();
+    expect(within(group).getByText('0.2')).toBeInTheDocument();
+  });
+
   it('shows the settings LibreChat sets up at startup read-only', () => {
     renderSections({
       sections: ['registration'],

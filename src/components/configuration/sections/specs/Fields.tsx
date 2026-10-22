@@ -312,9 +312,11 @@ function strandedParams(
 
 /**
  * Endpoint*: a built-in provider or a custom endpoint; one the configuration
- * lacks is flagged. Switching to an endpoint that doesn't offer parameters
- * the preset sets asks whether to remove them, and leaving the agents
- * endpoint clears the agent ID, which only an agents spec uses.
+ * lacks is flagged. A preset naming only an agent shows the agents endpoint
+ * LibreChat infers for it. Switching to an endpoint that doesn't offer
+ * parameters the preset sets asks whether to remove them; leaving the agents
+ * endpoint clears the agent ID, and leaving the assistants endpoints the
+ * assistant ID: only those specs use (and show) them.
  */
 export function EndpointField({
   field,
@@ -332,7 +334,7 @@ export function EndpointField({
   const preset = isConfigRecord(spec.preset) ? spec.preset : {};
   const problem = problemAt(problems, index, 'preset.endpoint');
   const isNew = useIsNewSpec(index);
-  const endpoint = stringOf(preset.endpoint);
+  const endpoint = stringOf(preset.endpoint) || specEndpoint(spec);
   /** LibreChat resolves a preset's endpoint by its served name, so "Ollama" is the "ollama" choice. */
   const served = normalizeEndpointName(endpoint);
   const shown = options.knownEndpoints.has(served) ? served : endpoint;
@@ -344,6 +346,9 @@ export function EndpointField({
     removed.forEach((key) => onPresetChange(key, undefined));
     if (next !== EModelEndpoint.agents && preset.agent_id !== undefined) {
       onPresetChange('agent_id', undefined);
+    }
+    if (!ASSISTANT_ENDPOINTS.has(next) && preset.assistant_id !== undefined) {
+      onPresetChange('assistant_id', undefined);
     }
     setSwitching(null);
   };
