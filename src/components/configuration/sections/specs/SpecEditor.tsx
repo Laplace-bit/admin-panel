@@ -1,5 +1,4 @@
 import { useMemo, useRef, useCallback } from 'react';
-import { EModelEndpoint } from 'librechat-data-provider';
 import type * as t from '@/types';
 import {
   NameField,
@@ -17,9 +16,9 @@ import { UnknownSettings } from '../../UnknownSettings';
 import { renderInlineField } from '../../renderer';
 import { PresetEditor } from './PresetEditor';
 import { useSpecList, specIndexOf } from './context';
+import { ASSISTANT_ENDPOINTS, specPromptKeys } from './params';
 import { useLocalize } from '@/hooks';
 import { SpecGroup } from './SpecGroup';
-import { promptKeyFor } from './params';
 import { isConfigRecord } from '@/utils';
 
 const BASICS = ['label', 'name', 'description', 'iconURL'];
@@ -56,11 +55,6 @@ const GROUPED: ReadonlySet<string> = new Set([
   ...ADVANCED,
   SUBAGENTS,
   'preset',
-]);
-
-const ASSISTANT_ENDPOINTS: ReadonlySet<string> = new Set([
-  EModelEndpoint.assistants,
-  EModelEndpoint.azureAssistants,
 ]);
 
 function hasValue(value: t.ConfigValue): boolean {
@@ -135,19 +129,7 @@ export function SpecEditor({
   const presetPath = `${path}.preset`;
   const endpoint = specEndpoint(spec);
   const isAgent = isAgentSpec(spec);
-  const promptKey = promptKeyFor(
-    endpoint,
-    typeof preset.model === 'string' ? preset.model : '',
-    options.customEndpoint(endpoint),
-  );
-  const promptKeys = [
-    promptKey,
-    'greeting',
-    ...(ASSISTANT_ENDPOINTS.has(endpoint) || hasValue(preset.instructions) ? ['instructions'] : []),
-    ...(ASSISTANT_ENDPOINTS.has(endpoint) || hasValue(preset.additional_instructions)
-      ? ['additional_instructions']
-      : []),
-  ];
+  const promptKeys = specPromptKeys(preset, endpoint, options.customEndpoint(endpoint));
   const errorFields = new Set(
     problemsOf(problems, index)
       .filter((problem) => problem.level === 'error')
@@ -157,8 +139,14 @@ export function SpecEditor({
   const paths = (keys: string[], base = path) => keys.map((key) => `${base}.${key}`);
   const rest = fields.filter((field) => !GROUPED.has(field.key));
 
-  /** Under "Set values only", a row (or group) without a value is left out. */
-  const shows = (record: t.ConfigRecord, key: string) => !configuredOnly || hasValue(record[key]);
+  /**
+   * Under "Set values only", a row (or group) without a value is left out,
+   * unless it needs one: a required field still empty (a new spec's Label,
+   * Name, Endpoint and Model) stays, so the spec can be completed.
+   */
+  const shows = (record: t.ConfigRecord, key: string, problemField = key) =>
+    !configuredOnly || hasValue(record[key]) || errorFields.has(problemField);
+  const showsPreset = (key: string) => shows(preset, key, `preset.${key}`);
   const showsGroup = (count: number) => !configuredOnly || count > 0;
   const modelKeys = ['endpoint', 'model', 'agent_id', 'modelLabel', 'assistant_id'];
   const paramCount = Object.keys(preset).filter(
@@ -184,7 +172,7 @@ export function SpecEditor({
   };
   const presetRow = (key: string) => {
     const field = presetField?.children?.find((child) => child.key === key);
-    if (!field || !shows(preset, key)) return null;
+    if (!field || !showsPreset(key)) return null;
     return renderInlineField(
       field,
       preset,
@@ -204,7 +192,7 @@ export function SpecEditor({
 
   return (
     <div className="flex min-w-0 flex-col **:[[role=group]]:flex-wrap">
-      {showsGroup(countSet(spec, BASICS)) && (
+      {(showsGroup(countSet(spec, BASICS)) || opensFor(BASICS)) && (
         <SpecGroup
           title={localize('com_config_specs_group_basics')}
           paths={paths(BASICS)}
@@ -223,16 +211,17 @@ export function SpecEditor({
         paths={paths(modelKeys, presetPath)}
         defaultExpanded
       >
-        {shows(preset, 'endpoint') && (
+        {showsPreset('endpoint') && (
           <EndpointField {...presetProps} field={presetChildField('endpoint')} />
         )}
-        {isAgent && shows(preset, 'agent_id') && (
+        {isAgent && showsPreset('agent_id') && (
           <AgentField {...presetProps} field={presetChildField('agent_id')} />
         )}
-        {!isAgent && shows(preset, 'model') && (
+        {!isAgent && showsPreset('model') && (
           <ModelField {...presetProps} field={presetChildField('model')} />
         )}
         {isAgent && hasValue(preset.model) && presetRow('model')}
+        {!isAgent && hasValue(preset.agent_id) && presetRow('agent_id')}
         {ASSISTANT_ENDPOINTS.has(endpoint) && presetRow('assistant_id')}
         {presetRow('modelLabel')}
       </SpecGroup>

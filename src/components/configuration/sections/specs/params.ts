@@ -2,6 +2,7 @@ import { EModelEndpoint, paramSettings, getSettingsKeys } from 'librechat-data-p
 import type { SettingDefinition } from 'librechat-data-provider';
 import type * as t from '@/types';
 import { isConfigRecord, getValueAtPath } from '@/utils';
+import { specEndpoint } from './validation';
 
 /**
  * Preset keys that are conversation state or internal plumbing, never
@@ -33,8 +34,18 @@ export const PROMPT_KEYS: readonly string[] = [
   'greeting',
 ];
 const GROUPED_KEYS: ReadonlySet<string> = new Set([...MODEL_KEYS, ...PROMPT_KEYS]);
+const GREETING_KEY = 'greeting';
+/** Prompt fields only the assistants endpoints use (shown elsewhere only when set). */
+const ASSISTANT_PROMPT_KEYS: ReadonlySet<string> = new Set([
+  'instructions',
+  'additional_instructions',
+]);
 
 const BUILT_IN: ReadonlySet<string> = new Set(Object.values(EModelEndpoint));
+export const ASSISTANT_ENDPOINTS: ReadonlySet<string> = new Set([
+  EModelEndpoint.assistants,
+  EModelEndpoint.azureAssistants,
+]);
 
 function paramKind(setting: SettingDefinition): t.PresetParamKind | null {
   if (setting.type === 'boolean') return 'boolean';
@@ -113,6 +124,36 @@ export function promptKeyFor(endpoint: string, model: string, custom?: t.ConfigR
   return settings.some((setting) => setting.key === 'system') ? 'system' : 'promptPrefix';
 }
 
+function isSet(value: t.ConfigValue): boolean {
+  return value !== undefined && value !== null && value !== '';
+}
+
+/**
+ * The prompt fields a spec's editor shows, in order: the prompt field of its
+ * endpoint's parameter panel (`promptKeyFor`), the greeting, the assistants'
+ * instructions on an assistants endpoint, and any other prompt field the
+ * preset already sets (so a stale value stays visible and removable).
+ */
+export function specPromptKeys(
+  preset: t.ConfigRecord,
+  endpoint: string,
+  custom?: t.ConfigRecord,
+): string[] {
+  const model = typeof preset.model === 'string' ? preset.model : '';
+  const promptKey = promptKeyFor(endpoint, model, custom);
+  const isAssistant = ASSISTANT_ENDPOINTS.has(endpoint);
+  return [
+    promptKey,
+    GREETING_KEY,
+    ...PROMPT_KEYS.filter(
+      (key) =>
+        key !== promptKey &&
+        key !== GREETING_KEY &&
+        ((isAssistant && ASSISTANT_PROMPT_KEYS.has(key)) || isSet(preset[key])),
+    ),
+  ];
+}
+
 /** A schema field with a parameter's range and choices, so the shared control enforces them. */
 export function paramField(field: t.SchemaField, param: t.PresetParam): t.SchemaField {
   if (param.kind === 'enum' && param.options?.length) {
@@ -143,8 +184,10 @@ function customEndpointOf(root: t.ConfigValue, name: string): t.ConfigRecord | u
 
 /**
  * A spec's fields as its editor shows them, for search: the preset narrowed
- * to the Model and Prompt fields, its endpoint's parameters, and whatever
- * else the preset sets (so "Thinking budget" isn't found on an OpenAI spec).
+ * to the Model fields, the Prompt fields the editor shows for its endpoint
+ * (`specPromptKeys`), its endpoint's parameters, and whatever else the preset
+ * sets (so neither "Thinking budget" nor "System prompt" is found on an
+ * OpenAI spec).
  */
 export function specSearchFields(
   fields: t.SchemaField[],
@@ -155,14 +198,13 @@ export function specSearchFields(
   return fields.map((field) => {
     if (field.key !== 'preset' || !field.children) return field;
     const presetKeys = new Set(field.children.map((child) => child.key));
-    const endpoint = typeof preset.endpoint === 'string' ? preset.endpoint : '';
+    const endpoint = specEndpoint(spec);
     const model = typeof preset.model === 'string' ? preset.model : '';
+    const custom = customEndpointOf(root, endpoint);
     const shown = new Set([
       ...MODEL_KEYS,
-      ...PROMPT_KEYS,
-      ...presetParams(endpoint, model, customEndpointOf(root, endpoint), presetKeys).params.map(
-        (param) => param.key,
-      ),
+      ...specPromptKeys(preset, endpoint, custom),
+      ...presetParams(endpoint, model, custom, presetKeys).params.map((param) => param.key),
       ...Object.keys(preset),
     ]);
     return { ...field, children: field.children.filter((child) => shown.has(child.key)) };

@@ -131,7 +131,7 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
     (row) =>
       isRowVisible(rowFilter, `${path}.${row.index}`) &&
       matchesFilter(row, trimmedQuery) &&
-      (!configuredOnly || row.overridden || row.origin === 'scope'),
+      (!configuredOnly || row.overridden || row.edited || row.origin === 'scope'),
   );
   const shownRemovals = trimmedQuery === '' ? removals : [];
 
@@ -165,7 +165,7 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
   };
 
   const handleUndoRemoval = (removal: t.EndpointRemoval) => {
-    const at = Math.min(removal.index, items.length);
+    const at = Math.min(removal.restoreIndex, items.length);
     onChange(path, [...items.slice(0, at), removal.value, ...items.slice(at)]);
   };
 
