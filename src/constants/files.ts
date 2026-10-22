@@ -38,7 +38,7 @@ export const STORAGE_BACKENDS: readonly t.StorageBackendInfo[] = [
 ];
 
 /** The storage backend LibreChat uses when nothing is set. */
-export const DEFAULT_STORAGE_BACKEND: t.StorageBackend = 'local';
+export const DEFAULT_STORAGE_BACKEND: t.KnownStorageBackend = 'local';
 
 /** `fileStrategies` keys in display order: the catch-all first, then each kind of file. */
 export const STORAGE_FILE_TYPES: readonly t.StorageFileType[] = [
@@ -50,7 +50,7 @@ export const STORAGE_FILE_TYPES: readonly t.StorageFileType[] = [
 ];
 
 /** Storage backend → locale key of its proper name ("Amazon S3", "Local filesystem"). */
-export const STORAGE_BACKEND_LABELS: Readonly<Record<t.StorageBackend, string>> = {
+export const STORAGE_BACKEND_LABELS: Readonly<Record<t.KnownStorageBackend, string>> = {
   local: 'com_config_storage_backend_local',
   firebase: 'com_config_storage_backend_firebase',
   s3: 'com_config_storage_backend_s3',

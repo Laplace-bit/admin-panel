@@ -6,6 +6,7 @@ import { useLocalize } from '@/hooks';
 export function EnvVars({ backend, id }: { backend: t.StorageBackend; id?: string }) {
   const localize = useLocalize();
   const info = backendInfo(backend);
+  if (!info) return null;
   if (info.envVars.length === 0) {
     return (
       <p id={id} className="m-0 text-xs text-(--cui-color-text-muted)">

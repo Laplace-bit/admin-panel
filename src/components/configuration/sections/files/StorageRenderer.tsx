@@ -1,7 +1,7 @@
 import { useContext, useState } from 'react';
 import type * as t from '@/types';
-import { backendsInUse, isCloudFrontReady, resolveStorage } from './storage';
-import { STORAGE_FILE_TYPES, STORAGE_BACKEND_LABELS } from '@/constants';
+import { backendName, backendsInUse, isCloudFrontReady, resolveStorage } from './storage';
+import { STORAGE_FILE_TYPES } from '@/constants';
 import { useLocalize, useYamlConfig, useStorageStates } from '@/hooks';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { FieldRenderer, NestedGroup } from '../../renderer';
@@ -57,7 +57,7 @@ export function StorageRenderer({
   const host = sections[0];
   const resolved = resolveStorage(states);
   const cloudFrontReady = isCloudFrontReady(yaml);
-  const nameOf = (backend: t.StorageBackend) => localize(STORAGE_BACKEND_LABELS[backend]);
+  const nameOf = (backend: t.StorageBackend) => backendName(backend, localize);
 
   const requestChange = (request: t.StorageChangeRequest) =>
     setPending({
@@ -130,6 +130,7 @@ export function StorageRenderer({
             name: nameOf(resolved.primary),
           })}
           cloudFrontReady={cloudFrontReady}
+          field={primary.sectionField}
           fieldProps={propsFor(primary)}
           onRequestChange={requestChange}
         >
@@ -161,6 +162,7 @@ export function StorageRenderer({
               inherited={inheritedOf(type)}
               inheritLabel={inheritLabel(type)}
               cloudFrontReady={cloudFrontReady}
+              field={perType.fields.find((field) => field.key === type)}
               fieldProps={perTypeProps}
               onRequestChange={requestChange}
             />

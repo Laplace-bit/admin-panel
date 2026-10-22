@@ -67,6 +67,25 @@ describe('StorageRenderer', () => {
     );
   });
 
+  it('keeps a backend a newer LibreChat accepts, shown by its name', () => {
+    const onChange = vi.fn();
+    renderSections({
+      sections: STORAGE,
+      yaml: { fileStrategies: { image: 'gcs' } },
+      overrides: { fileStrategies: { document: 'gcs' } },
+      onChange,
+    });
+    expect(screen.getByLabelText('Images')).toHaveDisplayValue('librechat.yaml (gcs)');
+    expect(screen.getByLabelText('Documents')).toHaveDisplayValue('gcs');
+    expect(screen.getByLabelText('Profile pictures')).toHaveDisplayValue(
+      'Inherit (Local filesystem)',
+    );
+    fireEvent.change(screen.getByLabelText('Documents'), { target: { value: 's3' } });
+    const dialog = screen.getByRole('dialog', { name: /Amazon S3/ });
+    expect(within(dialog).getByText(/stay in gcs/)).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('confirms a skill files choice that moves them off the image and document backends they follow', () => {
     const onChange = vi.fn();
     renderSections({
