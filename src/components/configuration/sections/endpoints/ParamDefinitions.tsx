@@ -1,8 +1,9 @@
 /**
  * Parameter definitions of a custom endpoint (WS10 CE-6): the parameter
  * panel its users see. An entry that only sets the default of a built-in
- * parameter (`{ key, default }`) reads as such, with a default control of the
- * parameter's own type; "Customize every option" opens the full definition,
+ * parameter (`{ key, default }`, or the built-in definition with only its
+ * default changed) reads as such, with a default control of the parameter's
+ * own type; "Customize every option" opens the full definition,
  * whose Default follows the chosen Type, whose Component choices fit that
  * Type, and whose built-in (locale-coded) label and description are shown as
  * such with a switch to custom text. Definitions librechat.yaml (or Base)
@@ -16,7 +17,7 @@ import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { ArrayObjectField, ListField, NumberField, SelectField, TextField } from '../../fields';
 import { renderInlineField, toFieldId } from '../../renderer';
-import { getEntryKey, isConfigRecord } from '@/utils';
+import { getEntryKey, isConfigRecord, isConfigValueEqual } from '@/utils';
 import { DecorativeIcon } from '@/components/shared';
 import { SettingsRow } from '../../SettingsRow';
 import { describeField, labelForPath } from '../../meta';
@@ -49,6 +50,9 @@ const OPTION_COMPONENTS: ReadonlySet<string> = new Set(['dropdown', 'combobox', 
 /** How the definition is laid out, after key, type, component and default. */
 const LAYOUT_FIELDS = ['optionType', 'showLabel', 'showDefault', 'columnSpan', 'columns'];
 
+/** Fields a built-in definition may differ in and still read as "the built-in, with its default changed". */
+const OVERRIDE_FIELDS: ReadonlySet<string> = new Set(['default', 'optionType']);
+
 /** Fields placed by hand (the rest render through the generic entry renderer). */
 const HANDLED: ReadonlySet<string> = new Set([
   'key',
@@ -71,6 +75,29 @@ function text(value: t.ConfigValue): string | undefined {
 
 function displayValue(value: t.ConfigValue): string {
   return Array.isArray(value) ? value.join(', ') : String(value);
+}
+
+/**
+ * A built-in parameter as a stored definition. LibreChat expands
+ * librechat.yaml's definitions over the built-in ones (`parseCustomParams`)
+ * but serves an override's as stored, and its client replaces the built-in
+ * definition with it whole, so a bare `{ key, default }` would lose its type,
+ * component and label: store the full definition, as LibreChat expands it.
+ */
+export function builtInDefinition(builtIn: SettingDefinition): t.ConfigRecord {
+  const definition: t.ConfigValue = JSON.parse(JSON.stringify(builtIn));
+  return { ...asRecord(definition), optionType: 'custom' };
+}
+
+/** Whether a definition is the built-in one with at most its default changed (or only `{ key, default }`). */
+function isBuiltInOverride(value: t.ConfigRecord, builtIn: SettingDefinition | undefined): boolean {
+  if (!builtIn) return false;
+  if (value.type === undefined && value.component === undefined) return true;
+  const full = builtInDefinition(builtIn);
+  const keys = new Set([...Object.keys(value), ...Object.keys(full)]);
+  return [...keys].every(
+    (key) => OVERRIDE_FIELDS.has(key) || isConfigValueEqual(value[key], full[key]),
+  );
 }
 
 /** The built-in parameters of a parameter set, by key (LibreChat's `paramSettings`). */
@@ -367,8 +394,7 @@ function ParamDefinitionEntry({
   const builtIn = builtIns.get(key);
   const type = text(value.type);
   const component = text(value.component);
-  const isOverrideOnly = builtIn != null && type === undefined && component === undefined;
-  const [expanded, setExpanded] = useState(!isOverrideOnly);
+  const [expanded, setExpanded] = useState(() => !isBuiltInOverride(value, builtIn));
   const options = Array.isArray(value.options)
     ? value.options.filter((option): option is string => typeof option === 'string')
     : (builtIn?.options ?? []);
@@ -628,7 +654,7 @@ export function ParamDefinitionsRow({
                 placeholder={localize('com_config_ce_param_add_builtin')}
                 onChange={(key) => {
                   const builtIn = builtIns.get(key);
-                  add(builtIn?.default === undefined ? { key } : { key, default: builtIn.default });
+                  add(builtIn ? builtInDefinition(builtIn) : { key });
                 }}
                 aria-label={localize('com_config_ce_param_add_builtin')}
               />

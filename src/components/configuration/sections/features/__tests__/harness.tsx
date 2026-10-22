@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import { useMemo, useState } from 'react';
-import { render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { configSchema } from 'librechat-data-provider';
 import type { ComponentType } from 'react';
 import type * as t from '@/types';
@@ -78,12 +78,19 @@ export function renderSection(Component: ComponentType<t.FieldRendererProps>, se
   };
   const configuredPaths = new Set([...collectLeafPaths(yaml), ...collectLeafPaths(overrides)]);
   const filter = setup.filter ? createPathIndex(setup.filter) : null;
+  let newSession = () => {};
 
   function Page() {
     const [edited, setEdited] = useState<t.FlatConfigMap>(setup.edited ?? {});
     const [visibility, setVisibility] = useState<Record<string, t.VisibilityEdit>>(
       setup.visibility ?? {},
     );
+    const [editSessionId, setEditSessionId] = useState(0);
+    newSession = () => {
+      setEdited({});
+      setVisibility({});
+      setEditSessionId((id) => id + 1);
+    };
     const values = useMemo<t.ConfigValuesData>(
       () => ({
         configValues: layers.effective,
@@ -104,6 +111,7 @@ export function renderSection(Component: ComponentType<t.FieldRendererProps>, se
       configuredPaths,
       dbOverridePaths: new Set(collectLeafPaths(overrides)),
       permissions: { canView: true, canEdit: true, canAssign: true },
+      editSessionId,
       onChange: (path, value) => {
         spies.onChange(path, value);
         setEdited((prev) => ({ ...prev, [path]: value }));
@@ -133,5 +141,7 @@ export function renderSection(Component: ComponentType<t.FieldRendererProps>, se
     );
   }
 
-  return { ...render(<Page />), ...spies };
+  /** Discards every pending edit and starts a new edit session, as Discard does on the page. */
+  const startNewSession = () => act(() => newSession());
+  return { ...render(<Page />), ...spies, startNewSession };
 }

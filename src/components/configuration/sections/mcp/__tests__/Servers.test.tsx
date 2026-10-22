@@ -333,6 +333,45 @@ describe('McpServersRenderer — transport and auth switches (MCP-2, MCP-4)', ()
   });
 });
 
+describe('McpServersRenderer — stored secrets', () => {
+  it('shows a stored OAuth client secret as its masked preview, with Replace and Cancel', () => {
+    const vault: t.ConfigRecord = {
+      vault: {
+        type: 'streamable-http',
+        url: 'https://mcp.vault.dev/mcp',
+        oauth: { client_id: 'vault-id', client_secretPreview: 'sec...1234' },
+      },
+    };
+    render(<Harness extra={vault} />);
+    expand('vault');
+    openGroup('vault', 'com_config_mcp_group_auth');
+    const masked = within(card('vault')).getByLabelText(
+      /com_a11y_secret_configured:.*client_secret/,
+    ) as HTMLInputElement;
+    expect(masked.value).toBe('sec...1234');
+    fireEvent.click(
+      within(card('vault')).getByRole('button', {
+        name: /com_a11y_secret_replace:.*client_secret/,
+      }),
+    );
+    const input = card('vault').querySelector<HTMLInputElement>(
+      'input#mcpServers-vault-oauth-client_secret',
+    );
+    expect(input?.type).toBe('password');
+    fireEvent.change(input as HTMLInputElement, { target: { value: 'new-secret' } });
+    act(() => edits.handleFieldChange('mcpServers.vault.oauth.client_secret', 'new-secret'));
+    fireEvent.click(
+      within(card('vault')).getByRole('button', {
+        name: /com_a11y_secret_cancel_replace:.*client_secret/,
+      }),
+    );
+    expect(edits.editedValues).toEqual({});
+    expect(
+      within(card('vault')).getByLabelText(/com_a11y_secret_configured:.*client_secret/),
+    ).toBeInTheDocument();
+  });
+});
+
 describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
   it('deletes a server the panel added from its menu, with Undo until Save', async () => {
     render(<Harness />);
@@ -418,6 +457,50 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     expect(
       within(card('acme-docs')).getByText('com_config_mcp_renamed_from:acme'),
     ).toBeInTheDocument();
+  });
+
+  it('asks for a stored OAuth client secret again when a saved server is renamed', async () => {
+    const vault: t.ConfigRecord = {
+      vault: {
+        type: 'streamable-http',
+        url: 'https://mcp.vault.dev/mcp',
+        oauth: { client_id: 'vault-id', client_secretPreview: 'sec...1234' },
+      },
+    };
+    render(<Harness extra={vault} />);
+    openMenu('vault');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:vault' });
+    fireEvent.change(input, { target: { value: 'vault-kb' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(edits.editedValues).not.toHaveProperty('mcpServers.vault-kb.oauth.client_secretPreview');
+    expect(
+      within(card('vault-kb')).getByText('com_config_mcp_duplicate_secrets'),
+    ).toBeInTheDocument();
+    act(() => edits.handleFieldChange('mcpServers.vault-kb.oauth.client_secret', 'new-secret'));
+    expect(within(card('vault-kb')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
+  });
+
+  it('drops the rename record when the renamed server is deleted, and brings it back with Undo', async () => {
+    render(<Harness />);
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:acme' });
+    fireEvent.change(input, { target: { value: 'acme-docs' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(edits.renameEdits).toEqual({ 'mcpServers.acme-docs': 'mcpServers.acme' });
+    openMenu('acme-docs');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_delete'));
+    });
+    expect(edits.renameEdits).toEqual({});
+    const ghost = document.querySelector('[data-mcp-deleted="acme"]') as HTMLElement;
+    fireEvent.click(within(ghost).getByRole('button'));
+    expect(edits.renameEdits).toEqual({ 'mcpServers.acme-docs': 'mcpServers.acme' });
   });
 
   it('rejects a rename onto an existing name and keeps the input open', async () => {
@@ -521,6 +604,27 @@ describe('McpServersRenderer — profiles (MCP-10)', () => {
     );
     expect(card('github')).toBeInTheDocument();
     expect(document.querySelector('[data-mcp-server="cloudflare"]')).toBeNull();
+  });
+});
+
+describe('McpServersRenderer — overriding under "Set values only"', () => {
+  it('keeps an inherited server listed once Create chooses to override it', async () => {
+    render(<Harness scope showConfiguredOnly />);
+    expect(document.querySelector('[data-mcp-server="cloudflare"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'com_config_create_mcp_server' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(
+      within(dialog).getByPlaceholderText('com_config_mcp_create_name_placeholder'),
+      {
+        target: { value: 'cloudflare' },
+      },
+    );
+    await act(async () => {
+      fireEvent.click(
+        within(dialog).getByRole('button', { name: 'com_config_mcp_create_override:cloudflare' }),
+      );
+    });
+    expect(card('cloudflare').querySelector('input#mcpServers-cloudflare-url')).not.toBeNull();
   });
 });
 

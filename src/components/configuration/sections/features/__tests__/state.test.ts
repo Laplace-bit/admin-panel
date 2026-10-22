@@ -65,6 +65,17 @@ describe('planAgentSwitch', () => {
     expect(plan).toEqual({ hide: [], reset: [`${AGENT}.id`], unhide: [], discard: [], show: [] });
   });
 
+  it('switching back drops the removal of the stored ID the switch away queued', () => {
+    const layers = createBaseLayers(
+      baseData({}, { memory: { agent: { id: 'agent_admin' } } }),
+      SCHEMA_PATHS,
+    );
+    const edited = { [`${AGENT}.id`]: undefined, [`${AGENT}.provider`]: 'openAI' };
+    const plan = planAgentSwitch('id', AGENT, statesFor(valuesData(layers, edited)), {}, edited);
+    expect(plan.discard).toEqual([`${AGENT}.id`, `${AGENT}.provider`]);
+    expect(plan.reset).toEqual([]);
+  });
+
   it('switching back shows the hidden ID again and drops the inline values typed meanwhile', () => {
     const layers = createBaseLayers(baseData(YAML_ID), SCHEMA_PATHS);
     const edited = { [`${AGENT}.provider`]: 'openAI', [`${AGENT}.model`]: 'gpt-4o-mini' };

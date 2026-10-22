@@ -205,7 +205,7 @@ export interface ConfigEditsState {
   /** Queues unhiding a value the open profile hides. */
   handleUnhideField: (path: string) => void;
   /** Records that the record entry at `from` was renamed to `to` (its edits are written separately). */
-  handleRenameEntry: (from: string, to: string) => void;
+  handleRenameEntry: (from: string, to: string | null) => void;
   /** See `SingleFieldRendererProps.onDiscardField`. */
   handleDiscardField: (path: string) => void;
   /** Drops every pending edit without starting a new edit session. */
@@ -260,6 +260,7 @@ export interface ConfigSaveOptions {
     | 'collectionEdits'
     | 'editBaselines'
     | 'visibilityEdits'
+    | 'renameEdits'
   >;
 }
 

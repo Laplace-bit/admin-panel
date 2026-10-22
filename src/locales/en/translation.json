@@ -385,6 +385,7 @@
   "com_config_mcp_process_remove_overrides": "Remove ignored values",
   "com_config_mcp_renamed_from": "Renamed from \"{{name}}\" (saved as a new server; the old one is removed)",
   "com_config_mcp_duplicate_secrets": "Stored secrets are not copied. Enter the {{fields}} for this server again.",
+  "com_config_mcp_missing_secret_for_rename": "Cannot save: enter the {{field}} of MCP server \"{{entry}}\" again. The secret stored for \"{{from}}\" can't be carried over to a new name.",
   "com_config_mcp_server_key": "Name:",
   "com_config_mcp_settings_addresses_desc": "Private network addresses MCP servers may run on, as host:port (localhost:8080, 10.0.0.5:3000). Every other private address is blocked.",
   "com_config_mcp_settings_domains_desc": "Domains MCP servers may be reached on, such as mcp.example.com or *.example.com. Leave empty to allow any public domain.",

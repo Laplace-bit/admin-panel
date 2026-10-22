@@ -8,12 +8,12 @@ import { getValueAtPath, isConfigRecord, isRowVisible } from '@/utils';
 import { McpDeletedRow, McpHiddenRow, McpServerCard } from './Card';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { INSPECTOR_DERIVED, transportOf } from './transport';
+import { previewedSecret, storedSecrets } from './validation';
 import { copyName, serverNameProblem } from './names';
 import { DecorativeIcon } from '@/components/shared';
 import { buildServerList, leafEntries } from './list';
 import { useLocalize, useValuesScope } from '@/hooks';
 import { CreateMcpServerDialog } from './Create';
-import { isSecretPath } from '../../review/diff';
 import { sourceLabel } from '../../values';
 import { McpServerEditor } from './Editor';
 import { labelForPath } from '../../meta';
@@ -39,16 +39,6 @@ type Row =
   | { kind: 'deleted'; key: string }
   | { kind: 'hidden'; key: string; pending: boolean };
 
-const PREVIEW_SUFFIX = 'Preview';
-
-/** The secret a leaf is the masked preview of (`apiKey.keyPreview` → `apiKey.key`), else null. */
-function previewedSecret(segments: string[]): string | null {
-  const last = segments[segments.length - 1];
-  if (!last.endsWith(PREVIEW_SUFFIX) || last === PREVIEW_SUFFIX) return null;
-  const secret = [...segments.slice(0, -1), last.slice(0, -PREVIEW_SUFFIX.length)].join('.');
-  return isSecretPath(secret) ? secret : null;
-}
-
 /**
  * Leaves worth copying into a new server: values, not empty objects,
  * inspector data, or the masked preview the admin API returns for a stored
@@ -63,15 +53,6 @@ function copyableLeaves(value: t.ConfigRecord): Array<[string[], t.ConfigValue]>
       !(isConfigRecord(leaf) && Object.keys(leaf).length === 0) &&
       previewedSecret(segments) == null,
   );
-}
-
-/** Stored secrets of a server a copy can't carry (only their masked previews were loaded). */
-function storedSecrets(value: t.ConfigRecord): string[] {
-  return leafEntries(value).flatMap(([segments, leaf]) => {
-    const secret = previewedSecret(segments);
-    const hasSecret = secret != null && getValueAtPath(value, secret) != null;
-    return secret != null && typeof leaf === 'string' && leaf !== '' && !hasSecret ? [secret] : [];
-  });
 }
 
 function countLeaves(value: t.ConfigValue): number {
@@ -152,7 +133,7 @@ export function McpServersRenderer({
   const [renamedFrom, setRenamedFrom] = useState<Readonly<Record<string, string>>>({});
   const [unlocked, setUnlocked] = useState<ReadonlySet<string>>(EMPTY_KEYS);
   const [lastDeleted, setLastDeleted] = useState<string | null>(null);
-  /** Duplicates whose source stored secrets the copy left out: they must be entered again. */
+  /** Duplicates and renamed servers whose source stored secrets the copy left out: they must be entered again. */
   const [reenter, setReenter] = useState<Readonly<Record<string, readonly string[]>>>({});
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const stash = useRef(new Map<string, Array<[string, t.ConfigValue]>>());
@@ -274,6 +255,7 @@ export function McpServersRenderer({
       ]);
       renameStash.current.set(original, key);
       pendingUnder(`${prefix}${key}`).forEach(discard);
+      onRenameEntry?.(`${prefix}${key}`, null);
       setRenamedFrom(({ [key]: _renamed, ...rest }) => rest);
       setLastDeleted(original);
       return;
@@ -288,7 +270,10 @@ export function McpServersRenderer({
     stash.current.delete(key);
     const renamed = renameStash.current.get(key);
     renameStash.current.delete(key);
-    if (renamed !== undefined) setRenamedFrom((prev) => ({ ...prev, [renamed]: key }));
+    if (renamed !== undefined) {
+      onRenameEntry?.(`${prefix}${key}`, `${prefix}${renamed}`);
+      setRenamedFrom((prev) => ({ ...prev, [renamed]: key }));
+    }
     setLastDeleted(null);
     setFocusKey(renamed ?? key);
   };
@@ -303,17 +288,17 @@ export function McpServersRenderer({
     const problem = serverNameProblem(next, others);
     if (problem) return localize(problem);
     const value = asRecord(list.record[key]);
+    /** The saved server this one is (a rename of): its stored secrets stay behind with its name. */
+    const original = renamedFrom[key] ?? (Object.hasOwn(saved, key) ? key : undefined);
+    const secrets = [...new Set([...(reenter[key] ?? []), ...storedSecrets(value)])];
     removeServer(key, false);
     writeLeaves(next, value);
     onRenameEntry?.(`${prefix}${key}`, `${prefix}${next}`);
-    if (reenter[key]) {
-      setReenter(({ [key]: secrets, ...rest }) => (secrets ? { ...rest, [next]: secrets } : rest));
-    }
-    if (Object.hasOwn(saved, key)) {
-      setRenamedFrom((prev) => {
-        const { [key]: original, ...rest } = prev;
-        return { ...rest, [next]: original ?? key };
-      });
+    setReenter(({ [key]: _moved, ...rest }) =>
+      secrets.length > 0 ? { ...rest, [next]: secrets } : rest,
+    );
+    if (original !== undefined) {
+      setRenamedFrom(({ [key]: _renamed, ...rest }) => ({ ...rest, [next]: original }));
     }
     setRenaming(null);
     setJustAdded(next);
@@ -468,6 +453,7 @@ export function McpServersRenderer({
     return result;
   }, [saved, list, hidden, unhiding, lower, rowFilter, prefix, renamedAway]);
 
+  /** Under "Set values only", an inherited server the admin chose to override stays, with every field. */
   const visibleRows =
     showConfiguredOnly && inScope
       ? rows.filter(
@@ -475,6 +461,7 @@ export function McpServersRenderer({
             row.kind !== 'server' ||
             !lowerKeys.has(row.key) ||
             pendingByServer.has(row.key) ||
+            unlocked.has(row.key) ||
             countLeaves(stored[row.key]) > 0,
         )
       : rows;
@@ -632,21 +619,25 @@ export function McpServersRenderer({
                   })}
                 </McpNote>
               )}
-              <McpServerEditor
-                fields={fields}
-                entryPath={`${prefix}${key}`}
-                entry={value}
-                lower={isConfigRecord(lower[key]) ? lower[key] : undefined}
-                onChange={(leaf, next) => onChange(`${prefix}${key}.${leaf}`, next)}
-                onSwitch={(plan) => applyPlan(key, plan)}
-                onDiscard={onDiscardField}
-                disabled={readOnly}
-                typeLocked={lowerKeys.has(key) || transportOf(value) === 'stdio'}
-                quiet={badges.isNew}
-                owned={!lowerKeys.has(key)}
-                ownKeys={inScope ? ownKeysOf(key) : undefined}
-                editSessionId={editSessionId}
-              />
+              <ConfiguredOnlyContext.Provider
+                value={Boolean(showConfiguredOnly) && !unlocked.has(key)}
+              >
+                <McpServerEditor
+                  fields={fields}
+                  entryPath={`${prefix}${key}`}
+                  entry={value}
+                  lower={isConfigRecord(lower[key]) ? lower[key] : undefined}
+                  onChange={(leaf, next) => onChange(`${prefix}${key}.${leaf}`, next)}
+                  onSwitch={(plan) => applyPlan(key, plan)}
+                  onDiscard={onDiscardField}
+                  disabled={readOnly}
+                  typeLocked={lowerKeys.has(key) || transportOf(value) === 'stdio'}
+                  quiet={badges.isNew}
+                  owned={!lowerKeys.has(key)}
+                  ownKeys={inScope ? ownKeysOf(key) : undefined}
+                  editSessionId={editSessionId}
+                />
+              </ConfiguredOnlyContext.Provider>
             </McpServerCard>
           );
         })}

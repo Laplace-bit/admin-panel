@@ -1,7 +1,7 @@
 import { useContext } from 'react';
 import type * as t from '@/types';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { hasPendingValue, isPathConfigured } from '../../counts';
+import { hasPendingValue, isPathSet } from '../../counts';
 import { TriStateField } from '../../fields/TriStateField';
 import { FieldControl } from '../../renderer/FieldControl';
 import { UnknownSettings } from '../../UnknownSettings';
@@ -76,7 +76,7 @@ export function MemoryRenderer(props: t.FieldRendererProps) {
   const showsAgent =
     agentField != null &&
     isRowVisible(rowFilter, agentPath) &&
-    (!props.showConfiguredOnly || isPathConfigured(agentPath, props.configuredPaths));
+    (!props.showConfiguredOnly || isPathSet(agentPath, props.configuredPaths, props.editedValues));
   return (
     <>
       <FeatureFields {...props} fields={rest} controls={controls} />
