@@ -1,6 +1,8 @@
 import '@/locales/i18n';
 import { describe, expect, it } from 'vitest';
 import { screen, within } from '@testing-library/react';
+import { renderSection, sectionFields } from '../../features/__tests__/harness';
+import { RateLimitsRenderer } from '../RateLimitsRenderer';
 import { renderSections } from '@/test/sections';
 
 describe('RateLimitsRenderer', () => {
@@ -19,6 +21,56 @@ describe('RateLimitsRenderer', () => {
     expect(agents).toHaveTextContent('40 requests / 1 min');
     expect(screen.getByText(/never applied, even after a restart/)).toBeInTheDocument();
     expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument();
+  });
+
+  it('in a profile, shows librechat.yaml values and defaults, never a stale Base override', () => {
+    renderSections({
+      sections: ['rateLimits'],
+      yaml: { rateLimits: { fileUploads: { userMax: 20 } } },
+      overrides: { rateLimits: { fileUploads: { ipMax: 999, userWindowInMinutes: 77 } } },
+      profile: { balance: { enabled: true } },
+    });
+    const uploads = within(screen.getByRole('table', { name: 'Rate limits' })).getByRole('row', {
+      name: /File uploads/,
+    });
+    expect(uploads).toHaveTextContent('100 requests / 15 min');
+    expect(uploads).toHaveTextContent('20 requests / 15 min');
+    expect(uploads).not.toHaveTextContent('999');
+    expect(uploads).not.toHaveTextContent('77');
+    expect(within(uploads).getByText('Default')).toBeInTheDocument();
+    const stt = within(screen.getByRole('table', { name: 'Rate limits' })).getByRole('row', {
+      name: /Speech to text/,
+    });
+    expect(within(stt).queryByText(/librechat\.yaml/)).not.toBeInTheDocument();
+  });
+
+  it('lists schema content the table does not place as read-only rows', () => {
+    const fields = sectionFields('rateLimits');
+    const uploads = fields.find((field) => field.key === 'fileUploads')!;
+    const burst = { ...uploads.children![0], key: 'burst', path: 'rateLimits.fileUploads.burst' };
+    const imports = {
+      ...uploads,
+      key: 'bulkImports',
+      path: 'rateLimits.bulkImports',
+      children: uploads.children!.map((child) => ({
+        ...child,
+        path: `rateLimits.bulkImports.${child.key}`,
+      })),
+    };
+    renderSection(RateLimitsRenderer, {
+      section: 'rateLimits',
+      yaml: { rateLimits: { bulkImports: { userMax: 7 }, fileUploads: { burst: 4 } } },
+      props: {
+        fields: [
+          ...fields.filter((field) => field.key !== 'fileUploads'),
+          { ...uploads, children: [...(uploads.children ?? []), burst] },
+          imports,
+        ],
+      },
+    });
+    expect(document.getElementById('rateLimits-fileUploads-burst')).toHaveTextContent('4');
+    expect(document.getElementById('rateLimits-bulkImports-userMax')).toHaveTextContent('7');
+    expect(document.getElementById('rateLimits-fileUploads-userMax')).not.toBeNull();
   });
 
   it('says which number librechat.yaml sets when it sets only one of the pair', () => {
