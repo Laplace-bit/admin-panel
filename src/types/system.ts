@@ -1,4 +1,4 @@
-import type { ConfigValue, SchemaField } from './config';
+import type { ConfigValue, ConfigRecord, FlatConfigMap, SchemaField } from './config';
 import type { FieldState } from './values';
 
 /** A field of a rate limit (`rateLimits.<limiter>.<field>`). */
@@ -50,3 +50,19 @@ export interface OwnedField {
 
 /** A schema field found by key among a section's fields. */
 export type FieldLookup = (key: string) => SchemaField | undefined;
+
+/** Read-only rows of librechat.yaml-only settings, valued from librechat.yaml (FX-10, FX-12). */
+export interface YamlRowsProps {
+  fields: SchemaField[];
+  parentPath: string;
+  schemaDefaults?: FlatConfigMap;
+}
+
+export interface YamlRowProps {
+  field: SchemaField;
+  path: string;
+  yaml: ConfigRecord | null;
+  /** Leaf paths librechat.yaml sets, for the group counts. */
+  yamlPaths: ReadonlySet<string>;
+  schemaDefaults?: FlatConfigMap;
+}

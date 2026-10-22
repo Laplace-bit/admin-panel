@@ -40,14 +40,28 @@ function addService(
   return views.map((view) => (view === existing ? merged : view));
 }
 
-/** The services selected for search, scraping and reranking, one view per service. */
+/**
+ * The services selected for search, scraping and reranking, one view per
+ * service. A service in use also lists the settings of its roles not
+ * selected (Tavily's extract URL and scraper options while it only
+ * searches): "Show other services" leaves it out, so they would be nowhere
+ * else.
+ */
 export function selectedServices(
   selected: Readonly<Partial<Record<t.WebSearchCategory, string>>>,
 ): t.WebSearchServiceView[] {
-  return CATEGORIES.reduce<t.WebSearchServiceView[]>((views, category) => {
+  const views = CATEGORIES.reduce<t.WebSearchServiceView[]>((acc, category) => {
     const service = WEB_SEARCH_SERVICES[category].find((s) => s.value === selected[category]);
-    return service ? addService(views, service, category) : views;
+    return service ? addService(acc, service, category) : acc;
   }, []);
+  const used = new Set(views.map((view) => view.value));
+  return CATEGORIES.reduce(
+    (acc, category) =>
+      WEB_SEARCH_SERVICES[category]
+        .filter((service) => used.has(service.value) && service.value !== selected[category])
+        .reduce((merged, service) => addService(merged, service), acc),
+    views,
+  );
 }
 
 /** Every other service, for "Show all services". */

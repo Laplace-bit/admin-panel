@@ -136,6 +136,16 @@ describe('specListIssues', () => {
     ]);
   });
 
+  it('blocks a blank name and names that differ only by surrounding spaces', () => {
+    const issues = specListIssues(
+      changeSet([spec('a'), spec('  ', { label: 'Blank' }), spec('b'), spec(' b ')]),
+    );
+    expect(issues.map((issue) => [issue.path, issue.code])).toEqual([
+      ['modelSpecs.list.1.name', 'required'],
+      ['modelSpecs.list.3.name', 'spec_duplicate_name'],
+    ]);
+  });
+
   it('leaves names to the pipeline and ignores warnings and untouched lists', () => {
     expect(
       specListIssues(changeSet([{ label: 'X', preset: { endpoint: 'x', model: 'm' } }])),

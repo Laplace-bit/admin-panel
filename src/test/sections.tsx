@@ -23,12 +23,15 @@ const SCHEMA_DEFAULTS = flattenObject(
 );
 const SCHEMA_PATHS = getSchemaPathSet();
 
-/** A tab's sections built from the real schema, as `useTabSections` does. */
-export function tabSections(keys: string[]): t.ConfigSectionConfig[] {
+/** A tab's sections built from the real schema, as `useTabSections` does (`extraFields` stands in for a newer schema). */
+export function tabSections(
+  keys: string[],
+  extraFields: Readonly<Record<string, t.SchemaField[]>> = {},
+): t.ConfigSectionConfig[] {
   return keys.flatMap((key) => {
     const field = TREE.find((section) => section.key === key);
     if (!field) return [];
-    const children = field.children ?? [];
+    const children = [...(field.children ?? []), ...(extraFields[key] ?? [])];
     const structured = (field.isObject || field.type === 'record') && children.length > 0;
     const readOnlyReason = READ_ONLY_CONFIG_SECTIONS.get(key);
     return [
@@ -58,6 +61,8 @@ export interface SectionsHarnessOptions {
   readOnly?: boolean;
   /** "Set values only" is on. */
   showConfiguredOnly?: boolean;
+  /** Fields a newer schema adds to a section, by section key. */
+  extraFields?: Readonly<Record<string, t.SchemaField[]>>;
 }
 
 /** Profile-mode (USER role) value layers over Base, built by the page's own code. */
@@ -92,7 +97,8 @@ export function baseLayers(yaml: t.ConfigRecord, overrides: t.ConfigRecord): t.V
   );
 }
 
-function Harness({
+/** The page around a tab's sections; re-render it with new options to keep its staged edits. */
+export function SectionsHarness({
   sections,
   yaml = {},
   overrides = {},
@@ -101,6 +107,7 @@ function Harness({
   readOnly,
   profile,
   showConfiguredOnly,
+  extraFields,
 }: SectionsHarnessOptions) {
   const base = baseLayers(yaml, overrides);
   const layers = profile ? profileLayers(base, profile) : base;
@@ -131,7 +138,7 @@ function Harness({
   );
   return (
     <ConfigTabContent
-      sections={tabSections(sections)}
+      sections={tabSections(sections, extraFields)}
       configValues={values}
       editedValues={edited}
       onFieldChange={stage}
@@ -157,5 +164,5 @@ function Harness({
 
 /** Renders a tab's sections through the real `ConfigTabContent`, with staged edits applied. */
 export function renderSections(options: SectionsHarnessOptions) {
-  return render(<Harness {...options} />);
+  return render(<SectionsHarness {...options} />);
 }

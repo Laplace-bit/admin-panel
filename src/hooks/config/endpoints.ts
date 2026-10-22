@@ -111,15 +111,23 @@ export function useEndpointRows({ path, items }: t.EndpointRowsOptions): t.Endpo
         }),
       };
     });
+    const baselineIndex = new Map(
+      (edit?.baseline ?? []).map((entry, index) => [getEntryKey(entry, NAME_KEY), index]),
+    );
+    const pendingOrigins = items.map((_, index) => {
+      const identity = edit?.origins[index]?.identity;
+      return identity === undefined ? Infinity : (baselineIndex.get(identity) ?? Infinity);
+    });
     const removals = (edit?.detached ?? []).map((detached): t.EndpointRemoval => {
-      const at = edit?.baseline.findIndex(
-        (entry) => getEntryKey(entry, NAME_KEY) === detached.origin.identity,
-      );
+      const at = baselineIndex.get(detached.origin.identity);
+      const index = at ?? items.length;
+      const before = pendingOrigins.findIndex((origin) => origin > index);
       return {
         key: `removed-${detached.origin.identity}`,
         title: getEntryTitle(detached.value, at ?? 0, localize),
         value: detached.value,
-        index: at === undefined || at < 0 ? items.length : at,
+        index,
+        restoreIndex: before === -1 ? items.length : before,
       };
     });
     return {

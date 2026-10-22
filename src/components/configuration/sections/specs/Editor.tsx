@@ -17,7 +17,7 @@ import { UnknownSettings } from '../../UnknownSettings';
 import { useSpecList, specIndexOf } from './context';
 import { renderInlineField } from '../../renderer';
 import { PresetEditor } from './PresetEditor';
-import { presetParams, promptKeyFor } from './params';
+import { presetParams, specPromptKeys } from './params';
 import { useLocalize } from '@/hooks';
 import { SpecGroup } from './Group';
 
@@ -123,24 +123,7 @@ export function SpecEditor({
   const presetPath = `${path}.preset`;
   const endpoint = specEndpoint(spec);
   const isAgent = isAgentSpec(spec);
-  const promptKey = promptKeyFor(
-    endpoint,
-    typeof preset.model === 'string' ? preset.model : '',
-    options.customEndpoint(endpoint),
-  );
-  /** The prompt key the endpoint doesn't read, listed while set so it can be seen and removed. */
-  const otherPromptKey = promptKey === 'system' ? 'promptPrefix' : 'system';
-  const promptKeys = [
-    promptKey,
-    ...(hasConfigValue(preset[otherPromptKey]) ? [otherPromptKey] : []),
-    'greeting',
-    ...(ASSISTANT_ENDPOINTS.has(endpoint) || hasConfigValue(preset.instructions)
-      ? ['instructions']
-      : []),
-    ...(ASSISTANT_ENDPOINTS.has(endpoint) || hasConfigValue(preset.additional_instructions)
-      ? ['additional_instructions']
-      : []),
-  ];
+  const promptKeys = specPromptKeys(preset, endpoint, options.customEndpoint(endpoint));
   const errorFields = new Set(
     problemsOf(problems, index)
       .filter((problem) => problem.level === 'error')
@@ -150,9 +133,14 @@ export function SpecEditor({
   const paths = (keys: string[], base = path) => keys.map((key) => `${base}.${key}`);
   const rest = fields.filter((field) => !GROUPED.has(field.key));
 
-  /** Under "Set values only", a row (or group) without a value is left out. */
-  const shows = (record: t.ConfigRecord, key: string) =>
-    !configuredOnly || hasConfigValue(record[key]);
+  /**
+   * Under "Set values only", a row (or group) without a value is left out,
+   * unless it needs one: a required field still empty (a new spec's Label,
+   * Name, Endpoint and Model) stays, so the spec can be completed.
+   */
+  const shows = (record: t.ConfigRecord, key: string, problemField = key) =>
+    !configuredOnly || hasConfigValue(record[key]) || errorFields.has(problemField);
+  const showsPreset = (key: string) => shows(preset, key, `preset.${key}`);
   const showsGroup = (count: number) => !configuredOnly || count > 0;
   const modelKeys = ['endpoint', 'model', 'agent_id', 'modelLabel', 'assistant_id'];
   const setParams = Object.keys(preset).filter(
@@ -193,7 +181,7 @@ export function SpecEditor({
   };
   const presetRow = (key: string) => {
     const field = presetField?.children?.find((child) => child.key === key);
-    if (!field || !shows(preset, key)) return null;
+    if (!field || !showsPreset(key)) return null;
     return renderInlineField(
       field,
       preset,
@@ -211,18 +199,19 @@ export function SpecEditor({
   const fieldProps = { spec, index, path, onChange, disabled };
   const presetProps = { ...fieldProps, onPresetChange: presetChange.change };
 
-  const basicsGroup = showsGroup(countSet(spec, BASICS)) ? (
-    <SpecGroup
-      title={localize('com_config_specs_group_basics')}
-      paths={paths(BASICS)}
-      defaultExpanded
-    >
-      {shows(spec, 'label') && <LabelField {...fieldProps} field={byKey.get('label')} />}
-      {shows(spec, 'name') && <NameField {...fieldProps} field={byKey.get('name')} />}
-      {row('description')}
-      {shows(spec, 'iconURL') && <IconField {...fieldProps} field={byKey.get('iconURL')} />}
-    </SpecGroup>
-  ) : null;
+  const basicsGroup =
+    showsGroup(countSet(spec, BASICS)) || opensFor(BASICS) ? (
+      <SpecGroup
+        title={localize('com_config_specs_group_basics')}
+        paths={paths(BASICS)}
+        defaultExpanded
+      >
+        {shows(spec, 'label') && <LabelField {...fieldProps} field={byKey.get('label')} />}
+        {shows(spec, 'name') && <NameField {...fieldProps} field={byKey.get('name')} />}
+        {row('description')}
+        {shows(spec, 'iconURL') && <IconField {...fieldProps} field={byKey.get('iconURL')} />}
+      </SpecGroup>
+    ) : null;
   const modelGroup = (
     <SpecGroup
       title={localize('com_config_specs_group_model')}
@@ -230,13 +219,13 @@ export function SpecEditor({
       paths={paths(modelKeys, presetPath)}
       defaultExpanded
     >
-      {shows(preset, 'endpoint') && (
+      {showsPreset('endpoint') && (
         <EndpointField {...presetProps} field={presetChildField('endpoint')} />
       )}
-      {isAgent && shows(preset, 'agent_id') && (
+      {isAgent && showsPreset('agent_id') && (
         <AgentField {...presetProps} field={presetChildField('agent_id')} />
       )}
-      {!isAgent && shows(preset, 'model') && (
+      {!isAgent && showsPreset('model') && (
         <ModelField {...presetProps} field={presetChildField('model')} />
       )}
       {isAgent && hasConfigValue(preset.model) && presetRow('model')}

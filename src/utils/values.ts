@@ -132,6 +132,8 @@ interface KeyedLocation {
   key: t.ConfigValue;
   /** The path inside the entry ('' for the entry itself). */
   rest: string;
+  /** LibreChat replaces the list whole (model specs) instead of merging it by key. */
+  replaced: boolean;
 }
 
 /** Reads one path from every layer: by path, or by entry key inside keyed lists. */
@@ -141,6 +143,12 @@ interface PathReader {
   valueIn: (root: t.ConfigValue) => t.ConfigValue;
   /** Whether a layer sets the path (or something inside it). */
   sets: (root: t.ConfigValue, index: t.PathIndex) => boolean;
+  /**
+   * Whether a layer holds its own copy of a list LibreChat replaces whole
+   * (model specs): the layers beneath it then don't reach the entry at all,
+   * though their entry of the same name still serves as revert metadata.
+   */
+  replaces: (root: t.ConfigValue) => boolean;
 }
 
 /**
@@ -150,7 +158,7 @@ interface PathReader {
  * beneath's value for a spec is that same spec's, not whichever sits at its index.
  */
 function locateKeyed(path: string, displayRoot: t.ConfigValue): KeyedLocation | null {
-  for (const { path: arrayPath, key: keyField } of KEYED_COLLECTIONS.values()) {
+  for (const { path: arrayPath, key: keyField, merge } of KEYED_COLLECTIONS.values()) {
     if (!path.startsWith(`${arrayPath}.`)) continue;
     const tail = path.slice(arrayPath.length + 1);
     const dot = tail.indexOf('.');
@@ -163,6 +171,7 @@ function locateKeyed(path: string, displayRoot: t.ConfigValue): KeyedLocation | 
       keyField,
       key: entry[keyField],
       rest: dot === -1 ? '' : tail.slice(dot + 1),
+      replaced: merge === 'replace',
     };
   }
   return null;
@@ -194,6 +203,7 @@ function createReader(path: string, displayRoot: t.ConfigValue): PathReader {
         index.ancestors.has(path) ||
         index.paths.has(path) ||
         (pathIndexOverlaps(index, path) && getValueAtPath(root, path) !== undefined),
+      replaces: () => false,
     };
   }
   /** A redacted secret is returned as its preview companion (`apiKey` → `apiKeyPreview`). */
@@ -206,7 +216,20 @@ function createReader(path: string, displayRoot: t.ConfigValue): PathReader {
     sets: (root) =>
       keyedValue(root, location) !== undefined ||
       (preview != null && keyedValue(root, preview) !== undefined),
+    replaces: (root) =>
+      location.replaced && Array.isArray(getValueAtPath(root, location.arrayPath)),
   };
+}
+
+/** What reaches users once a layer replaces the whole list: only the schema default. */
+function replacedLower(path: string, layers: t.ValueLayers, reader: PathReader): t.RevertTarget {
+  const value = layers.schemaDefaults[path] ?? layers.schemaDefaults[reader.schemaPath];
+  return { value, source: 'default' };
+}
+
+/** The layers that still reach users once a layer replaces the whole list. */
+function defaultsOnly(stack: t.FieldLayer[]): t.FieldLayer[] {
+  return stack.filter((layer) => layer.source === 'default');
 }
 
 /** The layers under any override: schema default, what LibreChat fills in, librechat.yaml. */
@@ -240,26 +263,34 @@ function defaultAt(path: string, layers: t.ValueLayers): t.ConfigValue {
   return layers.runtimeDefaultAt?.(path) ?? layers.schemaDefaults[path];
 }
 
-/** What Base users get at `path`, and from which layer. */
+/**
+ * What Base users get at `path`, and from which layer. When the base
+ * overrides replace the whole list (model specs), librechat.yaml's entry of
+ * the same name doesn't reach users: it stays only as the revert target.
+ */
 function readBase(path: string, layers: t.ValueLayers, reader: PathReader): BaseReadout {
-  const stack: t.FieldLayer[] = [];
-  const { lower, yamlSets } = readLowerLayers(path, layers, reader, stack);
+  const lowerStack: t.FieldLayer[] = [];
+  const { lower, yamlSets } = readLowerLayers(path, layers, reader, lowerStack);
+  const replaced = reader.replaces(layers.baseOverrides);
+  const reaching = replaced ? replacedLower(path, layers, reader) : lower;
+  const stack = replaced ? defaultsOnly(lowerStack) : lowerStack;
+  const reachingYaml = yamlSets && !replaced;
   const isOverride = reader.sets(layers.baseOverrides, layers.baseOverridePaths);
   const isHidden = !isOverride && hasPathOrAncestor(layers.baseTombstones, path);
   const baseValue = reader.valueIn(layers.base);
   if (isOverride) stack.push({ source: 'admin', value: baseValue });
   if (isHidden) stack.push({ source: 'admin', value: undefined, hidden: true });
-  const effective = baseValue ?? (isHidden ? defaultAt(path, layers) : lower.value);
-  let source: t.ProvenanceSource = lower.source;
+  const effective = baseValue ?? (isHidden ? defaultAt(path, layers) : reaching.value);
+  let source: t.ProvenanceSource = reaching.source;
   if (isOverride || isHidden) {
     source = 'admin';
-  } else if (!yamlSets && baseValue !== undefined && lower.source === 'default') {
-    source = sameValue(baseValue, lower.value) ? 'default' : 'runtimeDefault';
+  } else if (!reachingYaml && baseValue !== undefined && reaching.source === 'default') {
+    source = sameValue(baseValue, reaching.value) ? 'default' : 'runtimeDefault';
   }
   return {
     effective,
     source,
-    isConfigured: yamlSets || isOverride || isHidden,
+    isConfigured: reachingYaml || isOverride || isHidden,
     isOverride,
     isHidden,
     lower,
@@ -340,12 +371,16 @@ function deriveScopeModeState(
   const isHidden = visibility
     ? visibility === 'hide'
     : !isOverride && hasPathOrAncestor(scope.tombstones, path);
+  /** A profile's own copy of a list replaced whole (model specs): Base's entry doesn't reach its users. */
+  const replaced = reader.replaces(scope.overrides);
+  const reaching = replaced ? replacedLower(path, layers, reader) : inherited;
   const merged = reader.valueIn(layers.effective);
-  const effective = merged ?? (isHidden ? defaultAt(path, layers) : inherited.value);
-  const stack = [...base.stack];
+  const effective = merged ?? (isHidden ? defaultAt(path, layers) : reaching.value);
+  const stack = replaced ? defaultsOnly(base.stack) : [...base.stack];
   if (isOverride) stack.push({ source: 'scope', value: merged });
   if (isHidden) stack.push({ source: 'scope', value: undefined, hidden: true });
   const ownsValue = isOverride || isHidden;
+  const unownedSource: t.ProvenanceSource = replaced ? 'default' : 'inherited';
   const revertTarget: t.RevertTarget | undefined = ownsValue
     ? { value: inherited.value, source: 'inherited' }
     : undefined;
@@ -359,7 +394,7 @@ function deriveScopeModeState(
   return {
     value: pending.isEdited ? pending.value : (shown ?? effective),
     effective,
-    source: ownsValue ? 'scope' : 'inherited',
+    source: ownsValue ? 'scope' : unownedSource,
     ...(revertTarget && { revertTarget }),
     isConfigured: ownsValue,
     isOverride,

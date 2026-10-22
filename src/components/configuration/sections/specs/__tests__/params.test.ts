@@ -6,6 +6,7 @@ import {
   paramField,
   presetParams,
   promptKeyFor,
+  specPromptKeys,
   specSearchFields,
   isForeignPresetKey,
   isMisplacedId,
@@ -85,6 +86,23 @@ describe('presetParams', () => {
   });
 });
 
+describe('specPromptKeys', () => {
+  it('lists the endpoint prompt field, the greeting, assistant instructions and set prompt fields', () => {
+    expect(specPromptKeys({ model: 'gpt-4o' }, 'openAI')).toEqual(['promptPrefix', 'greeting']);
+    expect(specPromptKeys({ model: 'gpt-4o' }, 'assistants')).toEqual([
+      'promptPrefix',
+      'greeting',
+      'instructions',
+      'additional_instructions',
+    ]);
+    expect(specPromptKeys({ model: 'gpt-4o', system: 'old' }, 'openAI')).toEqual([
+      'promptPrefix',
+      'system',
+      'greeting',
+    ]);
+  });
+});
+
 describe('promptKeyFor', () => {
   it('uses the system prompt where the parameter panel does (Bedrock Anthropic models)', () => {
     expect(promptKeyFor('bedrock', 'anthropic.claude-3')).toBe('system');
@@ -136,6 +154,22 @@ describe('specSearchFields', () => {
     expect(openAI).toEqual(expect.arrayContaining(['endpoint', 'model', 'temperature', 'topK']));
     expect(openAI).not.toContain('thinkingBudget');
     expect(openAI).not.toContain('archivedAt');
+  });
+
+  it('indexes only the prompt fields the editor shows for the endpoint, plus set ones', () => {
+    const openAI = presetKeysFor({ preset: { endpoint: 'openAI', model: 'gpt-4o' } });
+    expect(openAI).toEqual(expect.arrayContaining(['promptPrefix', 'greeting']));
+    expect(openAI).not.toContain('system');
+    expect(openAI).not.toContain('instructions');
+    const bedrock = presetKeysFor({ preset: { endpoint: 'bedrock', model: 'anthropic.claude-3' } });
+    expect(bedrock).toContain('system');
+    expect(bedrock).not.toContain('promptPrefix');
+    expect(presetKeysFor({ preset: { endpoint: 'assistants', model: 'gpt-4o' } })).toEqual(
+      expect.arrayContaining(['instructions', 'additional_instructions']),
+    );
+    expect(
+      presetKeysFor({ preset: { endpoint: 'openAI', model: 'gpt-4o', system: 'stale' } }),
+    ).toContain('system');
   });
 
   it('follows a custom endpoint’s parameter set', () => {

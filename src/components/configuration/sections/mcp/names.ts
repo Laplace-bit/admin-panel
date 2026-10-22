@@ -28,11 +28,16 @@ export function serverNameProblem(name: string, existing: Iterable<string>): str
   return null;
 }
 
-/** `github-copy`, then `github-copy-2`, … : the first name not in the list. */
-export function copyName(name: string, existing: ReadonlySet<string>): string {
+/**
+ * `github-copy`, then `github-copy-2`, … : the first name not in the list in
+ * any letter case (as `serverNameProblem` compares names).
+ */
+export function copyName(name: string, existing: Iterable<string>): string {
+  const taken = new Set([...existing].map((key) => key.toLowerCase()));
   const base = `${name.replace(/[^A-Za-z0-9_-]+/g, '-')}-copy`;
-  if (!existing.has(base)) return base;
+  const isTaken = (candidate: string) => taken.has(candidate.toLowerCase());
+  if (!isTaken(base)) return base;
   let n = 2;
-  while (existing.has(`${base}-${n}`)) n++;
+  while (isTaken(`${base}-${n}`)) n++;
   return `${base}-${n}`;
 }

@@ -212,10 +212,11 @@ export function useConfigEdits({
     [setVisibility],
   );
 
-  /** A rename of a renamed entry still points at the saved entry it started from. */
-  const handleRenameEntry = useCallback((from: string, to: string) => {
+  /** A rename of a renamed entry still points at the saved entry it started from; `to: null` drops the record. */
+  const handleRenameEntry = useCallback((from: string, to: string | null) => {
     setPending((prev) => {
       const { [from]: original, ...rest } = prev.renames;
+      if (to === null) return { ...prev, renames: rest };
       return { ...prev, renames: { ...rest, [to]: original ?? from } };
     });
   }, []);

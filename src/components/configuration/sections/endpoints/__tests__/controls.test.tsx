@@ -1,13 +1,14 @@
 import { useState } from 'react';
-import { configSchema } from 'librechat-data-provider';
+import { configSchema, paramSettings } from 'librechat-data-provider';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import type * as t from '@/types';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
+import { HeaderPlaceholders, TagListField } from '../Request';
 import { ParamDefinitionsRow } from '../ParamDefinitions';
 import { extractSchemaTree } from '@/server/config';
+import { KeyValueField } from '../../../fields';
 import { EndpointRefRow } from '../Fields';
-import { TagListField } from '../Request';
 import { PricingRow } from '../Pricing';
 
 vi.mock('@/hooks/useLocalize', () => {
@@ -130,14 +131,18 @@ describe('ParamDefinitionsRow (CE-6)', () => {
     expect(container.querySelector('button[aria-label^="com_ui_delete"]')).toBeNull();
   });
 
-  it('adds an override of a built-in parameter with its built-in default', () => {
+  it('adds an override of a built-in parameter as its complete definition, shown as a default override', () => {
     const onChange = vi.fn();
-    render(<Params initial={[]} onChange={onChange} />);
+    const { container } = render(<Params initial={[]} onChange={onChange} />);
     const select = screen.getByLabelText('com_config_ce_param_add_builtin');
     fireEvent.change(select, { target: { value: 'temperature' } });
     const [added] = onChange.mock.lastCall?.[0] as t.ConfigRecord[];
-    expect(added.key).toBe('temperature');
-    expect(typeof added.default).toBe('number');
+    const builtIn = paramSettings.custom?.find((setting) => setting.key === 'temperature');
+    expect(added).toEqual({ ...builtIn, optionType: 'custom' });
+    expect(added).toMatchObject({ type: 'number', component: 'slider', labelCode: true });
+    expandFirstCard(container);
+    expect(screen.getByText('com_config_ce_param_override_note')).toBeInTheDocument();
+    expect(container.querySelector(`#${PATH.replace(/\./g, '-')}-0-type`)).toBeNull();
   });
 });
 
@@ -155,6 +160,45 @@ describe('TagListField', () => {
     rerender(<TagListField id="drop" values={['stop']} onChange={onChange} onClear={onClear} />);
     fireEvent.click(screen.getByRole('button', { name: 'com_ui_remove_item:stop' }));
     expect(onClear).toHaveBeenCalled();
+  });
+});
+
+describe('HeaderPlaceholders', () => {
+  it('inserts a placeholder into the header value last focused, never into a header name', () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    try {
+      render(
+        <HeaderPlaceholders>
+          <KeyValueField
+            id="headers"
+            pairs={[{ key: 'X-User', value: 'id-' }]}
+            onChange={vi.fn()}
+            valueTypes={['string']}
+            aria-label="headers"
+          />
+        </HeaderPlaceholders>,
+      );
+      const name = screen.getByLabelText<HTMLInputElement>('com_ui_key 1');
+      const value = screen.getByLabelText<HTMLInputElement>('com_ui_value 1');
+      const placeholder = screen.getByRole('button', { name: '{{LIBRECHAT_USER_ID}}' });
+
+      fireEvent.focus(name);
+      fireEvent.click(placeholder);
+      expect(name.value).toBe('X-User');
+      expect(writeText).toHaveBeenCalledWith('{{LIBRECHAT_USER_ID}}');
+
+      fireEvent.focus(value);
+      value.setSelectionRange(3, 3);
+      fireEvent.focus(name);
+      fireEvent.click(placeholder);
+      expect(name.value).toBe('X-User');
+      expect(value.value).toBe('id-{{LIBRECHAT_USER_ID}}');
+      expect(writeText).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.stubGlobal('ResizeObserver', NoopResizeObserver);
+    }
   });
 });
 

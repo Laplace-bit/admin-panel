@@ -1,10 +1,10 @@
 import { useContext } from 'react';
 import type * as t from '@/types';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { isConfigRecord, isRowVisible } from '@/utils';
+import { isConfigRecord, isRowVisible, getValueAtPath } from '@/utils';
 import { UnknownSettings } from '../../UnknownSettings';
 import { SettingList, settingRows } from '../../values';
-import { useFieldState, useLocalize } from '@/hooks';
+import { useLocalize, useYamlConfig } from '@/hooks';
 import { RATE_LIMITERS } from '@/constants';
 import { toFieldId } from '../../renderer';
 import { labelForPath } from '../../meta';
@@ -42,22 +42,24 @@ const SOURCE_KEYS = {
 const valueClass = (fromYaml: boolean) =>
   fromYaml ? 'text-(--cui-color-text-default)' : 'text-(--settings-muted-fg)';
 
-/** A number librechat.yaml (or, in a profile, Base) sets; the panel's own overrides never apply here. */
-function setNumber(state: t.FieldState): number | undefined {
-  const fromLayer = state.source === 'yaml' || state.source === 'inherited';
-  return fromLayer && typeof state.effective === 'number' ? state.effective : undefined;
+/**
+ * A number librechat.yaml sets. LibreChat reads rate limits from that file
+ * alone: no override applies, Base's in a profile included.
+ */
+function yamlNumber(yaml: t.ConfigRecord | null, path: string): number | undefined {
+  const value = getValueAtPath(yaml, path);
+  return typeof value === 'number' ? value : undefined;
 }
 
 /** One limit (requests and window), from librechat.yaml or LibreChat's fallback. */
 function LimitCell({ limiter, scope }: { limiter: t.RateLimiterInfo; scope: 'ip' | 'user' }) {
   const localize = useLocalize();
+  const yaml = useYamlConfig();
   const maxField: t.RateLimitField = scope === 'ip' ? 'ipMax' : 'userMax';
   const windowField: t.RateLimitField =
     scope === 'ip' ? 'ipWindowInMinutes' : 'userWindowInMinutes';
   const maxPath = `${SECTION}.${limiter.key}.${maxField}`;
   const windowPath = `${SECTION}.${limiter.key}.${windowField}`;
-  const max = useFieldState(maxPath);
-  const span = useFieldState(windowPath);
   const defaultMax = limiter.defaults[maxField];
   const defaultWindow = limiter.defaults[windowField];
   if (defaultMax === undefined || defaultWindow === undefined) {
@@ -67,8 +69,8 @@ function LimitCell({ limiter, scope }: { limiter: t.RateLimiterInfo; scope: 'ip'
       </span>
     );
   }
-  const setMax = setNumber(max);
-  const setWindow = setNumber(span);
+  const setMax = yamlNumber(yaml, maxPath);
+  const setWindow = yamlNumber(yaml, windowPath);
   const shownMax = setMax ?? defaultMax;
   const shownWindow = setWindow ?? defaultWindow;
   const maxFromYaml = setMax !== undefined;
@@ -101,16 +103,19 @@ function LimitCell({ limiter, scope }: { limiter: t.RateLimiterInfo; scope: 'ip'
  * Rate limits as one read-only table (FX-12): for each limiter, the requests
  * allowed per IP address and per user, and their window, from librechat.yaml
  * or LibreChat's defaults (which `.env` variables can change). LibreChat sets
- * its limiters from librechat.yaml when it starts, so the panel only shows them.
+ * its limiters from librechat.yaml when it starts, so the panel only shows them,
+ * read from librechat.yaml alone (an override, Base's in a profile, never applies).
  */
-export function RateLimitsRenderer({ fields, parentValue }: t.FieldRendererProps) {
+export function RateLimitsRenderer({ fields }: t.FieldRendererProps) {
   const localize = useLocalize();
+  const yaml = useYamlConfig();
   const rowFilter = useContext(RowFilterContext);
   const known = new Set(fields.map((field) => field.key));
   const limiters = RATE_LIMITERS.filter(
     (limiter) => known.has(limiter.key) && isRowVisible(rowFilter, `${SECTION}.${limiter.key}`),
   );
-  const record = isConfigRecord(parentValue) ? parentValue : {};
+  const yamlValue = getValueAtPath(yaml, SECTION);
+  const record = isConfigRecord(yamlValue) ? yamlValue : {};
   const tabled = new Set(RATE_LIMITERS.map((limiter) => limiter.key));
   const childrenOf = (key: string) => fields.find((field) => field.key === key)?.children ?? [];
   /** What librechat.yaml sets that the table has no column for: a newer limiter or setting. */
@@ -178,9 +183,9 @@ export function RateLimitsRenderer({ fields, parentValue }: t.FieldRendererProps
         })}
       </div>
       <SettingList rows={otherRows} label={localize('com_config_ratelimits_other')} />
-      {!rowFilter && isConfigRecord(parentValue) && (
+      {!rowFilter && isConfigRecord(yamlValue) && (
         <>
-          <UnknownSettings fields={fields} value={parentValue} path={SECTION} />
+          <UnknownSettings fields={fields} value={record} path={SECTION} />
           {limiters.map((limiter) => (
             <UnknownSettings
               key={limiter.key}

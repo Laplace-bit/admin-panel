@@ -1,8 +1,12 @@
 import type * as t from '@/types';
+import { isSecretPath } from '../../review/diff';
 import { transportOf } from './transport';
 
 /** The missing field reported for an admin API key with no key, typed or stored. */
 export const ADMIN_API_KEY_FIELD = 'apiKey.key';
+
+const ENTRY_PREFIX = 'mcpServers.';
+const PREVIEW_SUFFIX = 'Preview';
 
 export const REQUIRED_BY_TRANSPORT: Record<string, Set<string>> = {
   stdio: new Set(['command', 'args']),
@@ -81,8 +85,8 @@ function mergeMcpEdits(
   const upsertEntries: Record<string, Record<string, t.ConfigValue>> = {};
 
   for (const [path, value] of edits) {
-    if (!path.startsWith('mcpServers.')) continue;
-    const parsed = resolveEntryKey(path.slice('mcpServers.'.length), knownKeys);
+    if (!path.startsWith(ENTRY_PREFIX)) continue;
+    const parsed = resolveEntryKey(path.slice(ENTRY_PREFIX.length), knownKeys);
     if (!parsed) continue;
     const { entryKey, segments } = parsed;
     knownKeys.add(entryKey);
@@ -132,20 +136,61 @@ function mergeMcpEdits(
   return result;
 }
 
-/** Returns a list of validation errors for affected MCP entries after applying edits, so the save flow can block invalid transport-state combinations the per-leaf PATCH cannot catch. `resetFallback` is the inherited baseline (e.g. base config in scope mode) whose values get revealed when a scope reset removes an override. */
+/** The secret a leaf is the masked preview of (`apiKey.keyPreview` → `apiKey.key`), else null. */
+export function previewedSecret(segments: string[]): string | null {
+  const last = segments[segments.length - 1];
+  if (!last.endsWith(PREVIEW_SUFFIX) || last === PREVIEW_SUFFIX) return null;
+  const secret = [...segments.slice(0, -1), last.slice(0, -PREVIEW_SUFFIX.length)].join('.');
+  return isSecretPath(secret) ? secret : null;
+}
+
+/**
+ * Secrets a server stores encrypted (`apiKey.key`, `oauth.client_secret`):
+ * the admin API returns only their masked preview, never the secret itself,
+ * so a copy or a rename (a new server) can't carry them over.
+ */
+export function storedSecrets(entry: t.ConfigValue): string[] {
+  if (!isPlainObject(entry)) return [];
+  const walk = (value: Record<string, t.ConfigValue>, prefix: string[]): string[] =>
+    Object.entries(value).flatMap(([key, child]) => {
+      const segments = [...prefix, key];
+      if (isPlainObject(child)) return walk(child, segments);
+      const secret = previewedSecret(segments);
+      if (secret == null || typeof child !== 'string' || child === '') return [];
+      return lookupLeaf(entry, secret.split('.')) == null ? [secret] : [];
+    });
+  return walk(entry, []);
+}
+
+function hasText(value: t.ConfigValue | undefined): boolean {
+  return typeof value === 'string' && value !== '';
+}
+
+/** The first stored secret of the server an entry was renamed from that the entry neither re-enters nor still stores. */
+function lostSecret(entry: Record<string, t.ConfigValue>, original: t.ConfigValue): string | null {
+  const lost = storedSecrets(original).find((secret) => {
+    const segments = secret.split('.');
+    const preview = [...segments.slice(0, -1), `${segments[segments.length - 1]}${PREVIEW_SUFFIX}`];
+    return !hasText(lookupLeaf(entry, segments)) && !hasText(lookupLeaf(entry, preview));
+  });
+  return lost ?? null;
+}
+
+/** Returns a list of validation errors for affected MCP entries after applying edits, so the save flow can block invalid transport-state combinations the per-leaf PATCH cannot catch. `resetFallback` is the inherited baseline (e.g. base config in scope mode) whose values get revealed when a scope reset removes an override. `renames` (`mcpServers.new` → `mcpServers.saved`) marks renamed servers: a secret the saved one stores can't move to the new name, so it must be entered again (`renamedFrom` is set on that error). */
 export function validateMcpCrossField(
   baseline: Record<string, t.ConfigValue>,
   edits: Array<[string, t.ConfigValue]>,
   resetFallback?: Record<string, t.ConfigValue>,
-): Array<{ entryKey: string; missingField: string }> {
+  renames: Readonly<Record<string, string>> = {},
+): Array<{ entryKey: string; missingField: string; renamedFrom?: string }> {
   const merged = mergeMcpEdits(baseline, edits, resetFallback);
   const knownKeys = new Set(Object.keys(baseline));
   const affected = new Set<string>();
   /** New servers, and servers whose API key (or its source) was set: they must carry an admin key. */
   const keyChecked = new Set<string>();
   for (const [path] of edits) {
-    if (!path.startsWith('mcpServers.')) continue;
-    const parsed = resolveEntryKey(path.slice('mcpServers.'.length), knownKeys);
+    if (!path.startsWith(ENTRY_PREFIX)) continue;
+    const parsed = resolveEntryKey(path.slice(ENTRY_PREFIX.length), knownKeys);
     if (parsed) {
       knownKeys.add(parsed.entryKey);
       affected.add(parsed.entryKey);
@@ -154,14 +199,20 @@ export function validateMcpCrossField(
       if (setsKey || !Object.hasOwn(baseline, parsed.entryKey)) keyChecked.add(parsed.entryKey);
     }
   }
-  const errors: Array<{ entryKey: string; missingField: string }> = [];
+  const errors: Array<{ entryKey: string; missingField: string; renamedFrom?: string }> = [];
   for (const entryKey of affected) {
     const entry = merged[entryKey];
     if (!isPlainObject(entry)) continue;
     const missingField =
       missingTransportField(entry, baseline[entryKey]) ??
       (keyChecked.has(entryKey) && lacksAdminKey(entry) ? ADMIN_API_KEY_FIELD : null);
-    if (missingField) errors.push({ entryKey, missingField });
+    if (missingField) {
+      errors.push({ entryKey, missingField });
+      continue;
+    }
+    const original = renames[`${ENTRY_PREFIX}${entryKey}`]?.slice(ENTRY_PREFIX.length);
+    const lost = original === undefined ? null : lostSecret(entry, baseline[original]);
+    if (lost) errors.push({ entryKey, missingField: lost, renamedFrom: original });
   }
   return errors;
 }

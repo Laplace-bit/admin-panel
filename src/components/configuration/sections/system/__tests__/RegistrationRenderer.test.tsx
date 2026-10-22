@@ -90,6 +90,26 @@ describe('RegistrationRenderer', () => {
     expect(onChange).toHaveBeenLastCalledWith('registration.allowedDomains', undefined);
   });
 
+  it('shows the startup settings with their librechat.yaml values, never a stale override', () => {
+    const setup = {
+      sections: ['registration'],
+      yaml: { registration: { oauthStateTtlMs: 120000, openidDiscovery: { startupAttempts: 3 } } },
+      overrides: {
+        registration: { oauthStateTtlMs: 60000, openidDiscovery: { startupAttempts: 9 } },
+      },
+    };
+    const ttl = () => document.getElementById('registration-oauthStateTtlMs');
+    const attempts = () => document.getElementById('registration-openidDiscovery-startupAttempts');
+    const { unmount } = renderSections(setup);
+    expect(ttl()).toHaveTextContent('120,000');
+    expect(attempts()).toHaveTextContent('3');
+    unmount();
+    renderSections({ ...setup, profile: { registration: { allowedDomains: ['example.com'] } } });
+    expect(ttl()).toHaveTextContent('120,000');
+    expect(ttl()).not.toHaveTextContent('60,000');
+    expect(attempts()).not.toHaveTextContent('9');
+  });
+
   it('shows the settings LibreChat sets up at startup read-only', () => {
     renderSections({
       sections: ['registration'],

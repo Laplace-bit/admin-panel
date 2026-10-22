@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type * as t from '@/types';
 import { ADMIN_API_KEY_FIELD, validateMcpCrossField } from '../validation';
 
 describe('validateMcpCrossField', () => {
@@ -39,6 +40,35 @@ describe('validateMcpCrossField', () => {
     expect(validateMcpCrossField({ docs: keyless }, [['mcpServers.docs.timeout', 60000]])).toEqual(
       [],
     );
+  });
+
+  it('needs a renamed server to re-enter a secret its saved name stores (OAuth client secret)', () => {
+    const saved = {
+      docs: {
+        type: 'streamable-http',
+        url: 'https://docs.example.com/mcp',
+        oauth: { client_id: 'id', client_secretPreview: 'sec...1234' },
+      },
+    };
+    const renamed: Array<[string, t.ConfigValue]> = [
+      ['mcpServers.docs', undefined],
+      ['mcpServers.kb.type', 'streamable-http'],
+      ['mcpServers.kb.url', 'https://docs.example.com/mcp'],
+      ['mcpServers.kb.oauth.client_id', 'id'],
+    ];
+    const renames = { 'mcpServers.kb': 'mcpServers.docs' };
+    expect(validateMcpCrossField(saved, renamed, undefined, renames)).toEqual([
+      { entryKey: 'kb', missingField: 'oauth.client_secret', renamedFrom: 'docs' },
+    ]);
+    expect(
+      validateMcpCrossField(
+        saved,
+        [...renamed, ['mcpServers.kb.oauth.client_secret', 'new-secret']],
+        undefined,
+        renames,
+      ),
+    ).toEqual([]);
+    expect(validateMcpCrossField(saved, renamed)).toEqual([]);
   });
 
   it('flags an existing sse entry whose transport is changed to stdio without command/args', () => {

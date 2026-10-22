@@ -78,12 +78,15 @@ export interface EndpointRow {
   issues: EndpointIssue[];
 }
 
-/** A saved endpoint a pending edit removes; Undo puts it back at `index`. */
+/** A saved endpoint a pending edit removes; Undo puts it back at `restoreIndex`. */
 export interface EndpointRemoval {
   key: string;
   title: string;
   value: ConfigValue;
+  /** Position in the collection as loaded. */
   index: number;
+  /** Where Undo puts it back in the pending list: before the first surviving entry loaded after it. */
+  restoreIndex: number;
 }
 
 /** The custom endpoint list of the open target, with pending edits (WS10). */

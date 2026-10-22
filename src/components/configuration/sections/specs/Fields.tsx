@@ -1,9 +1,10 @@
 import { ButtonGroup } from '@clickhouse/click-ui';
-import { useId, useRef, useState, useEffect } from 'react';
-import { normalizeEndpointName } from 'librechat-data-provider';
+import { EModelEndpoint, normalizeEndpointName } from 'librechat-data-provider';
+import { useId, useRef, useState, useEffect, useContext } from 'react';
 import type { FocusEvent, MouseEvent } from 'react';
 import type * as t from '@/types';
-import { problemAt, specEndpoint, ASSISTANT_ENDPOINTS } from './validation';
+import { problemAt, specEndpoint, ASSISTANT_ENDPOINTS, SPEC_LIST_PATH } from './validation';
+import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
 import { ConfirmChoiceDialog } from '../../fields/ConfirmChoice';
 import { uniqueOptions, endpointLabelOf } from './options';
 import { describeField, labelForPath } from '../../meta';
@@ -104,6 +105,16 @@ export function LabelField({ field, spec, index, path, onChange, disabled }: t.S
 }
 
 /**
+ * The name a spec was loaded with in this edit session: its pending edit's
+ * origin, or its current name while the list has no pending edit (so it
+ * follows saves, Discard and scope changes). Undefined for a spec added since.
+ */
+function useLoadedName(spec: t.ConfigRecord, index: number): string | undefined {
+  const edit = useContext(CollectionEditsContext)[SPEC_LIST_PATH];
+  return edit ? edit.origins[index]?.identity : stringOf(spec.name);
+}
+
+/**
  * Name*: the id conversations and `?spec=` links use; renaming a saved spec
  * says what it breaks. While a new spec's name is still derived from its
  * label, focusing it selects the derived name (also when the label commits
@@ -114,14 +125,18 @@ export function NameField({ field, spec, index, path, onChange, disabled }: t.Sp
   const { problems, savedNames } = useSpecList();
   const isNew = useIsNewSpec(index);
   const followsLabel = useNameFollowsLabel(spec, index);
-  const [initialName] = useState(() => stringOf(spec.name));
+  const loadedName = useLoadedName(spec, index);
   const keepSelectionRef = useRef(false);
   const dataPath = `${path}.name`;
   const inputId = toFieldId(dataPath);
   const name = stringOf(spec.name);
   const { label, description } = useRowLabel(dataPath, field);
   const problem = problemAt(problems, index, 'name');
-  const renamed = initialName !== '' && savedNames.has(initialName) && name !== initialName;
+  const renamed =
+    loadedName !== undefined &&
+    loadedName !== '' &&
+    savedNames.has(loadedName) &&
+    name !== loadedName;
   const warningId = `${inputId}-rename`;
 
   useEffect(() => {
@@ -168,7 +183,7 @@ export function NameField({ field, spec, index, path, onChange, disabled }: t.Sp
           />
           {renamed && (
             <p id={warningId} className="m-0 text-xs text-(--settings-warn-fg)">
-              {localize('com_config_specs_rename_warning', { name: initialName })}
+              {localize('com_config_specs_rename_warning', { name: loadedName })}
             </p>
           )}
         </div>
@@ -298,7 +313,8 @@ function strandedParams(
 /**
  * Endpoint*: a built-in provider or a custom endpoint; one the configuration
  * lacks is flagged. Switching to an endpoint that doesn't offer parameters
- * the preset sets asks whether to remove them.
+ * the preset sets asks whether to remove them, and leaving the agents
+ * endpoint clears the agent ID, which only an agents spec uses.
  */
 export function EndpointField({
   field,
@@ -326,6 +342,9 @@ export function EndpointField({
   const switchTo = (next: string, removed: readonly string[] = []) => {
     onPresetChange('endpoint', next);
     removed.forEach((key) => onPresetChange(key, undefined));
+    if (next !== EModelEndpoint.agents && preset.agent_id !== undefined) {
+      onPresetChange('agent_id', undefined);
+    }
     setSwitching(null);
   };
 

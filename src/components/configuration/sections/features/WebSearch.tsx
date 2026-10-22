@@ -6,7 +6,7 @@ import { WEB_SEARCH_SERVICES, WEB_SEARCH_ROLE_KEYS, WEB_SEARCH_GENERAL_KEYS } fr
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { UnknownSettings } from '../../UnknownSettings';
 import { CredentialControl } from './Credential';
-import { countConfigured } from '../../counts';
+import { countConfigured, hasPendingValue } from '../../counts';
 import { NestedGroup } from '../../renderer';
 import { FeatureFields } from './Fields';
 import { isRowVisible } from '@/utils';
@@ -35,7 +35,10 @@ function ServiceGroup({ service, ...props }: t.WebSearchServiceProps) {
   const paths = shown.map((field) => `${parentPath}.${field.key}`);
   const hiddenByFilter = !paths.some((path) => isRowVisible(rowFilter, path));
   const hiddenByConfigured =
-    props.showConfiguredOnly && !props.previewMode && counts.configured === 0;
+    props.showConfiguredOnly &&
+    !props.previewMode &&
+    counts.configured === 0 &&
+    !paths.some((path) => hasPendingValue(path, props.editedValues));
   if (shown.length === 0 || hiddenByFilter || hiddenByConfigured) return null;
   const label = serviceLabel(service, localize);
   return (

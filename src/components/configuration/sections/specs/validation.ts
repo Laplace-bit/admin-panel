@@ -1,6 +1,12 @@
 import { EModelEndpoint, normalizeEndpointName } from 'librechat-data-provider';
 import type * as t from '@/types';
-import { isConfigRecord, getKeyedCollection, isConfigValueEqual, trimmedText } from '@/utils';
+import {
+  getEntryKey,
+  trimmedText,
+  isConfigRecord,
+  isConfigValueEqual,
+  getKeyedCollection,
+} from '@/utils';
 
 export const SPEC_LIST_PATH = 'modelSpecs.list';
 
@@ -176,20 +182,38 @@ function baselineProblems(baseline: t.ConfigValue[]): Set<string> {
 }
 
 /**
+ * Whether the save pipeline reports a name problem itself. It keys entries by
+ * the name as written: it flags an entry without one and a new or renamed
+ * entry taking an exact name already used, but not a blank (whitespace-only)
+ * name or names that only differ by surrounding spaces, which
+ * `validateSpecs` compares trimmed.
+ */
+function isPipelineNameProblem(
+  problem: t.SpecProblem,
+  rawName: string | undefined,
+  firstIndex: ReadonlyMap<string, number>,
+): boolean {
+  if (problem.field !== 'name') return false;
+  if (problem.code === 'required') return rawName === undefined;
+  if (problem.code !== 'spec_duplicate_name' || rawName === undefined) return false;
+  return (firstIndex.get(rawName) ?? problem.index) < problem.index;
+}
+
+/**
  * Save-blocking issues of a pending spec list, for the save pipeline (WS1):
  * the errors of `validateSpecs`, at the spec's position in the pending list.
  * A problem a spec already had and that the admin hasn't touched (a
  * librechat.yaml spec LibreChat serves as it is) doesn't block an unrelated
- * edit; added and changed specs must be complete. A missing or repeated name
- * is left out (the pipeline itself reports an entry without its key, and a
- * new or renamed entry taking a used name), and an entry is named by its
- * name when that is unique.
+ * edit; added and changed specs must be complete. Name problems the pipeline
+ * reports itself are left out, and an entry is named by its name when that
+ * is unique.
  */
 export function specListIssues(changeSet: t.ConfigChangeSet): t.ConfigIssue[] {
   const pending = changeSet.collections.find(
     (collection) => collection.collection.path === SPEC_LIST_PATH,
   );
-  if (!pending || !getKeyedCollection(SPEC_LIST_PATH)) return [];
+  const collection = getKeyedCollection(SPEC_LIST_PATH);
+  if (!pending || !collection) return [];
   const { items, edit } = pending;
   const before = baselineProblems(edit.baseline);
   const isUntouched = (problem: t.SpecProblem): boolean => {
@@ -201,12 +225,17 @@ export function specListIssues(changeSet: t.ConfigChangeSet): t.ConfigIssue[] {
     );
   };
   const names = new Map<string, number>();
-  for (const item of items) {
+  const rawNames = items.map((item) => getEntryKey(item, collection.key));
+  const firstIndex = new Map<string, number>();
+  items.forEach((item, index) => {
     const name = isConfigRecord(item) ? trimmedText(item.name) : '';
     if (name) names.set(name, (names.get(name) ?? 0) + 1);
-  }
+    const raw = rawNames[index];
+    if (raw !== undefined && !firstIndex.has(raw)) firstIndex.set(raw, index);
+  });
   return validateSpecs(items, { knownEndpoints: new Set() })
-    .filter((problem) => problem.level === 'error' && problem.field !== 'name')
+    .filter((problem) => problem.level === 'error')
+    .filter((problem) => !isPipelineNameProblem(problem, rawNames[problem.index], firstIndex))
     .filter((problem) => !isUntouched(problem))
     .map((problem): t.ConfigIssue => {
       const spec = items[problem.index];

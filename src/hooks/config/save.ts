@@ -24,6 +24,7 @@ import { TERMS_NOT_ACCEPTED_ISSUE, TERMS_NOT_ACCEPTED_CODE } from '@/constants';
 import { applyConfigChangesFn, resetBaseConfigFn } from '@/server';
 import { describeIssues } from '@/components/configuration/issues';
 import { hasPathOverlap } from '@/components/configuration/counts';
+import { labelForPath } from '@/components/configuration/meta';
 import { useLocalize } from '../useLocalize';
 
 function toTargetRef(target: t.WriteTarget): t.WriteTargetRef {
@@ -97,6 +98,7 @@ export function useConfigSave({
     collectionEdits,
     editBaselines,
     visibilityEdits,
+    renameEdits,
   } = edits;
   const isEditingScope = editingScope !== undefined;
 
@@ -360,9 +362,17 @@ export function useConfigSave({
       asRecord(baseActiveConfigValues?.mcpServers) ?? {},
       mcpEdits,
       fallback,
+      renameEdits,
     );
     if (mcpErrors.length === 0) return null;
-    const { entryKey, missingField } = mcpErrors[0];
+    const { entryKey, missingField, renamedFrom } = mcpErrors[0];
+    if (renamedFrom !== undefined) {
+      return localize('com_config_mcp_missing_secret_for_rename', {
+        entry: entryKey,
+        from: renamedFrom,
+        field: labelForPath(`mcpServers.{}.${missingField}`, localize),
+      });
+    }
     if (missingField === ADMIN_API_KEY_FIELD) {
       return localize('com_config_mcp_missing_api_key', { entry: entryKey });
     }
@@ -373,6 +383,7 @@ export function useConfigSave({
     configValues,
     yamlMcpServers,
     baseActiveConfigValues,
+    renameEdits,
     localize,
   ]);
 

@@ -1,7 +1,7 @@
 import '@/locales/i18n';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, within } from '@testing-library/react';
-import { renderSections } from '@/test/sections';
+import { renderSections, tabSections } from '@/test/sections';
 
 const STORAGE = ['fileStrategy', 'fileStrategies', 'cloudfront'];
 
@@ -18,6 +18,20 @@ describe('StorageRenderer', () => {
     );
     expect(screen.getByText(/No setup needed/)).toBeInTheDocument();
     expect(screen.getByText(/CloudFront isn't in use/)).toBeInTheDocument();
+  });
+
+  it('lists a file type a newer schema adds, and per-type keys no schema knows', () => {
+    const avatar = tabSections(['fileStrategies'])[0].fields.find((f) => f.key === 'avatar')!;
+    renderSections({
+      sections: STORAGE,
+      yaml: { fileStrategies: { video: 's3', legacy: 'local' } },
+      extraFields: {
+        fileStrategies: [{ ...avatar, key: 'video', path: 'fileStrategies.video' }],
+      },
+    });
+    const group = document.getElementById('section-fileStrategies')!.closest('section')!;
+    expect(within(group).getByLabelText(/video/i)).toBeInTheDocument();
+    expect(within(group).getByText('legacy')).toBeInTheDocument();
   });
 
   it('confirms a backend change with what it needs before staging it', () => {

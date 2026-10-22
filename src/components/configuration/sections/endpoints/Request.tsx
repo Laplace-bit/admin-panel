@@ -136,8 +136,13 @@ export function TagListField({
   );
 }
 
-function isTextInput(element: EventTarget | null): element is HTMLInputElement {
-  return element instanceof HTMLInputElement && element.type === 'text';
+/** A header's value input (never its name): the only place a placeholder goes. */
+function isHeaderValueInput(element: EventTarget | null): element is HTMLInputElement {
+  return (
+    element instanceof HTMLInputElement &&
+    element.type === 'text' &&
+    element.dataset.kvPart === 'value'
+  );
 }
 
 /** Types `text` into a React-controlled input at its cursor, as if the admin had typed it. */
@@ -177,7 +182,7 @@ export function HeaderPlaceholders({ children }: { children: ReactNode }) {
   return (
     <div
       onFocusCapture={(event) => {
-        if (isTextInput(event.target)) lastInputRef.current = event.target;
+        if (isHeaderValueInput(event.target)) lastInputRef.current = event.target;
       }}
     >
       {children}

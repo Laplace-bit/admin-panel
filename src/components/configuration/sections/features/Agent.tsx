@@ -1,4 +1,4 @@
-import { useContext, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { ButtonGroup } from '@clickhouse/click-ui';
 import type * as t from '@/types';
 import { useLocalize, useFieldStates, useValuesScope, usePendingVisibility } from '@/hooks';
@@ -21,6 +21,8 @@ const PLACED_KEYS: ReadonlySet<string> = new Set([
   ENABLED_KEY,
   ...MODES.flatMap((mode) => MEMORY_AGENT_KEYS[mode]),
 ]);
+/** No definition: nothing pressed. An undefined `selected` would leave the group tracking clicks itself. */
+const NO_MODE = '';
 
 function Note({ tone = 'muted', children }: t.AgentNoteProps) {
   return (
@@ -61,6 +63,11 @@ export function MemoryAgent({ field, ...props }: t.MemoryAgentProps) {
   const states = useFieldStates(paths);
   const [chosen, setChosen] = useState<t.MemoryAgentMode | undefined>(undefined);
   const [blocked, setBlocked] = useState(false);
+  /** A definition chosen without values yet belongs to its edit session: Discard or another scope forgets it. */
+  useEffect(() => {
+    setChosen(undefined);
+    setBlocked(false);
+  }, [props.editSessionId, scope?.name]);
 
   const hidden = new Set(
     children
@@ -161,7 +168,7 @@ export function MemoryAgent({ field, ...props }: t.MemoryAgentProps) {
             id={modeId}
             aria-label={localize('com_config_features_memory_agent_mode')}
             className="max-w-full self-start"
-            selected={mode}
+            selected={mode ?? NO_MODE}
             options={MODES.map((value) => ({
               value,
               label: localize(`com_config_features_memory_mode_${value}`),

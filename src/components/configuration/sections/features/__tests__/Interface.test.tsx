@@ -58,6 +58,19 @@ describe('InterfaceRenderer', () => {
     expect(groupHeadings()).toEqual(['Retention']);
   });
 
+  it('keeps the group (and flat object) of a pending edit under "Set values only"', () => {
+    renderSection(InterfaceRenderer, {
+      section: 'interface',
+      edited: {
+        'interface.retentionMode': 'all',
+        'interface.privacyPolicy.externalUrl': 'https://example.com/privacy',
+      },
+      props: { showConfiguredOnly: true },
+    });
+    expect(groupHeadings()).toEqual(['Onboarding & legal', 'Retention']);
+    expect(screen.getByLabelText('Privacy policy URL')).toHaveValue('https://example.com/privacy');
+  });
+
   it('marks a group as set when librechat.yaml sets one of its settings', () => {
     renderSection(InterfaceRenderer, {
       section: 'interface',

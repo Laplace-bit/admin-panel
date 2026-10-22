@@ -53,10 +53,12 @@ function renderSpecs(
     onChange = vi.fn(),
     data,
     collectionEdits = {},
+    showConfiguredOnly,
   }: {
     onChange?: t.FieldRendererProps['onChange'];
     data?: t.ConfigValuesData;
     collectionEdits?: t.CollectionEdits;
+    showConfiguredOnly?: boolean;
   } = {},
 ) {
   const values = data ?? valuesDataFixture(baseLayersFixture());
@@ -82,6 +84,7 @@ function renderSpecs(
       onResetField={vi.fn()}
       onDiscardField={vi.fn()}
       permissions={{ canView: true, canEdit: true, canAssign: true }}
+      showConfiguredOnly={showConfiguredOnly}
     />
   );
   return { onChange, ...render(wrap(ui)) };
@@ -259,6 +262,73 @@ describe('ModelSpecsRenderer', () => {
     expect(within(card).getByText(/com_config_issue_spec_unknown_endpoint/)).toBeInTheDocument();
   });
 
+  it('keeps a new spec\'s required fields under "Set values only"', () => {
+    renderSpecs({ list: [...SPECS, {}] }, { showConfiguredOnly: true });
+    const card = document.querySelectorAll<HTMLElement>('[data-entry-card]')[2];
+    fireEvent.click(within(card).getAllByRole('button', { expanded: false })[0]);
+    for (const id of ['label', 'name', 'preset-endpoint', 'preset-model']) {
+      expect(document.getElementById(`modelSpecs-list-2-${id}`)).toBeInTheDocument();
+    }
+    expect(document.getElementById('modelSpecs-list-2-description')).toBeNull();
+    const saved = document.querySelectorAll<HTMLElement>('[data-entry-card]')[0];
+    fireEvent.click(within(saved).getAllByRole('button', { expanded: false })[0]);
+    expect(document.getElementById('modelSpecs-list-0-preset-model')).toBeInTheDocument();
+    expect(document.getElementById('modelSpecs-list-0-description')).toBeNull();
+  });
+
+  it('warns about renaming a spec against the name it was saved with, after an earlier save', () => {
+    const spec = (name: string): t.ConfigRecord => ({
+      name,
+      label: 'Spec',
+      preset: { endpoint: 'openAI', model: 'gpt-4o' },
+    });
+    const savedAs = (name: string) =>
+      valuesDataFixture(
+        baseLayersFixture(
+          baseConfigFixture({ dbOverrides: { modelSpecs: { list: [spec(name)] } } }),
+        ),
+      );
+    const ui = (list: t.ConfigRecord[], data: t.ConfigValuesData, edits: t.CollectionEdits) => (
+      <CollectionEditsContext.Provider value={edits}>
+        <ConfigValuesProvider value={data}>
+          <ModelSpecsRenderer
+            fields={specFields}
+            parentPath="modelSpecs"
+            parentValue={{ list }}
+            getValue={(path, fallback) => (path === 'modelSpecs.list' ? list : fallback)}
+            onChange={vi.fn()}
+            onResetField={vi.fn()}
+            onDiscardField={vi.fn()}
+            permissions={{ canView: true, canEdit: true, canAssign: true }}
+          />
+        </ConfigValuesProvider>
+      </CollectionEditsContext.Provider>
+    );
+    const expand = () => {
+      const toggle = document.querySelector<HTMLButtonElement>(
+        '[data-entry-card] button[aria-expanded="false"]',
+      );
+      if (toggle) fireEvent.click(toggle);
+    };
+    const renamedFrom = (identity: string): t.CollectionEdits => ({
+      'modelSpecs.list': {
+        baseline: [spec(identity)],
+        origins: [{ identity, baseline: spec(identity) }],
+      },
+    });
+    const { rerender } = render(ui([spec('a')], savedAs('a'), {}));
+    expand();
+    rerender(ui([spec('b')], savedAs('a'), renamedFrom('a')));
+    expand();
+    expect(screen.getByText('com_config_specs_rename_warning {"name":"a"}')).toBeInTheDocument();
+    rerender(ui([spec('b')], savedAs('b'), {}));
+    expand();
+    expect(screen.queryByText(/com_config_specs_rename_warning/)).toBeNull();
+    rerender(ui([spec('c')], savedAs('b'), renamedFrom('b')));
+    expand();
+    expect(screen.getByText('com_config_specs_rename_warning {"name":"b"}')).toBeInTheDocument();
+  });
+
   it('shows the inherited list read-only in a profile until it is customized', () => {
     const base = baseConfigFixture({ dbOverrides: { modelSpecs: { list: SPECS } } });
     const data = valuesDataFixture(scopeLayersFixture(undefined, base));
@@ -277,6 +347,34 @@ describe('ModelSpecsRenderer', () => {
     fireEvent.click(screen.getByRole('button', { name: /com_config_specs_chip_remove/ }));
     expect(onChange).not.toHaveBeenCalled();
     expect(screen.getByText('com_config_ctl_clear_unavailable')).toBeInTheDocument();
+  });
+
+  it('clears the agent ID when an agents spec moves to another endpoint', () => {
+    const agent: t.ConfigRecord = {
+      name: 'helper',
+      label: 'Helper',
+      preset: { endpoint: 'agents', agent_id: 'agent_1' },
+    };
+    const { onChange } = renderSpecs({ list: [agent] });
+    fireEvent.click(document.querySelector('[data-entry-card] button[aria-expanded="false"]')!);
+    expect(document.getElementById('modelSpecs-list-0-preset-agent_id')).not.toBeNull();
+    fireEvent.change(document.getElementById('modelSpecs-list-0-preset-endpoint')!, {
+      target: { value: 'openAI' },
+    });
+    expect(onChange).toHaveBeenLastCalledWith('modelSpecs.list.0', {
+      ...agent,
+      preset: { endpoint: 'openAI' },
+    });
+  });
+
+  it('keeps an agent ID a non-agents spec still stores visible, so it can be removed', () => {
+    renderSpecs({
+      list: [
+        { name: 'x', label: 'X', preset: { endpoint: 'openAI', model: 'm', agent_id: 'old' } },
+      ],
+    });
+    fireEvent.click(document.querySelector('[data-entry-card] button[aria-expanded="false"]')!);
+    expect(document.getElementById('modelSpecs-list-0-preset-agent_id')).not.toBeNull();
   });
 
   it('offers an Anthropic spec only Anthropic parameters', () => {

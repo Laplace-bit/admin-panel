@@ -33,6 +33,18 @@ describe('selectedServices', () => {
     expect(views[0].optionKeys).toEqual(['tavilySearchOptions', 'tavilyScraperOptions']);
   });
 
+  it("adds the settings of a used service's other roles to its view, without the role", () => {
+    const [tavily] = selectedServices({ providers: 'tavily' });
+    expect(tavily.roles).toEqual(['providers']);
+    expect(tavily.credentials.map((credential) => credential.key)).toEqual([
+      'tavilyApiKey',
+      'tavilySearchUrl',
+      'tavilyExtractUrl',
+    ]);
+    expect(tavily.optionKeys).toEqual(['tavilySearchOptions', 'tavilyScraperOptions']);
+    expect(otherServices([tavily]).map((view) => view.value)).not.toContain('tavily');
+  });
+
   it('lists every other service once for "Show other services"', () => {
     const others = otherServices(selectedServices({ providers: 'serper' }));
     expect(others.map((view) => view.value)).toEqual([
@@ -70,6 +82,16 @@ describe('WebSearchRenderer', () => {
     expect(heading(/^Firecrawl/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Hide other services' }));
     expect(screen.queryByRole('heading', { name: /^Firecrawl/ })).not.toBeInTheDocument();
+  });
+
+  it('keeps a service with only a pending setting under "Set values only"', () => {
+    renderSection(WebSearchRenderer, {
+      section: 'webSearch',
+      yaml: { webSearch: { searchProvider: 'serper' } },
+      edited: { 'webSearch.serperApiKey': 'sk-typed' },
+      props: { showConfiguredOnly: true },
+    });
+    expect(heading(/^Serper/)).toBeInTheDocument();
   });
 
   it('masks a typed key and says it will be stored encrypted', () => {
