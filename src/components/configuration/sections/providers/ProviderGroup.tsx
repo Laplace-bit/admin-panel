@@ -53,6 +53,7 @@ export function ProviderGroup({
   countBadge,
   before,
   after,
+  hiddenKeys,
   ...rendererProps
 }: t.ProviderGroupSectionProps) {
   const localize = useLocalize();
@@ -73,7 +74,8 @@ export function ProviderGroup({
   const overrides = dbOverridePaths
     ? countConfigured(fields, providerPath, dbOverridePaths, true).configured
     : 0;
-  const hasContent = fields.length > 0 || before != null || after != null;
+  const rowFields = hiddenKeys ? fields.filter((field) => !hiddenKeys.has(field.key)) : fields;
+  const hasContent = rowFields.length > 0 || before != null || after != null;
   if (!hasContent) return null;
   if (rowFilter && !paths.some((path) => isRowVisible(rowFilter, path))) return null;
   if (
@@ -85,14 +87,14 @@ export function ProviderGroup({
     return null;
   }
 
-  const flat = flattenedObject(group);
+  const flat = flattenedObject({ def, fields: rowFields });
   const parentValue = isConfigRecord(providerValue) ? providerValue : {};
   const summary = isExpanded
     ? undefined
     : (summaryOverride ??
       formatSummary(
         summarizeFields(
-          fields,
+          rowFields,
           providerPath,
           createSummaryReader({
             providerPath,
@@ -136,7 +138,7 @@ export function ProviderGroup({
       </>
     );
   } else {
-    body = rowsOf(fields, def.pairs).map((run) =>
+    body = rowsOf(rowFields, def.pairs).map((run) =>
       run.pair ? (
         <div key={run.fields[0].key} className="provider-pair">
           {run.fields.map((field) => (

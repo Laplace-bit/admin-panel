@@ -483,6 +483,29 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     expect(within(card('vault-kb')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
   });
 
+  it('stops asking for a stored secret once the renamed server no longer uses that authentication', async () => {
+    const vault: t.ConfigRecord = {
+      vault: {
+        type: 'streamable-http',
+        url: 'https://mcp.vault.dev/mcp',
+        oauth: { client_id: 'vault-id', client_secretPreview: 'sec...1234' },
+      },
+    };
+    render(<Harness extra={vault} />);
+    openMenu('vault');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:vault' });
+    fireEvent.change(input, { target: { value: 'vault-kb' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(
+      within(card('vault-kb')).getByText('com_config_mcp_duplicate_secrets'),
+    ).toBeInTheDocument();
+    act(() => edits.handleDiscardField('mcpServers.vault-kb.oauth.client_id'));
+    expect(within(card('vault-kb')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
+  });
+
   it('drops the rename record when the renamed server is deleted, and brings it back with Undo', async () => {
     render(<Harness />);
     openMenu('acme');
@@ -501,6 +524,56 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     const ghost = document.querySelector('[data-mcp-deleted="acme"]') as HTMLElement;
     fireEvent.click(within(ghost).getByRole('button'));
     expect(edits.renameEdits).toEqual({ 'mcpServers.acme-docs': 'mcpServers.acme' });
+  });
+
+  it('forgets the Undo of a deleted rename once the edit session ends', async () => {
+    render(<Harness />);
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:acme' });
+    fireEvent.change(input, { target: { value: 'acme-docs' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    openMenu('acme-docs');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_delete'));
+    });
+    act(() => edits.handleDiscard());
+    expect(edits.editedValues).toEqual({});
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_delete'));
+    });
+    const ghost = document.querySelector('[data-mcp-deleted="acme"]') as HTMLElement;
+    fireEvent.click(within(ghost).getByRole('button'));
+    expect(edits.editedValues).toEqual({});
+    expect(edits.renameEdits).toEqual({});
+    act(() => edits.handleFieldChange('mcpServers.acme-docs.url', 'https://other.dev/mcp'));
+    expect(document.querySelector('[data-mcp-server="acme-docs"]')).toBeInTheDocument();
+    expect(within(card('acme-docs')).queryByText('com_config_mcp_renamed_from:acme')).toBeNull();
+  });
+
+  it('forgets a rename the change review reverted, so a new server of that name is not it', async () => {
+    render(<Harness />);
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:acme' });
+    fireEvent.change(input, { target: { value: 'acme-docs' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    act(() => {
+      for (const path of Object.keys(edits.editedValues)) edits.handleDiscardField(path);
+      edits.handleRenameEntry('mcpServers.acme-docs', null);
+    });
+    act(() => edits.handleFieldChange('mcpServers.acme-docs.url', 'https://other.dev/mcp'));
+    expect(within(card('acme-docs')).queryByText('com_config_mcp_renamed_from:acme')).toBeNull();
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_delete'));
+    });
+    expect(document.querySelector('[data-mcp-deleted="acme"]')).toBeInTheDocument();
   });
 
   it('rejects a rename onto an existing name and keeps the input open', async () => {
