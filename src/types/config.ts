@@ -163,6 +163,9 @@ export interface SelectOption {
 
 export type KVValueType = 'string' | 'number' | 'boolean' | 'json';
 
+/** The half of a key/value pair an input edits. */
+export type KVPart = 'key' | 'value';
+
 export interface KeyValuePair {
   [k: string]: string | KVValueType | undefined;
   key: string;
