@@ -9,6 +9,7 @@ import {
   scopeLayersFixture,
   valuesDataFixture,
 } from '@/test/layers';
+import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { ModelSpecsRenderer } from '../ModelSpecsRenderer';
 import { extractSchemaTree } from '@/server/config';
@@ -202,6 +203,59 @@ describe('ModelSpecsRenderer', () => {
     fireEvent.click(within(saved).getAllByRole('button', { expanded: false })[0]);
     expect(document.getElementById('modelSpecs-list-0-preset-model')).toBeInTheDocument();
     expect(document.getElementById('modelSpecs-list-0-description')).toBeNull();
+  });
+
+  it('warns about renaming a spec against the name it was saved with, after an earlier save', () => {
+    const spec = (name: string): t.ConfigRecord => ({
+      name,
+      label: 'Spec',
+      preset: { endpoint: 'openAI', model: 'gpt-4o' },
+    });
+    const savedAs = (name: string) =>
+      valuesDataFixture(
+        baseLayersFixture(
+          baseConfigFixture({ dbOverrides: { modelSpecs: { list: [spec(name)] } } }),
+        ),
+      );
+    const ui = (list: t.ConfigRecord[], data: t.ConfigValuesData, edits: t.CollectionEdits) => (
+      <CollectionEditsContext.Provider value={edits}>
+        <ConfigValuesProvider value={data}>
+          <ModelSpecsRenderer
+            fields={specFields}
+            parentPath="modelSpecs"
+            parentValue={{ list }}
+            getValue={(path, fallback) => (path === 'modelSpecs.list' ? list : fallback)}
+            onChange={vi.fn()}
+            onResetField={vi.fn()}
+            onDiscardField={vi.fn()}
+            permissions={{ canView: true, canEdit: true, canAssign: true }}
+          />
+        </ConfigValuesProvider>
+      </CollectionEditsContext.Provider>
+    );
+    const expand = () => {
+      const toggle = document.querySelector<HTMLButtonElement>(
+        '[data-entry-card] button[aria-expanded="false"]',
+      );
+      if (toggle) fireEvent.click(toggle);
+    };
+    const renamedFrom = (identity: string): t.CollectionEdits => ({
+      'modelSpecs.list': {
+        baseline: [spec(identity)],
+        origins: [{ identity, baseline: spec(identity) }],
+      },
+    });
+    const { rerender } = render(ui([spec('a')], savedAs('a'), {}));
+    expand();
+    rerender(ui([spec('b')], savedAs('a'), renamedFrom('a')));
+    expand();
+    expect(screen.getByText('com_config_specs_rename_warning {"name":"a"}')).toBeInTheDocument();
+    rerender(ui([spec('b')], savedAs('b'), {}));
+    expand();
+    expect(screen.queryByText(/com_config_specs_rename_warning/)).toBeNull();
+    rerender(ui([spec('c')], savedAs('b'), renamedFrom('b')));
+    expand();
+    expect(screen.getByText('com_config_specs_rename_warning {"name":"b"}')).toBeInTheDocument();
   });
 
   it('shows the inherited list read-only in a profile until it is customized', () => {

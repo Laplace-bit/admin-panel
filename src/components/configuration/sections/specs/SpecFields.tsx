@@ -1,9 +1,10 @@
-import { useId, useState } from 'react';
+import { useContext, useId } from 'react';
 import { ButtonGroup } from '@clickhouse/click-ui';
 import type * as t from '@/types';
+import { problemAt, specEndpoint, SPEC_LIST_PATH } from './validation';
+import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
 import { useLocalize, useOptionSources } from '@/hooks';
 import { endpointGroups, mcpGroups } from './groups';
-import { problemAt, specEndpoint } from './validation';
 import { TextField } from '../../fields/TextField';
 import { describeField, labelForPath } from '../../meta';
 import { GroupedSelect } from './GroupedSelect';
@@ -95,17 +96,30 @@ export function LabelField({ field, spec, index, path, onChange, disabled }: t.S
   );
 }
 
+/**
+ * The name a spec was loaded with in this edit session: its pending edit's
+ * origin, or its current name while the list has no pending edit (so it
+ * follows saves, Discard and scope changes). Undefined for a spec added since.
+ */
+function useLoadedName(spec: t.ConfigRecord, index: number): string | undefined {
+  const edit = useContext(CollectionEditsContext)[SPEC_LIST_PATH];
+  return edit ? edit.origins[index]?.identity : textOf(spec.name);
+}
+
 /** Name*: the id conversations and `?spec=` links use; renaming a saved spec says what it breaks. */
 export function NameField({ field, spec, index, path, onChange, disabled }: t.SpecFieldProps) {
   const localize = useLocalize();
   const { problems, savedNames } = useSpecList();
   const isNew = useIsNewSpec(spec);
-  const [initialName] = useState(() => textOf(spec.name));
+  const loadedName = useLoadedName(spec, index);
   const dataPath = `${path}.name`;
   const { label, description } = useRowLabel(dataPath, field);
   const problem = problemAt(problems, index, 'name');
   const renamed =
-    initialName !== '' && savedNames.has(initialName) && textOf(spec.name) !== initialName;
+    loadedName !== undefined &&
+    loadedName !== '' &&
+    savedNames.has(loadedName) &&
+    textOf(spec.name) !== loadedName;
   const warningId = `${toFieldId(dataPath)}-rename`;
   return (
     <SpecFieldRow
@@ -128,7 +142,7 @@ export function NameField({ field, spec, index, path, onChange, disabled }: t.Sp
           />
           {renamed && (
             <p id={warningId} className="m-0 text-xs text-(--settings-warn-fg)">
-              {localize('com_config_specs_rename_warning', { name: initialName })}
+              {localize('com_config_specs_rename_warning', { name: loadedName })}
             </p>
           )}
         </>
