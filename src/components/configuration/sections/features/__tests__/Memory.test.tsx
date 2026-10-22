@@ -24,6 +24,34 @@ describe('MemoryRenderer: Enable memory', () => {
     expect(within(enableMemory()).getByRole('button', { name: 'Default (Off)' })).toBeVisible();
   });
 
+  it('defaults to on once a pending edit adds the first memory setting', () => {
+    renderSection(MemoryRenderer, {
+      section: 'memory',
+      edited: { 'memory.agent.provider': 'openAI' },
+    });
+    expect(within(enableMemory()).getByRole('button', { name: 'Default (On)' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('reads a stored disabled: true as Off when read only', () => {
+    renderSection(MemoryRenderer, {
+      section: 'memory',
+      yaml: YAML,
+      overrides: { memory: { disabled: true } },
+      props: { disabled: true },
+    });
+    const row = document.getElementById('memory-disabled') as HTMLElement;
+    expect(row).toHaveTextContent('Off');
+    expect(row).not.toHaveTextContent('On');
+  });
+
+  it('reads an unset memory.disabled as its inverted default when read only', () => {
+    renderSection(MemoryRenderer, { section: 'memory', yaml: YAML, props: { disabled: true } });
+    expect(document.getElementById('memory-disabled')).toHaveTextContent('Default (On)');
+  });
+
   it('writes the inverted value: Off stores disabled true, On stores disabled false', () => {
     const { onChange } = renderSection(MemoryRenderer, { section: 'memory', yaml: YAML });
     fireEvent.click(within(enableMemory()).getByRole('button', { name: 'Off' }));
@@ -106,6 +134,25 @@ describe('MemoryRenderer: memory agent', () => {
     );
     expect(onChange).not.toHaveBeenCalled();
     expect(screen.getByLabelText('Agent ID')).toBeInTheDocument();
+  });
+
+  it('switching back to the librechat.yaml ID after the inline agent was saved unhides the ID', () => {
+    const { onUnhideField, onChange, onHideField } = renderSection(MemoryRenderer, {
+      section: 'memory',
+      yaml: YAML,
+      overrides: { memory: { agent: { provider: 'openAI', model: 'gpt-4o-mini' } } },
+      tombstones: ['memory.agent.id'],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Existing agent' }));
+    expect(onUnhideField).toHaveBeenCalledWith('memory.agent.id');
+    expect(onChange).toHaveBeenCalledWith('memory.agent.provider', undefined);
+    expect(onChange).toHaveBeenCalledWith('memory.agent.model', undefined);
+    expect(onHideField).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Existing agent' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByLabelText('Agent ID')).toHaveValue('agent_yaml');
   });
 
   it('reads a stored tombstone as hidden and offers to revert the whole agent', () => {

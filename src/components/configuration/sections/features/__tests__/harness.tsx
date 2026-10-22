@@ -74,6 +74,7 @@ export function renderSection(Component: ComponentType<t.FieldRendererProps>, se
     onResetField: vi.fn(),
     onDiscardField: vi.fn(),
     onHideField: vi.fn(),
+    onUnhideField: vi.fn(),
   };
   const configuredPaths = new Set([...collectLeafPaths(yaml), ...collectLeafPaths(overrides)]);
   const filter = setup.filter ? createPathIndex(setup.filter) : null;
@@ -116,6 +117,10 @@ export function renderSection(Component: ComponentType<t.FieldRendererProps>, se
       onHideField: (path) => {
         spies.onHideField(path);
         setVisibility((prev) => ({ ...prev, [path]: 'hide' }));
+      },
+      onUnhideField: (path) => {
+        spies.onUnhideField(path);
+        setVisibility((prev) => ({ ...prev, [path]: 'unhide' }));
       },
       ...setup.props,
     };
