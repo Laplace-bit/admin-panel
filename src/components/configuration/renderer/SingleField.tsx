@@ -153,6 +153,12 @@ export function SingleFieldRenderer({
       onChange(path, undefined);
       return true;
     }
+    /** A domain allowlist is removed whole (D3): a pending own list is dropped, and the list beneath applies again. */
+    if (kind === 'domain-list' && hasPendingEdit) {
+      if (onDiscardField) onDiscardField(path);
+      else onChange(path, undefined);
+      return true;
+    }
     /** Emptying a list the layer beneath sets: it can't be emptied, and its earlier pending removals stay. */
     const keepsPendingList =
       isConfigured && !SHOWS_DEFAULT_CHOICE.has(kind) && Array.isArray(editedValues?.[path]);
