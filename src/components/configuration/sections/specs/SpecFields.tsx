@@ -1,5 +1,6 @@
 import { useContext, useId } from 'react';
 import { ButtonGroup } from '@clickhouse/click-ui';
+import { EModelEndpoint } from 'librechat-data-provider';
 import type * as t from '@/types';
 import { problemAt, specEndpoint, SPEC_LIST_PATH } from './validation';
 import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
@@ -249,7 +250,11 @@ export function GroupField({
   );
 }
 
-/** Endpoint*: a built-in provider or a custom endpoint; one the configuration lacks is flagged. */
+/**
+ * Endpoint*: a built-in provider or a custom endpoint; one the configuration
+ * lacks is flagged. Leaving the agents endpoint clears the agent ID, which
+ * only an agents spec uses (and shows).
+ */
 export function EndpointField({
   field,
   spec,
@@ -285,7 +290,12 @@ export function EndpointField({
           aria-describedby={
             problem?.level === 'warning' ? `${toFieldId(dataPath)}-warning` : undefined
           }
-          onChange={(next) => onPresetChange('endpoint', next)}
+          onChange={(next) => {
+            onPresetChange('endpoint', next);
+            if (next !== EModelEndpoint.agents && preset.agent_id !== undefined) {
+              onPresetChange('agent_id', undefined);
+            }
+          }}
         />
       }
     />

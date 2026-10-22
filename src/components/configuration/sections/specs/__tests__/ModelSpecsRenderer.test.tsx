@@ -278,6 +278,34 @@ describe('ModelSpecsRenderer', () => {
     expect(screen.getByText('com_config_ctl_clear_unavailable')).toBeInTheDocument();
   });
 
+  it('clears the agent ID when an agents spec moves to another endpoint', () => {
+    const agent: t.ConfigRecord = {
+      name: 'helper',
+      label: 'Helper',
+      preset: { endpoint: 'agents', agent_id: 'agent_1' },
+    };
+    const { onChange } = renderSpecs({ list: [agent] });
+    fireEvent.click(document.querySelector('[data-entry-card] button[aria-expanded="false"]')!);
+    expect(document.getElementById('modelSpecs-list-0-preset-agent_id')).not.toBeNull();
+    fireEvent.change(document.getElementById('modelSpecs-list-0-preset-endpoint')!, {
+      target: { value: 'openAI' },
+    });
+    expect(onChange).toHaveBeenLastCalledWith('modelSpecs.list.0', {
+      ...agent,
+      preset: { endpoint: 'openAI' },
+    });
+  });
+
+  it('keeps an agent ID a non-agents spec still stores visible, so it can be removed', () => {
+    renderSpecs({
+      list: [
+        { name: 'x', label: 'X', preset: { endpoint: 'openAI', model: 'm', agent_id: 'old' } },
+      ],
+    });
+    fireEvent.click(document.querySelector('[data-entry-card] button[aria-expanded="false"]')!);
+    expect(document.getElementById('modelSpecs-list-0-preset-agent_id')).not.toBeNull();
+  });
+
   it('offers an Anthropic spec only Anthropic parameters', () => {
     renderSpecs({ list: SPECS });
     const card = document.querySelectorAll<HTMLElement>('[data-entry-card]')[1];

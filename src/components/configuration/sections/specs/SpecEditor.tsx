@@ -221,6 +221,7 @@ export function SpecEditor({
           <ModelField {...presetProps} field={presetChildField('model')} />
         )}
         {isAgent && hasValue(preset.model) && presetRow('model')}
+        {!isAgent && hasValue(preset.agent_id) && presetRow('agent_id')}
         {ASSISTANT_ENDPOINTS.has(endpoint) && presetRow('assistant_id')}
         {presetRow('modelLabel')}
       </SpecGroup>
