@@ -420,6 +420,50 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     ).toBeInTheDocument();
   });
 
+  it('asks for a stored OAuth client secret again when a saved server is renamed', async () => {
+    const vault: t.ConfigRecord = {
+      vault: {
+        type: 'streamable-http',
+        url: 'https://mcp.vault.dev/mcp',
+        oauth: { client_id: 'vault-id', client_secretPreview: 'sec...1234' },
+      },
+    };
+    render(<Harness extra={vault} />);
+    openMenu('vault');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:vault' });
+    fireEvent.change(input, { target: { value: 'vault-kb' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(edits.editedValues).not.toHaveProperty('mcpServers.vault-kb.oauth.client_secretPreview');
+    expect(
+      within(card('vault-kb')).getByText('com_config_mcp_duplicate_secrets'),
+    ).toBeInTheDocument();
+    act(() => edits.handleFieldChange('mcpServers.vault-kb.oauth.client_secret', 'new-secret'));
+    expect(within(card('vault-kb')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
+  });
+
+  it('drops the rename record when the renamed server is deleted, and brings it back with Undo', async () => {
+    render(<Harness />);
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:acme' });
+    fireEvent.change(input, { target: { value: 'acme-docs' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(edits.renameEdits).toEqual({ 'mcpServers.acme-docs': 'mcpServers.acme' });
+    openMenu('acme-docs');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_delete'));
+    });
+    expect(edits.renameEdits).toEqual({});
+    const ghost = document.querySelector('[data-mcp-deleted="acme"]') as HTMLElement;
+    fireEvent.click(within(ghost).getByRole('button'));
+    expect(edits.renameEdits).toEqual({ 'mcpServers.acme-docs': 'mcpServers.acme' });
+  });
+
   it('rejects a rename onto an existing name and keeps the input open', async () => {
     render(<Harness />);
     openMenu('acme');
