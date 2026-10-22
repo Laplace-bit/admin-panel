@@ -80,7 +80,8 @@ export function MemoryAgent({ field, ...props }: t.MemoryAgentProps) {
     if (next !== 'id' && next !== 'inline') return;
     if (next === mode) return;
     const plan = planAgentSwitch(next, path, states, visibility, props.editedValues);
-    if (plan.hide.length > 0 && !props.onHideField) {
+    const cannotHide = plan.hide.length > 0 && !props.onHideField;
+    if (cannotHide || (plan.show.length > 0 && !props.onUnhideField)) {
       setBlocked(true);
       return;
     }
@@ -88,6 +89,7 @@ export function MemoryAgent({ field, ...props }: t.MemoryAgentProps) {
     for (const keyPath of [...plan.unhide, ...plan.discard]) props.onDiscardField?.(keyPath);
     for (const keyPath of plan.reset) props.onChange(keyPath, undefined);
     for (const keyPath of plan.hide) props.onHideField?.(keyPath);
+    for (const keyPath of plan.show) props.onUnhideField?.(keyPath);
     setChosen(next);
   };
 

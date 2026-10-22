@@ -39,6 +39,8 @@ function listLabels(keys: string[], localize: t.LocalizeFn): string {
  * The server's transport (MCP-2). Switching drops every field the new
  * transport doesn't read, so nothing hidden is saved with the server; when
  * that removes saved settings, the switch waits for a confirmation inline.
+ * Only the chosen transport waits: what the switch removes is planned from
+ * the entry as it is when shown and confirmed, never from an older state.
  */
 export function TransportSelect({
   id,
@@ -59,24 +61,35 @@ export function TransportSelect({
   onSwitch: (plan: t.McpSwitchPlan) => void;
 }) {
   const localize = useLocalize();
-  const [pending, setPending] = useState<{ next: t.McpTransport; plan: t.McpSwitchPlan } | null>(
-    null,
-  );
+  const [waiting, setWaiting] = useState<t.McpTransport | null>(null);
   const noteId = `${id}-switch`;
+
+  /** The switch to `next` and whether it must wait (a lock, or saved settings it removes). */
+  const planFor = (next: t.McpTransport) => {
+    const plan = planTransportSwitch(entry, next, lower);
+    const waits = plan.locked.length > 0 || (plan.prune.length > 0 && confirmPrune);
+    return { plan, waits };
+  };
+
+  const pending = (() => {
+    if (waiting == null || waiting === transport) return null;
+    const { plan, waits } = planFor(waiting);
+    return waits ? { next: waiting, plan } : null;
+  })();
 
   const choose = (value: string) => {
     const next = value as t.McpTransport;
     if (next === transport) {
-      setPending(null);
+      setWaiting(null);
       return;
     }
-    const plan = planTransportSwitch(entry, next, lower);
-    if (plan.locked.length === 0 && (plan.prune.length === 0 || !confirmPrune)) {
-      setPending(null);
+    const { plan, waits } = planFor(next);
+    if (!waits) {
+      setWaiting(null);
       onSwitch(plan);
       return;
     }
-    setPending({ next, plan });
+    setWaiting(next);
   };
 
   const nextLabel = pending ? localize(transportLabelKey(pending.next)) : '';
@@ -109,7 +122,7 @@ export function TransportSelect({
                 htmlType="button"
                 type="secondary"
                 label={localize('com_ui_cancel')}
-                onClick={() => setPending(null)}
+                onClick={() => setWaiting(null)}
               />
               <Button
                 htmlType="button"
@@ -119,7 +132,7 @@ export function TransportSelect({
                 })}
                 onClick={() => {
                   onSwitch(pending.plan);
-                  setPending(null);
+                  setWaiting(null);
                 }}
               />
             </>

@@ -148,6 +148,8 @@ export interface MemoryAgentSwitch {
   reset: string[];
   /** Keys of the chosen definition hidden earlier in this edit: shown again. */
   unhide: string[];
+  /** Keys of the chosen definition the edit target already hides (a saved tombstone): unhidden. */
+  show: string[];
   /** Values typed for the other definition in this edit: dropped. */
   discard: string[];
 }

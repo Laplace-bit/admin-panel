@@ -119,7 +119,7 @@ export function DomainListField({
   const describedBy = [statusId, error ? errorId : undefined].filter(Boolean).join(' ');
 
   return (
-    <div className="flex w-full max-w-150 flex-col gap-2" id={id}>
+    <div className="flex w-full max-w-150 flex-col gap-2" id={disabled ? id : undefined}>
       <p
         id={statusId}
         className={cn(
@@ -179,6 +179,7 @@ export function DomainListField({
         <div className="flex items-start gap-2">
           <input
             ref={inputRef}
+            id={id}
             type="text"
             value={draft}
             inputMode="url"
