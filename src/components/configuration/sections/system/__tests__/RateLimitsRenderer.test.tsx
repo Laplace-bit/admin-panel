@@ -44,6 +44,18 @@ describe('RateLimitsRenderer', () => {
     expect(within(stt).queryByText(/librechat\.yaml/)).not.toBeInTheDocument();
   });
 
+  it('with "Set values only", lists only the limiters librechat.yaml sets', () => {
+    renderSections({
+      sections: ['rateLimits'],
+      yaml: { rateLimits: { fileUploads: { userMax: 20 } } },
+      showConfiguredOnly: true,
+    });
+    const table = screen.getByRole('table', { name: 'Rate limits' });
+    expect(within(table).getByRole('row', { name: /File uploads/ })).toBeInTheDocument();
+    expect(within(table).queryByRole('row', { name: /Agent events/ })).not.toBeInTheDocument();
+    expect(within(table).queryByRole('row', { name: /Speech to text/ })).not.toBeInTheDocument();
+  });
+
   it('lists schema content the table does not place as read-only rows', () => {
     const fields = sectionFields('rateLimits');
     const uploads = fields.find((field) => field.key === 'fileUploads')!;

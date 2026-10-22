@@ -1,9 +1,10 @@
 import { useContext } from 'react';
 import type * as t from '@/types';
-import { isConfigRecord, isRowVisible, getValueAtPath } from '@/utils';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
+import { isConfigRecord, getValueAtPath } from '@/utils';
 import { UnknownSettings } from '../../UnknownSettings';
 import { useLocalize, useYamlConfig } from '@/hooks';
+import { isRowShown } from '../files/FieldRow';
 import { RATE_LIMITERS } from '@/constants';
 import { toFieldId } from '../../renderer';
 import { labelForPath } from '../../meta';
@@ -104,62 +105,67 @@ function unmatchedFields(fields: t.SchemaField[]): t.SchemaField[] {
  * allowed per IP address and per user, and their window, from librechat.yaml
  * or LibreChat's defaults (which `.env` variables can change). LibreChat sets
  * its limiters from librechat.yaml when it starts, so the panel only shows them.
- * Schema content the table doesn't place follows as read-only rows.
+ * Schema content the table doesn't place follows as read-only rows. With
+ * "Set values only", a limiter librechat.yaml leaves unset is left out.
  */
-export function RateLimitsRenderer({ fields, parentValue, schemaDefaults }: t.FieldRendererProps) {
+export function RateLimitsRenderer(props: t.FieldRendererProps) {
+  const { fields, parentValue, schemaDefaults } = props;
   const localize = useLocalize();
   const rowFilter = useContext(RowFilterContext);
   const known = new Set(fields.map((field) => field.key));
   const limiters = RATE_LIMITERS.filter(
-    (limiter) => known.has(limiter.key) && isRowVisible(rowFilter, `${SECTION}.${limiter.key}`),
+    (limiter) =>
+      known.has(limiter.key) && isRowShown(rowFilter, `${SECTION}.${limiter.key}`, props),
   );
   const unmatched = unmatchedFields(fields);
   return (
     <>
-      <div
-        role="table"
-        aria-label={localize('com_config_section_rate_limits')}
-        className="flex flex-col py-1"
-      >
+      {limiters.length > 0 && (
         <div
-          role="row"
-          className="hidden grid-cols-[minmax(9rem,1.1fr)_1fr_1fr] gap-4 border-b border-(--cui-color-stroke-default) px-4 pb-2 text-xs font-medium text-(--cui-color-text-muted) sm:grid"
+          role="table"
+          aria-label={localize('com_config_section_rate_limits')}
+          className="flex flex-col py-1"
         >
-          <span role="columnheader">{localize('com_config_ratelimits_col_limit')}</span>
-          <span role="columnheader">{localize('com_config_ratelimits_col_ip')}</span>
-          <span role="columnheader">{localize('com_config_ratelimits_col_user')}</span>
-        </div>
-        {limiters.map((limiter) => {
-          const path = `${SECTION}.${limiter.key}`;
-          return (
-            <div
-              key={limiter.key}
-              role="row"
-              id={`section-${path}`}
-              className="grid grid-cols-2 gap-x-4 gap-y-1 border-b border-(--cui-color-stroke-default) px-4 py-2.5 text-sm last:border-b-0 sm:grid-cols-[minmax(9rem,1.1fr)_1fr_1fr]"
-            >
-              <span
-                role="rowheader"
-                className="col-span-2 font-medium text-(--cui-color-text-default) sm:col-span-1"
+          <div
+            role="row"
+            className="hidden grid-cols-[minmax(9rem,1.1fr)_1fr_1fr] gap-4 border-b border-(--cui-color-stroke-default) px-4 pb-2 text-xs font-medium text-(--cui-color-text-muted) sm:grid"
+          >
+            <span role="columnheader">{localize('com_config_ratelimits_col_limit')}</span>
+            <span role="columnheader">{localize('com_config_ratelimits_col_ip')}</span>
+            <span role="columnheader">{localize('com_config_ratelimits_col_user')}</span>
+          </div>
+          {limiters.map((limiter) => {
+            const path = `${SECTION}.${limiter.key}`;
+            return (
+              <div
+                key={limiter.key}
+                role="row"
+                id={`section-${path}`}
+                className="grid grid-cols-2 gap-x-4 gap-y-1 border-b border-(--cui-color-stroke-default) px-4 py-2.5 text-sm last:border-b-0 sm:grid-cols-[minmax(9rem,1.1fr)_1fr_1fr]"
               >
-                {labelForPath(path, localize)}
-              </span>
-              <span role="cell" className="flex flex-col gap-0.5">
-                <span className="text-xs text-(--cui-color-text-muted) sm:hidden">
-                  {localize('com_config_ratelimits_col_ip')}
+                <span
+                  role="rowheader"
+                  className="col-span-2 font-medium text-(--cui-color-text-default) sm:col-span-1"
+                >
+                  {labelForPath(path, localize)}
                 </span>
-                <LimitCell limiter={limiter} scope="ip" />
-              </span>
-              <span role="cell" className="flex flex-col gap-0.5">
-                <span className="text-xs text-(--cui-color-text-muted) sm:hidden">
-                  {localize('com_config_ratelimits_col_user')}
+                <span role="cell" className="flex flex-col gap-0.5">
+                  <span className="text-xs text-(--cui-color-text-muted) sm:hidden">
+                    {localize('com_config_ratelimits_col_ip')}
+                  </span>
+                  <LimitCell limiter={limiter} scope="ip" />
                 </span>
-                <LimitCell limiter={limiter} scope="user" />
-              </span>
-            </div>
-          );
-        })}
-      </div>
+                <span role="cell" className="flex flex-col gap-0.5">
+                  <span className="text-xs text-(--cui-color-text-muted) sm:hidden">
+                    {localize('com_config_ratelimits_col_user')}
+                  </span>
+                  <LimitCell limiter={limiter} scope="user" />
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
       {unmatched.length > 0 && (
         <YamlRows fields={unmatched} parentPath={SECTION} schemaDefaults={schemaDefaults} />
       )}
