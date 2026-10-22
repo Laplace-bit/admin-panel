@@ -19,6 +19,32 @@ describe('reconcileKeys', () => {
     ).toEqual(['x', 'y']);
   });
 
+  it('moves keys with their items when a list is reordered', () => {
+    const a = { name: 'a' };
+    const b = { name: 'b' };
+    const c = { name: 'c' };
+    expect(reconcileKeys([a, b, c], ['x', 'y', 'z'], [b, a, c], byName, createKey)).toEqual([
+      'y',
+      'x',
+      'z',
+    ]);
+    expect(reconcileKeys([a, b, c], ['x', 'y', 'z'], [c, a, b], byName, createKey)).toEqual([
+      'z',
+      'x',
+      'y',
+    ]);
+    const reloaded = [{ name: 'b' }, { name: 'a' }, c];
+    expect(reconcileKeys([a, b, c], ['x', 'y', 'z'], reloaded, byName, createKey)).toEqual([
+      'x',
+      'y',
+      'z',
+    ]);
+    expect(reconcileKeys(['a', 'b'], ['x', 'y'], ['b', 'c'], () => null, createKey)).toEqual([
+      'x',
+      'y',
+    ]);
+  });
+
   it('keeps the remaining keys when an item is removed, and makes a new key for an append', () => {
     const a = { name: 'a' };
     const b = { name: 'b' };

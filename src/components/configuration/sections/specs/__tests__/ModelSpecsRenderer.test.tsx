@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { configSchema } from 'librechat-data-provider';
 import { render, screen, fireEvent, within } from '@testing-library/react';
@@ -304,6 +305,45 @@ describe('ModelSpecsRenderer', () => {
     });
     fireEvent.click(document.querySelector('[data-entry-card] button[aria-expanded="false"]')!);
     expect(document.getElementById('modelSpecs-list-0-preset-agent_id')).not.toBeNull();
+  });
+
+  it('keeps an expanded spec open on the spec itself when it is moved', () => {
+    function Stateful() {
+      const [list, setList] = useState<t.ConfigValue>(SPECS);
+      return (
+        <ConfigValuesProvider value={valuesDataFixture(baseLayersFixture())}>
+          <ModelSpecsRenderer
+            fields={specFields}
+            parentPath="modelSpecs"
+            parentValue={{ list }}
+            getValue={(path, fallback) => (path === 'modelSpecs.list' ? list : fallback)}
+            onChange={(path, value) => {
+              if (path === 'modelSpecs.list') setList(value);
+            }}
+            onResetField={vi.fn()}
+            onDiscardField={vi.fn()}
+            permissions={{ canView: true, canEdit: true, canAssign: true }}
+          />
+        </ConfigValuesProvider>
+      );
+    }
+    render(<Stateful />);
+    const toggle = (index: number) =>
+      document
+        .querySelectorAll<HTMLElement>('[data-entry-card]')
+        [index].querySelector<HTMLButtonElement>('button[aria-expanded]') as HTMLButtonElement;
+    fireEvent.click(toggle(1));
+    expect(document.getElementById('modelSpecs-list-1-preset-model')).toHaveValue(
+      'claude-sonnet-4-5',
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'com_config_ctl_entry_move_up {"name":"Claude"}' }),
+    );
+    expect(toggle(0)).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle(1)).toHaveAttribute('aria-expanded', 'false');
+    expect(document.getElementById('modelSpecs-list-0-preset-model')).toHaveValue(
+      'claude-sonnet-4-5',
+    );
   });
 
   it('offers an Anthropic spec only Anthropic parameters', () => {
