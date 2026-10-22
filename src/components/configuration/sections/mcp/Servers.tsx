@@ -4,11 +4,11 @@ import { isProcessMCPServerConfig } from 'librechat-data-provider';
 import type * as t from '@/types';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
+import { previewedSecret, storedSecrets, usesSecret } from './validation';
 import { getValueAtPath, isConfigRecord, isRowVisible } from '@/utils';
 import { McpDeletedRow, McpHiddenRow, McpServerCard } from './Card';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { INSPECTOR_DERIVED, transportOf } from './transport';
-import { previewedSecret, storedSecrets } from './validation';
 import { copyName, serverNameProblem } from './names';
 import { DecorativeIcon } from '@/components/shared';
 import { buildServerList, leafEntries } from './list';
@@ -317,11 +317,11 @@ export function McpServersRenderer({
     setFocusKey(name);
   };
 
-  /** The secrets a duplicate still needs entered (none once each one has a value). */
+  /** The secrets a duplicate still needs entered (none once each one has a value, or its authentication is gone). */
   const missingSecretsOf = (key: string, value: t.ConfigRecord): string[] =>
     (reenter[key] ?? []).filter((secret) => {
       const current = getValueAtPath(value, secret);
-      return typeof current !== 'string' || current === '';
+      return usesSecret(value, secret) && (typeof current !== 'string' || current === '');
     });
 
   const handleCreate = (name: string, entry: t.ConfigRecord) => {

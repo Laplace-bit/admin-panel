@@ -483,6 +483,29 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     expect(within(card('vault-kb')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
   });
 
+  it('stops asking for a stored secret once the renamed server no longer uses that authentication', async () => {
+    const vault: t.ConfigRecord = {
+      vault: {
+        type: 'streamable-http',
+        url: 'https://mcp.vault.dev/mcp',
+        oauth: { client_id: 'vault-id', client_secretPreview: 'sec...1234' },
+      },
+    };
+    render(<Harness extra={vault} />);
+    openMenu('vault');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:vault' });
+    fireEvent.change(input, { target: { value: 'vault-kb' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(
+      within(card('vault-kb')).getByText('com_config_mcp_duplicate_secrets'),
+    ).toBeInTheDocument();
+    act(() => edits.handleDiscardField('mcpServers.vault-kb.oauth.client_id'));
+    expect(within(card('vault-kb')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
+  });
+
   it('drops the rename record when the renamed server is deleted, and brings it back with Undo', async () => {
     render(<Harness />);
     openMenu('acme');
