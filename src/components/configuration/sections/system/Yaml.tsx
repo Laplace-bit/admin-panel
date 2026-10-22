@@ -8,6 +8,7 @@ import { fieldDescription } from '../../renderer/paths';
 import { useLocalize, useYamlConfig } from '@/hooks';
 import { getFieldMeta, labelForPath } from '../../meta';
 import { StaticField } from '../../fields/StaticField';
+import { UnknownSettings } from '../../UnknownSettings';
 import { resolveControl } from '../../renderer/kinds';
 import { SettingsRow } from '../../SettingsRow';
 
@@ -38,6 +39,9 @@ function YamlRow({ field, path, yaml, yamlPaths, schemaDefaults }: t.YamlRowProp
             schemaDefaults={schemaDefaults}
           />
         ))}
+        {!rowFilter && (
+          <UnknownSettings fields={children} value={getValueAtPath(yaml, path)} path={path} />
+        )}
       </NestedGroup>
     );
   }
@@ -68,7 +72,8 @@ function YamlRow({ field, path, yaml, yamlPaths, schemaDefaults }: t.YamlRowProp
  * Read-only rows of settings LibreChat reads only from librechat.yaml, with
  * their values from that file (else the default): never from an override,
  * nor in a profile from Base, since neither applies. An object nests as a
- * group, so a field a newer schema adds still shows.
+ * group, so a field a newer schema adds still shows, and so does a key
+ * librechat.yaml sets that the schema doesn't know (read-only, in its group).
  */
 export function YamlRows({ fields, parentPath, schemaDefaults }: t.YamlRowsProps) {
   const yaml = useYamlConfig();
