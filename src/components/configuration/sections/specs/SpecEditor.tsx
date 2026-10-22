@@ -157,8 +157,14 @@ export function SpecEditor({
   const paths = (keys: string[], base = path) => keys.map((key) => `${base}.${key}`);
   const rest = fields.filter((field) => !GROUPED.has(field.key));
 
-  /** Under "Set values only", a row (or group) without a value is left out. */
-  const shows = (record: t.ConfigRecord, key: string) => !configuredOnly || hasValue(record[key]);
+  /**
+   * Under "Set values only", a row (or group) without a value is left out,
+   * unless it needs one: a required field still empty (a new spec's Label,
+   * Name, Endpoint and Model) stays, so the spec can be completed.
+   */
+  const shows = (record: t.ConfigRecord, key: string, problemField = key) =>
+    !configuredOnly || hasValue(record[key]) || errorFields.has(problemField);
+  const showsPreset = (key: string) => shows(preset, key, `preset.${key}`);
   const showsGroup = (count: number) => !configuredOnly || count > 0;
   const modelKeys = ['endpoint', 'model', 'agent_id', 'modelLabel', 'assistant_id'];
   const paramCount = Object.keys(preset).filter(
@@ -184,7 +190,7 @@ export function SpecEditor({
   };
   const presetRow = (key: string) => {
     const field = presetField?.children?.find((child) => child.key === key);
-    if (!field || !shows(preset, key)) return null;
+    if (!field || !showsPreset(key)) return null;
     return renderInlineField(
       field,
       preset,
@@ -204,7 +210,7 @@ export function SpecEditor({
 
   return (
     <div className="flex min-w-0 flex-col **:[[role=group]]:flex-wrap">
-      {showsGroup(countSet(spec, BASICS)) && (
+      {(showsGroup(countSet(spec, BASICS)) || opensFor(BASICS)) && (
         <SpecGroup
           title={localize('com_config_specs_group_basics')}
           paths={paths(BASICS)}
@@ -223,13 +229,13 @@ export function SpecEditor({
         paths={paths(modelKeys, presetPath)}
         defaultExpanded
       >
-        {shows(preset, 'endpoint') && (
+        {showsPreset('endpoint') && (
           <EndpointField {...presetProps} field={presetChildField('endpoint')} />
         )}
-        {isAgent && shows(preset, 'agent_id') && (
+        {isAgent && showsPreset('agent_id') && (
           <AgentField {...presetProps} field={presetChildField('agent_id')} />
         )}
-        {!isAgent && shows(preset, 'model') && (
+        {!isAgent && showsPreset('model') && (
           <ModelField {...presetProps} field={presetChildField('model')} />
         )}
         {isAgent && hasValue(preset.model) && presetRow('model')}

@@ -51,7 +51,12 @@ function renderSpecs(
   {
     onChange = vi.fn(),
     data,
-  }: { onChange?: t.FieldRendererProps['onChange']; data?: t.ConfigValuesData } = {},
+    showConfiguredOnly,
+  }: {
+    onChange?: t.FieldRendererProps['onChange'];
+    data?: t.ConfigValuesData;
+    showConfiguredOnly?: boolean;
+  } = {},
 ) {
   const values = data ?? valuesDataFixture(baseLayersFixture());
   const wrap = (children: ReactNode) => (
@@ -74,6 +79,7 @@ function renderSpecs(
       onResetField={vi.fn()}
       onDiscardField={vi.fn()}
       permissions={{ canView: true, canEdit: true, canAssign: true }}
+      showConfiguredOnly={showConfiguredOnly}
     />
   );
   return { onChange, ...render(wrap(ui)) };
@@ -182,6 +188,20 @@ describe('ModelSpecsRenderer', () => {
       }),
     ).toBeInTheDocument();
     expect(within(card).getByText(/com_config_issue_spec_unknown_endpoint/)).toBeInTheDocument();
+  });
+
+  it('keeps a new spec\'s required fields under "Set values only"', () => {
+    renderSpecs({ list: [...SPECS, {}] }, { showConfiguredOnly: true });
+    const card = document.querySelectorAll<HTMLElement>('[data-entry-card]')[2];
+    fireEvent.click(within(card).getAllByRole('button', { expanded: false })[0]);
+    for (const id of ['label', 'name', 'preset-endpoint', 'preset-model']) {
+      expect(document.getElementById(`modelSpecs-list-2-${id}`)).toBeInTheDocument();
+    }
+    expect(document.getElementById('modelSpecs-list-2-description')).toBeNull();
+    const saved = document.querySelectorAll<HTMLElement>('[data-entry-card]')[0];
+    fireEvent.click(within(saved).getAllByRole('button', { expanded: false })[0]);
+    expect(document.getElementById('modelSpecs-list-0-preset-model')).toBeInTheDocument();
+    expect(document.getElementById('modelSpecs-list-0-description')).toBeNull();
   });
 
   it('shows the inherited list read-only in a profile until it is customized', () => {
