@@ -2,8 +2,8 @@ import { Fragment, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { isRowVisible, getSecretPreviewValue, isInterfacePermissionPath } from '@/utils';
-import { countConfigured, hasDescendant, hasPathOverlap } from '../counts';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
+import { countConfigured, hasPathOverlap, isPathSet } from '../counts';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { getControlType, orderFields } from '../controls';
 import { UnknownSettings } from '../UnknownSettings';
@@ -82,9 +82,8 @@ export function FieldRenderer({
     if (filtering && !isPathChanged(path)) continue;
     if (!isRowVisible(rowFilter, path)) continue;
 
-    if (showConfiguredOnly && !previewMode) {
-      const isLeafConfigured = configuredPaths?.has(path);
-      if (!isLeafConfigured && !hasDescendant(path, configuredPaths)) continue;
+    if (showConfiguredOnly && !previewMode && !isPathSet(path, configuredPaths, editedValues)) {
+      continue;
     }
 
     if (isSwitchObject(field, path)) {
