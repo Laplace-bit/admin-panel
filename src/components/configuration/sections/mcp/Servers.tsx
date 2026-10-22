@@ -453,6 +453,7 @@ export function McpServersRenderer({
     return result;
   }, [saved, list, hidden, unhiding, lower, rowFilter, prefix, renamedAway]);
 
+  /** Under "Set values only", an inherited server the admin chose to override stays, with every field. */
   const visibleRows =
     showConfiguredOnly && inScope
       ? rows.filter(
@@ -460,6 +461,7 @@ export function McpServersRenderer({
             row.kind !== 'server' ||
             !lowerKeys.has(row.key) ||
             pendingByServer.has(row.key) ||
+            unlocked.has(row.key) ||
             countLeaves(stored[row.key]) > 0,
         )
       : rows;
@@ -617,21 +619,25 @@ export function McpServersRenderer({
                   })}
                 </McpNote>
               )}
-              <McpServerEditor
-                fields={fields}
-                entryPath={`${prefix}${key}`}
-                entry={value}
-                lower={isConfigRecord(lower[key]) ? lower[key] : undefined}
-                onChange={(leaf, next) => onChange(`${prefix}${key}.${leaf}`, next)}
-                onSwitch={(plan) => applyPlan(key, plan)}
-                onDiscard={onDiscardField}
-                disabled={readOnly}
-                typeLocked={lowerKeys.has(key) || transportOf(value) === 'stdio'}
-                quiet={badges.isNew}
-                owned={!lowerKeys.has(key)}
-                ownKeys={inScope ? ownKeysOf(key) : undefined}
-                editSessionId={editSessionId}
-              />
+              <ConfiguredOnlyContext.Provider
+                value={Boolean(showConfiguredOnly) && !unlocked.has(key)}
+              >
+                <McpServerEditor
+                  fields={fields}
+                  entryPath={`${prefix}${key}`}
+                  entry={value}
+                  lower={isConfigRecord(lower[key]) ? lower[key] : undefined}
+                  onChange={(leaf, next) => onChange(`${prefix}${key}.${leaf}`, next)}
+                  onSwitch={(plan) => applyPlan(key, plan)}
+                  onDiscard={onDiscardField}
+                  disabled={readOnly}
+                  typeLocked={lowerKeys.has(key) || transportOf(value) === 'stdio'}
+                  quiet={badges.isNew}
+                  owned={!lowerKeys.has(key)}
+                  ownKeys={inScope ? ownKeysOf(key) : undefined}
+                  editSessionId={editSessionId}
+                />
+              </ConfiguredOnlyContext.Provider>
             </McpServerCard>
           );
         })}

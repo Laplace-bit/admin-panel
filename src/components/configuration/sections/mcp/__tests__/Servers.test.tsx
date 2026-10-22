@@ -568,6 +568,27 @@ describe('McpServersRenderer — profiles (MCP-10)', () => {
   });
 });
 
+describe('McpServersRenderer — overriding under "Set values only"', () => {
+  it('keeps an inherited server listed once Create chooses to override it', async () => {
+    render(<Harness scope showConfiguredOnly />);
+    expect(document.querySelector('[data-mcp-server="cloudflare"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'com_config_create_mcp_server' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(
+      within(dialog).getByPlaceholderText('com_config_mcp_create_name_placeholder'),
+      {
+        target: { value: 'cloudflare' },
+      },
+    );
+    await act(async () => {
+      fireEvent.click(
+        within(dialog).getByRole('button', { name: 'com_config_mcp_create_override:cloudflare' }),
+      );
+    });
+    expect(card('cloudflare').querySelector('input#mcpServers-cloudflare-url')).not.toBeNull();
+  });
+});
+
 describe('McpServersRenderer — legacy dotted names', () => {
   it('shows a dotted server read-only, without actions (the admin API drops dotted keys)', () => {
     render(
