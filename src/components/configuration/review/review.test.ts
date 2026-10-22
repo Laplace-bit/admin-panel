@@ -418,6 +418,7 @@ describe('summarizeChanges: MCP servers and secrets', () => {
       title: 'DB',
       description: 'Docs DB',
       oauth: { client_id: 'id', client_secretPreview: 'sec...1234' },
+      apiKey: { source: 'admin', keyPreview: '...4321' },
     };
     const renamed = {
       type: 'streamable-http',
@@ -447,6 +448,7 @@ describe('summarizeChanges: MCP servers and secrets', () => {
       writes: [
         { path: 'mcpServers.dbsrv.url', value: 'https://db2.example/mcp' },
         { path: 'mcpServers.dbsrv.description', value: undefined },
+        { path: 'mcpServers.dbsrv.apiKey', value: undefined },
       ],
     });
   });
