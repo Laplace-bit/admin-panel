@@ -165,7 +165,7 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
   };
 
   const handleUndoRemoval = (removal: t.EndpointRemoval) => {
-    const at = Math.min(removal.index, items.length);
+    const at = Math.min(removal.restoreIndex, items.length);
     onChange(path, [...items.slice(0, at), removal.value, ...items.slice(at)]);
   };
 
