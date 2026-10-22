@@ -87,13 +87,14 @@ export function MimeListField({
   const patterns = own ?? inherited.patterns;
   const kind = mimeListKind(path) ?? 'endpoint';
 
+  /** An empty list is confirmed first, even when it is the list beneath (an explicit empty one). */
   const commit = (next: string[]) => {
-    if (sameList(next, inherited.patterns)) {
-      onClear();
-      return;
-    }
     if (next.length === 0) {
       setConfirm({ kind: 'empty' });
+      return;
+    }
+    if (sameList(next, inherited.patterns)) {
+      onClear();
       return;
     }
     onChange(next);
@@ -224,7 +225,8 @@ export function MimeListField({
               type: 'danger',
               onSelect: () => {
                 setConfirm(null);
-                onChange([]);
+                if (inherited.patterns.length === 0) onClear();
+                else onChange([]);
               },
             },
           ]}
