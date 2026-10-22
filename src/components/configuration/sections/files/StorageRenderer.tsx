@@ -1,20 +1,23 @@
-import { useState } from 'react';
+import { useContext, useState } from 'react';
 import type * as t from '@/types';
 import { backendsInUse, isCloudFrontReady, resolveStorage } from './storage';
 import { STORAGE_FILE_TYPES, STORAGE_BACKEND_LABELS } from '@/constants';
 import { useLocalize, useYamlConfig, useStorageStates } from '@/hooks';
+import { RowFilterContext } from '@/contexts/RowFilterContext';
+import { FieldRenderer, NestedGroup } from '../../renderer';
 import { getValueAtPath, isConfigRecord } from '@/utils';
+import { UnknownSettings } from '../../UnknownSettings';
 import { DecorativeIcon } from '@/components/shared';
 import { ConfigSection } from '../../ConfigSection';
 import { StorageConfirm } from './StorageConfirm';
 import { countConfigured } from '../../counts';
-import { NestedGroup } from '../../renderer';
 import { BackendRow } from './BackendRow';
 import { EnvVars } from './EnvVars';
 
 const PRIMARY = 'fileStrategy';
 const PER_TYPE = 'fileStrategies';
 const CLOUDFRONT = 'cloudfront';
+const FILE_TYPES: ReadonlySet<string> = new Set(STORAGE_FILE_TYPES);
 
 function sumCounts(counts: Array<t.SectionCount | undefined>): t.SectionCount {
   return counts.reduce<t.SectionCount>(
@@ -44,6 +47,7 @@ export function StorageRenderer({
 }: t.SectionGroupRendererProps) {
   const localize = useLocalize();
   const yaml = useYamlConfig();
+  const rowFilter = useContext(RowFilterContext);
   const states = useStorageStates();
   const [pending, setPending] = useState<t.StorageChangeRequest | null>(null);
   const byId = new Map(sections.map((section) => [section.id, section]));
@@ -101,6 +105,9 @@ export function StorageRenderer({
     ? countConfigured(perType.fields, PER_TYPE, propsFor(perType).configuredPaths)
     : undefined;
   const typesOverridingPrimary = resolved.default !== resolved.primary;
+  const perTypeProps = perType ? propsFor(perType) : undefined;
+  /** File types a newer schema adds: generic rows after the purpose-built ones. */
+  const otherTypes = perType?.fields.filter((field) => !FILE_TYPES.has(field.key)) ?? [];
 
   return (
     <ConfigSection
@@ -135,7 +142,7 @@ export function StorageRenderer({
           )}
         </BackendRow>
       )}
-      {perType && (
+      {perType && perTypeProps && (
         <NestedGroup
           label={localize('com_config_storage_per_type')}
           sectionId={`section-${PER_TYPE}`}
@@ -154,10 +161,18 @@ export function StorageRenderer({
               inherited={inheritedOf(type)}
               inheritLabel={inheritLabel(type)}
               cloudFrontReady={cloudFrontReady}
-              fieldProps={propsFor(perType)}
+              fieldProps={perTypeProps}
               onRequestChange={requestChange}
             />
           ))}
+          {otherTypes.length > 0 && <FieldRenderer {...perTypeProps} fields={otherTypes} />}
+          {!rowFilter && (
+            <UnknownSettings
+              fields={perType.fields}
+              value={perTypeProps.parentValue}
+              path={PER_TYPE}
+            />
+          )}
         </NestedGroup>
       )}
       {cloudfront &&
