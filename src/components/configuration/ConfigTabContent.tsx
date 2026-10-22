@@ -2,7 +2,12 @@ import { useMemo, useContext } from 'react';
 import { Button } from '@clickhouse/click-ui';
 import type { KeyboardEvent, ReactNode } from 'react';
 import type * as t from '@/types';
-import { countSection, countSectionOverrides, countEntrySectionOverrides } from './counts';
+import {
+  countSection,
+  hasPendingValueIn,
+  countSectionOverrides,
+  countEntrySectionOverrides,
+} from './counts';
 import { SECTION_RENDERERS, SELF_CONTAINED_SECTION_RENDERERS } from './sections';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { RevealTargetContext } from '@/contexts/RevealTargetContext';
@@ -183,7 +188,9 @@ export function ConfigTabContent({
     filtering && sectionHasChanges ? sections.filter((s) => sectionHasChanges[s.id]) : sections;
 
   if (showConfiguredOnly && !previewMode) {
-    visibleSections = visibleSections.filter((s) => (countsById[s.id]?.configured ?? 0) > 0);
+    visibleSections = visibleSections.filter(
+      (s) => (countsById[s.id]?.configured ?? 0) > 0 || hasPendingValueIn(s, editedValues),
+    );
   }
 
   if (visibleSectionIds) {

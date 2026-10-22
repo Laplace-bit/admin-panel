@@ -61,8 +61,12 @@ export const ConfigTableOfContents = memo(function ConfigTableOfContents({
     [scrollContainer, onNavigate],
   );
 
+  /** Configured-only keeps what is set, and what a pending edit sets, reachable. */
   const isShown = (entry: t.TocEntry, isSection: boolean) =>
-    !showConfiguredOnly || !configuredPaths || entryHasPath(entry, configuredPaths, isSection);
+    !showConfiguredOnly ||
+    !configuredPaths ||
+    entryHasPath(entry, configuredPaths, isSection) ||
+    (!!dirtyPaths?.length && entryHasPath(entry, dirtyPaths, isSection, false));
 
   const renderItem = (entry: t.TocEntry, isSection: boolean) => (
     <button
