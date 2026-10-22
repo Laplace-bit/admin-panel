@@ -567,6 +567,11 @@ export interface FieldGroupDef {
 /** One named provider (openAI, anthropic, …) on the AI Providers tab. */
 export type ProviderSectionProps = Omit<FieldRendererProps, 'fields'> & { field: SchemaField };
 
+export interface OtherSettingsProps extends FieldRendererProps {
+  /** The keys of `fields` the renderer shows itself. */
+  placed: ReadonlySet<string>;
+}
+
 export interface UnknownSettingsProps {
   /** Every schema field of the object (the full list, not a filtered subset). */
   fields: SchemaField[];

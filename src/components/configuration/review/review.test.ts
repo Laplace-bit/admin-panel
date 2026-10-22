@@ -7,6 +7,7 @@ import translation from '@/locales/en/translation.json';
 import { extractSchemaTree } from '@/server/config';
 import { parseIssueMessages } from './issues';
 import { formatReviewValue } from './format';
+import { getValueAtPath } from '@/utils';
 import { planRevert } from './revert';
 
 const tree = extractSchemaTree(configSchema as t.ZodSchemaLike);
@@ -186,6 +187,24 @@ describe('summarizeChanges: keyed lists', () => {
 });
 
 describe('summarizeChanges: plain values', () => {
+  it('warns that a reset lifting the sign-up domain restriction opens registration', () => {
+    const own = { registration: { allowedDomains: ['example.com'] } };
+    const reset = (path: string, lower: t.ConfigValue) =>
+      summarizeChanges(
+        makeInput({
+          resets: [path],
+          ownAt: (at) => getValueAtPath(own, at),
+          lowerAt: () => ({ value: lower, source: 'yaml' }),
+        }),
+      )[0];
+    expect(reset('registration.allowedDomains', undefined).warnings).toEqual(['openRegistration']);
+    expect(reset('registration.allowedDomains', []).warnings).toEqual(['openRegistration']);
+    expect(reset('registration', { socialLogins: ['google'] }).warnings).toEqual([
+      'openRegistration',
+    ]);
+    expect(reset('registration.allowedDomains', ['librechat.ai']).warnings).toBeUndefined();
+  });
+
   it('lists a primitive list as one change with both lists', () => {
     const [item] = summarizeChanges(
       makeInput({

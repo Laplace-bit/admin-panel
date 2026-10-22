@@ -144,6 +144,26 @@ function allowlistWarning(path: string, after: t.ConfigValue): t.ChangeWarning[]
   return ALLOWLIST_KEYS.has(lastSegment(path)) ? ['emptyAllowlist'] : [];
 }
 
+const isRestricting = (value: t.ConfigValue): boolean => Array.isArray(value) && value.length > 0;
+
+/**
+ * A reset of a domain restriction (or of an object holding one) to a layer
+ * that sets none, or an empty list: everyone can sign up once it is saved.
+ */
+function resetWarning(
+  path: string,
+  before: t.ConfigValue,
+  after: t.ConfigValue,
+): t.ChangeWarning[] {
+  const opens = [...OPEN_WHEN_EMPTY].some((open) => {
+    if (open !== path && !open.startsWith(`${path}.`)) return false;
+    const rest = open.slice(path.length + 1);
+    const at = (value: t.ConfigValue) => (rest ? getValueAtPath(value, rest) : value);
+    return isRestricting(at(before)) && !isRestricting(at(after));
+  });
+  return opens ? ['openRegistration'] : [];
+}
+
 /**
  * Saving a list the target does not own yet makes the whole list the
  * target's: librechat.yaml (or, for a profile, Base) no longer feeds it.
@@ -478,14 +498,16 @@ function resetItem(path: string, input: t.ChangeSummaryInput): t.ChangeSummaryIt
     path,
     (entryPath) => getValueAtPath(input.baseline, entryPath) ?? input.ownAt(entryPath),
   );
+  const before = input.ownAt(path);
   const item: t.ChangeSummaryItem = {
     path,
     kind: 'reverted',
-    before: input.ownAt(path),
+    before,
     after: undefined,
     revertTarget: lower,
     sourcePath: path,
     secret: isSecretPath(path) || undefined,
+    warnings: warningsOf(resetWarning(path, before, lower?.value)),
   };
   if (!entry) return item;
   if (entry.entryPath === path && lower?.value == null) {

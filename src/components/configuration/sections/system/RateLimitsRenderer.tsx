@@ -1,7 +1,7 @@
 import { useContext } from 'react';
 import type * as t from '@/types';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { cn, isConfigRecord, isRowVisible } from '@/utils';
+import { isConfigRecord, isRowVisible } from '@/utils';
 import { UnknownSettings } from '../../UnknownSettings';
 import { useFieldState, useLocalize } from '@/hooks';
 import { RATE_LIMITERS } from '@/constants';
@@ -9,6 +9,17 @@ import { toFieldId } from '../../renderer';
 import { labelForPath } from '../../meta';
 
 const SECTION = 'rateLimits';
+
+/** Where a limit's two numbers come from, when librechat.yaml sets one, both or neither. */
+const SOURCE_KEYS = {
+  both: 'com_config_ratelimits_from_yaml',
+  max: 'com_config_ratelimits_from_yaml_max',
+  window: 'com_config_ratelimits_from_yaml_window',
+  none: 'com_config_ratelimits_default',
+} as const;
+
+const valueClass = (fromYaml: boolean) =>
+  fromYaml ? 'text-(--cui-color-text-default)' : 'text-(--settings-muted-fg)';
 
 /** A number librechat.yaml (or, in a profile, Base) sets; the panel's own overrides never apply here. */
 function setNumber(state: t.FieldState): number | undefined {
@@ -39,24 +50,27 @@ function LimitCell({ limiter, scope }: { limiter: t.RateLimiterInfo; scope: 'ip'
   const setWindow = setNumber(span);
   const shownMax = setMax ?? defaultMax;
   const shownWindow = setWindow ?? defaultWindow;
-  const fromYaml = setMax !== undefined || setWindow !== undefined;
+  const maxFromYaml = setMax !== undefined;
+  const windowFromYaml = setWindow !== undefined;
+  /** librechat.yaml can set only one of the two; the other is then LibreChat's default. */
+  const source = (() => {
+    if (maxFromYaml && windowFromYaml) return SOURCE_KEYS.both;
+    if (maxFromYaml) return SOURCE_KEYS.max;
+    return windowFromYaml ? SOURCE_KEYS.window : SOURCE_KEYS.none;
+  })();
   const envNames = `${limiter.envPrefix}_${scope.toUpperCase()}_MAX, ${limiter.envPrefix}_${scope.toUpperCase()}_WINDOW`;
   return (
     <span className="flex flex-col" title={envNames}>
-      <span
-        className={cn(fromYaml ? 'text-(--cui-color-text-default)' : 'text-(--settings-muted-fg)')}
-      >
-        <span id={toFieldId(maxPath)}>
+      <span>
+        <span id={toFieldId(maxPath)} className={valueClass(maxFromYaml)}>
           {localize('com_config_ratelimits_requests', { max: shownMax.toLocaleString() })}
         </span>
-        {' / '}
-        <span id={toFieldId(windowPath)}>
+        <span className={valueClass(maxFromYaml && windowFromYaml)}>{' / '}</span>
+        <span id={toFieldId(windowPath)} className={valueClass(windowFromYaml)}>
           {localize('com_config_ratelimits_window', { window: shownWindow.toLocaleString() })}
         </span>
       </span>
-      <span className="text-xs text-(--settings-muted-fg)">
-        {localize(fromYaml ? 'com_config_ratelimits_from_yaml' : 'com_config_ratelimits_default')}
-      </span>
+      <span className="text-xs text-(--settings-muted-fg)">{localize(source)}</span>
       <span className="sr-only">{envNames}</span>
     </span>
   );

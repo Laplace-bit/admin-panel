@@ -52,6 +52,18 @@ describe('CreditsRenderer', () => {
     expect(screen.getByText(/Turn on auto-refill/)).toBeInTheDocument();
   });
 
+  it('lists balance and transactions settings it does not place, so none is hidden', () => {
+    renderSections({
+      sections: SECTIONS,
+      yaml: {
+        balance: { ...YAML.balance, refillCap: 5000000 },
+        transactions: { enabled: true, retentionDays: 30 },
+      },
+    });
+    expect(screen.getByText('refillCap')).toBeInTheDocument();
+    expect(screen.getByText('retentionDays')).toBeInTheDocument();
+  });
+
   it('warns while balance needs transactions that are turned off', () => {
     renderSections({ sections: SECTIONS, yaml: { ...YAML, transactions: { enabled: false } } });
     expect(screen.getByText(/LibreChat keeps recording them/)).toBeInTheDocument();

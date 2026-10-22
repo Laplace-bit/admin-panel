@@ -12,6 +12,10 @@ import { ConfigRow } from '../../ConfigRow';
 import { toFieldId } from '../../renderer';
 import { isRowShown } from './FieldRow';
 
+function sameBackends(a: readonly t.StorageBackend[], b: readonly t.StorageBackend[]): boolean {
+  return a.length === b.length && a.every((backend, index) => backend === b[index]);
+}
+
 /**
  * One storage backend setting (`fileStrategy` or a `fileStrategies` key) as a
  * select of proper backend names. Its Default choice names the backend in
@@ -52,8 +56,8 @@ export function BackendRow({
   const ownBackend = isStorageBackend(own) ? own : undefined;
   const lower = lowerValue(state);
   /** Without the target's own value: the layer beneath, else what the chain resolves to. */
-  const fallback = isStorageBackend(lower) ? lower : inherited;
-  const current = ownBackend ?? fallback;
+  const fallback = isStorageBackend(lower) ? [lower] : inherited;
+  const current = ownBackend ? [ownBackend] : fallback;
   const fieldId = toFieldId(path);
   const hasPendingEdit = editedValues ? path in editedValues : false;
   const nameOf = (backend: t.StorageBackend) => localize(STORAGE_BACKEND_LABELS[backend]);
@@ -64,8 +68,9 @@ export function BackendRow({
       })
     : inheritLabel;
 
-  const request = (to: t.StorageBackend | undefined, apply: () => void) => {
-    if (to === undefined || to === current) {
+  /** Applies at once unless the files would go somewhere else; then it is confirmed first. */
+  const request = (to: readonly t.StorageBackend[], apply: () => void) => {
+    if (sameBackends(to, current)) {
       apply();
       return;
     }
@@ -84,7 +89,8 @@ export function BackendRow({
   };
 
   const options: t.SelectOption[] = STORAGE_BACKENDS.map(({ backend }) => {
-    const unavailable = backend === 'cloudfront' && !cloudFrontReady && current !== 'cloudfront';
+    const unavailable =
+      backend === 'cloudfront' && !cloudFrontReady && !current.includes('cloudfront');
     return {
       value: backend,
       label: unavailable
@@ -97,7 +103,7 @@ export function BackendRow({
   const resetField = onResetField
     ? (resetPath: string) => {
         const target = state.revertTarget?.value;
-        request(isStorageBackend(target) ? target : inherited, () => onResetField(resetPath));
+        request(isStorageBackend(target) ? [target] : inherited, () => onResetField(resetPath));
       }
     : undefined;
 
@@ -111,7 +117,7 @@ export function BackendRow({
       value={ownBackend}
       options={options}
       onChange={(next) => {
-        if (isStorageBackend(next)) request(next, () => onChange(path, next));
+        if (isStorageBackend(next)) request([next], () => onChange(path, next));
       }}
       onClear={clear}
       defaultLabel={defaultLabel}

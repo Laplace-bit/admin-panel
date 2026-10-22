@@ -31,15 +31,18 @@ function stringList(value: t.ConfigValue): string[] {
 
 /**
  * Social sign-in buttons (FX-9, FX-10): the sign-in page reads them from
- * librechat.yaml only, so they are shown read-only by provider name, with a
- * way to remove an override saved before (it never took effect).
+ * librechat.yaml only (else LibreChat's default list), so they are shown
+ * read-only by provider name from there, never from an override (in a
+ * profile, Base's), with a way to remove an override saved before (it never
+ * took effect).
  */
 function SocialLoginsRow({ fieldProps }: { fieldProps: t.FieldRendererProps }) {
   const localize = useLocalize();
+  const yaml = useYamlConfig();
   const rowFilter = useContext(RowFilterContext);
   const social = useOwnedField(SOCIAL, fieldProps);
   if (!isRowShown(rowFilter, SOCIAL, fieldProps)) return null;
-  const providers = stringList(social.fallback);
+  const providers = stringList(getValueAtPath(yaml, SOCIAL) ?? fieldProps.schemaDefaults?.[SOCIAL]);
   const hasStaleOverride = social.state.isOverride;
   const canRemove =
     hasStaleOverride &&

@@ -5,6 +5,7 @@ import { getValueAtPath, isConfigRecord, isRowVisible } from '@/utils';
 import { ArrayObjectField } from '../../fields/ArrayObjectField';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { UnknownSettings } from '../../UnknownSettings';
+import { isRowShown } from '../files/FieldRow';
 import { countConfigured } from '../../counts';
 import { labelForPath } from '../../meta';
 import { useLocalize } from '@/hooks';
@@ -48,7 +49,7 @@ function SourcesGroup({
     (index: number, entry: t.ConfigValue) => onChange(`${SOURCES}.${index}`, entry),
     [onChange],
   );
-  if (!isRowVisible(rowFilter, SOURCES)) return null;
+  if (!isRowShown(rowFilter, SOURCES, fieldProps)) return null;
 
   const summary = (item: t.ConfigValue) => {
     if (!isConfigRecord(item)) return null;

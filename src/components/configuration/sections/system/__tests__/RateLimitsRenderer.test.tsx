@@ -20,4 +20,19 @@ describe('RateLimitsRenderer', () => {
     expect(screen.getByText(/never applied, even after a restart/)).toBeInTheDocument();
     expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument();
   });
+
+  it('says which number librechat.yaml sets when it sets only one of the pair', () => {
+    renderSections({
+      sections: ['rateLimits'],
+      yaml: { rateLimits: { fileUploads: { userMax: 20, ipWindowInMinutes: 30 } } },
+    });
+    const uploads = within(screen.getByRole('table', { name: 'Rate limits' })).getByRole('row', {
+      name: /File uploads/,
+    });
+    expect(uploads).toHaveTextContent('100 requests / 30 min');
+    expect(uploads).toHaveTextContent('20 requests / 15 min');
+    expect(within(uploads).getByText('Window from librechat.yaml, requests default')).toBeVisible();
+    expect(within(uploads).getByText('Requests from librechat.yaml, window default')).toBeVisible();
+    expect(within(uploads).queryByText('librechat.yaml')).not.toBeInTheDocument();
+  });
 });

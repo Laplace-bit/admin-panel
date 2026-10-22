@@ -20,6 +20,16 @@ describe('SkillSyncRenderer', () => {
     expect(screen.getByText('v2 · 2 folders')).toBeInTheDocument();
   });
 
+  it('with "Set values only", leaves out sources nothing sets', () => {
+    renderSections({
+      sections: ['skillSync'],
+      yaml: { skillSync: { github: { enabled: true } } },
+      showConfiguredOnly: true,
+    });
+    expect(screen.queryByRole('button', { name: 'Add source' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/No sources yet/)).not.toBeInTheDocument();
+  });
+
   it('adds a source from the group header', () => {
     const onChange = vi.fn();
     renderSections({ sections: ['skillSync'], onChange });

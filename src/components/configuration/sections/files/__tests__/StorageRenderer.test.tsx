@@ -53,6 +53,39 @@ describe('StorageRenderer', () => {
     );
   });
 
+  it('confirms a skill files choice that moves them off the image and document backends they follow', () => {
+    const onChange = vi.fn();
+    renderSections({
+      sections: STORAGE,
+      yaml: { fileStrategy: 'local', fileStrategies: { image: 's3', document: 'azure_blob' } },
+      onChange,
+    });
+    fireEvent.change(screen.getByLabelText('Skill files'), { target: { value: 'local' } });
+    const dialog = screen.getByRole('dialog', { name: 'Store skill files in Local filesystem?' });
+    expect(
+      within(dialog).getByText(/stay in Amazon S3 \(images\) and Azure Blob Storage \(documents\)/),
+    ).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Switch to Local filesystem' }));
+    expect(onChange).toHaveBeenCalledWith('fileStrategies.skills', 'local');
+  });
+
+  it('confirms moving skill files off the one backend images and documents share', () => {
+    const onChange = vi.fn();
+    renderSections({
+      sections: STORAGE,
+      yaml: { fileStrategy: 'local', fileStrategies: { image: 's3', document: 's3' } },
+      onChange,
+    });
+    fireEvent.change(screen.getByLabelText('Skill files'), { target: { value: 's3' } });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(onChange).toHaveBeenLastCalledWith('fileStrategies.skills', 's3');
+    fireEvent.change(screen.getByLabelText('Skill files'), { target: { value: 'local' } });
+    expect(
+      screen.getByRole('dialog', { name: 'Store skill files in Local filesystem?' }),
+    ).toBeInTheDocument();
+  });
+
   it('warns when the per-type default takes precedence over the backend', () => {
     renderSections({ sections: STORAGE, yaml: { fileStrategies: { default: 'azure_blob' } } });
     expect(screen.getByText(/takes precedence over this setting/)).toBeInTheDocument();
