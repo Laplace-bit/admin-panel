@@ -35,6 +35,15 @@ export function authMethodOf(entry: t.ConfigValue): t.McpAuthMethod {
 }
 
 /**
+ * Whether `record` holds a setting of a method: `requiresOAuth: false` only
+ * turns OAuth discovery off, which every other method keeps.
+ */
+function holdsMethodKey(record: t.ConfigRecord | undefined, key: string): boolean {
+  if (!record) return false;
+  return key === 'requiresOAuth' ? record[key] === true : hasConfigValue(record[key]);
+}
+
+/**
  * What choosing `next` writes (MCP-4): the other methods' settings go, and
  * an API key starts with its defaults. Settings the layer beneath defines
  * can't be removed (D3), so they block the switch.
@@ -46,8 +55,8 @@ export function planAuthSwitch(
 ): t.McpSwitchPlan {
   const prune = AUTH_METHODS.filter((method) => method !== next)
     .flatMap((method) => AUTH_METHOD_KEYS[method])
-    .filter((key) => hasConfigValue(entry[key]));
-  const locked = prune.filter((key) => lower != null && hasConfigValue(lower[key]));
+    .filter((key) => holdsMethodKey(entry, key));
+  const locked = prune.filter((key) => holdsMethodKey(lower, key));
   const set: Array<[string, t.ConfigValue]> =
     next === 'apiKey' && !hasConfigValue(entry.apiKey) ? [['apiKey', { ...API_KEY_DEFAULTS }]] : [];
   return { prune, set, locked };

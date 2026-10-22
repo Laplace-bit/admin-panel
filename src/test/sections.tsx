@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { render } from '@testing-library/react';
-import { configSchema } from 'librechat-data-provider';
+import { configSchema, PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
 import {
   flattenObject,
   getValueAtPath,
   setValueAtPath,
+  withScopeLayer,
   createBaseLayers,
   collectLeafPaths,
   mergeScopeLayer,
@@ -49,10 +50,30 @@ export interface SectionsHarnessOptions {
   yaml?: t.ConfigRecord;
   /** The base admin overrides. */
   overrides?: t.ConfigRecord;
+  /** The USER role profile's own overrides: renders the sections in profile mode. */
+  profile?: t.ConfigRecord;
   /** Called with every staged change, after the harness applies it. */
   onChange?: (path: string, value: t.ConfigValue) => void;
   onReset?: (path: string) => void;
   readOnly?: boolean;
+  /** "Set values only" is on. */
+  showConfiguredOnly?: boolean;
+}
+
+/** Profile-mode (USER role) value layers over Base, built by the page's own code. */
+function profileLayers(base: t.ValueLayers, profile: t.ConfigRecord): t.ValueLayers {
+  const paths = collectLeafPaths(profile);
+  return withScopeLayer(
+    base,
+    { principalType: PrincipalType.ROLE, name: 'USER' },
+    {
+      resolvedConfig: flattenObject(profile),
+      changedPaths: paths,
+      overrides: profile,
+      tombstones: [],
+    },
+    SCHEMA_PATHS,
+  );
 }
 
 /** Base-mode value layers from a librechat.yaml and base overrides, built by the page's own code. */
@@ -78,11 +99,18 @@ function Harness({
   onChange,
   onReset,
   readOnly,
+  profile,
+  showConfiguredOnly,
 }: SectionsHarnessOptions) {
-  const layers = baseLayers(yaml, overrides);
+  const base = baseLayers(yaml, overrides);
+  const layers = profile ? profileLayers(base, profile) : base;
   const [edited, setEdited] = useState<t.FlatConfigMap>({});
   const [values, setValues] = useState<t.ConfigRecord>(layers.effective ?? {});
-  const configured = new Set([...collectLeafPaths(yaml), ...collectLeafPaths(overrides)]);
+  const configured = new Set(
+    profile
+      ? collectLeafPaths(profile)
+      : [...collectLeafPaths(yaml), ...collectLeafPaths(overrides)],
+  );
   const stage = (path: string, value: t.ConfigValue) => {
     setEdited((prev) => ({ ...prev, [path]: value }));
     setValues((prev) =>
@@ -121,6 +149,8 @@ function Harness({
       pendingResets={new Set()}
       schemaDefaults={SCHEMA_DEFAULTS}
       valueLayers={layers}
+      isEditingScope={profile != null}
+      showConfiguredOnly={showConfiguredOnly}
     />
   );
 }

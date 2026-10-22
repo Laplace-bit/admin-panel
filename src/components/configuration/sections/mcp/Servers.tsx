@@ -12,8 +12,10 @@ import { copyName, serverNameProblem } from './names';
 import { buildServerList, leafEntries } from './list';
 import { useLocalize, useValuesScope } from '@/hooks';
 import { CreateMcpServerDialog } from './Create';
+import { isSecretPath } from '../../review/diff';
 import { sourceLabel } from '../../values';
 import { McpServerEditor } from './Editor';
+import { labelForPath } from '../../meta';
 import { McpNote } from './Note';
 
 const EMPTY_RECORD: t.ConfigRecord = Object.freeze({}) as t.ConfigRecord;
@@ -27,15 +29,39 @@ const SOURCES: Readonly<
   scope: { lower: 'inherited', own: 'scope' },
 };
 
-/** Leaves worth copying into a new server: values, not empty objects or inspector data. */
+const PREVIEW_SUFFIX = 'Preview';
+
+/** The secret a leaf is the masked preview of (`apiKey.keyPreview` → `apiKey.key`), else null. */
+function previewedSecret(segments: string[]): string | null {
+  const last = segments[segments.length - 1];
+  if (!last.endsWith(PREVIEW_SUFFIX) || last === PREVIEW_SUFFIX) return null;
+  const secret = [...segments.slice(0, -1), last.slice(0, -PREVIEW_SUFFIX.length)].join('.');
+  return isSecretPath(secret) ? secret : null;
+}
+
+/**
+ * Leaves worth copying into a new server: values, not empty objects,
+ * inspector data, or the masked preview the admin API returns for a stored
+ * secret (the secret itself is never sent to the panel, so it can't be copied).
+ */
 function copyableLeaves(value: t.ConfigRecord): Array<[string[], t.ConfigValue]> {
   return leafEntries(value).filter(
     ([segments, leaf]) =>
       !INSPECTOR_DERIVED.has(segments[0]) &&
       leaf !== undefined &&
       leaf !== null &&
-      !(isConfigRecord(leaf) && Object.keys(leaf).length === 0),
+      !(isConfigRecord(leaf) && Object.keys(leaf).length === 0) &&
+      previewedSecret(segments) == null,
   );
+}
+
+/** Stored secrets of a server a copy can't carry (only their masked previews were loaded). */
+function storedSecrets(value: t.ConfigRecord): string[] {
+  return leafEntries(value).flatMap(([segments, leaf]) => {
+    const secret = previewedSecret(segments);
+    const hasSecret = secret != null && getValueAtPath(value, secret) != null;
+    return secret != null && typeof leaf === 'string' && leaf !== '' && !hasSecret ? [secret] : [];
+  });
 }
 
 function countLeaves(value: t.ConfigValue): number {
@@ -71,6 +97,7 @@ export function McpServersRenderer({
   onDiscardField,
   onHideField,
   onUnhideField,
+  onRenameEntry,
   disabled,
   editedValues,
   yamlBaseKeys,
@@ -117,6 +144,8 @@ export function McpServersRenderer({
   const [renamedFrom, setRenamedFrom] = useState<Readonly<Record<string, string>>>({});
   const [unlocked, setUnlocked] = useState<ReadonlySet<string>>(EMPTY_KEYS);
   const [lastDeleted, setLastDeleted] = useState<string | null>(null);
+  /** Duplicates whose source stored secrets the copy left out: they must be entered again. */
+  const [reenter, setReenter] = useState<Readonly<Record<string, readonly string[]>>>({});
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [focusHiddenKey, setFocusHiddenKey] = useState<string | null>(null);
   const stash = useRef(new Map<string, Array<[string, t.ConfigValue]>>());
@@ -159,6 +188,7 @@ export function McpServersRenderer({
     setRenamedFrom({});
     setUnlocked(EMPTY_KEYS);
     setJustAdded(null);
+    setReenter({});
   }, [editSessionId]);
 
   const discard = (editPath: string) => {
@@ -294,6 +324,10 @@ export function McpServersRenderer({
     const value = asConfigRecord(list.record[key]);
     removeServer(key, false);
     writeLeaves(next, value);
+    onRenameEntry?.(`${prefix}${key}`, `${prefix}${next}`);
+    if (reenter[key]) {
+      setReenter(({ [key]: secrets, ...rest }) => (secrets ? { ...rest, [next]: secrets } : rest));
+    }
     if (Object.hasOwn(saved, key)) {
       setRenamedFrom((prev) => {
         const { [key]: original, ...rest } = prev;
@@ -311,9 +345,18 @@ export function McpServersRenderer({
     const name = copyName(key, allKeys);
     const title = typeof value.title === 'string' ? `${value.title} copy` : undefined;
     writeLeaves(name, title ? { ...value, title } : value);
+    const secrets = storedSecrets(value);
+    if (secrets.length > 0) setReenter((prev) => ({ ...prev, [name]: secrets }));
     setJustAdded(name);
     setFocusKey(name);
   };
+
+  /** The secrets a duplicate still needs entered (none once each one has a value). */
+  const missingSecretsOf = (key: string, value: t.ConfigRecord): string[] =>
+    (reenter[key] ?? []).filter((secret) => {
+      const current = getValueAtPath(value, secret);
+      return typeof current !== 'string' || current === '';
+    });
 
   const handleCreate = (name: string, entry: t.ConfigRecord) => {
     writeLeaves(name, entry);
@@ -626,6 +669,7 @@ export function McpServersRenderer({
           const badges = badgesFor(key);
           const reason = readOnlyReason(key, value, badges.overrides);
           const readOnly = Boolean(disabled) || reason != null;
+          const missingSecrets = missingSecretsOf(key, value);
           return (
             <McpServerCard
               key={key}
@@ -644,6 +688,15 @@ export function McpServersRenderer({
               {renamedFrom[key] && (
                 <McpNote tone="info">
                   {localize('com_config_mcp_renamed_from', { name: renamedFrom[key] })}
+                </McpNote>
+              )}
+              {!readOnly && missingSecrets.length > 0 && (
+                <McpNote tone="info">
+                  {localize('com_config_mcp_duplicate_secrets', {
+                    fields: missingSecrets
+                      .map((secret) => labelForPath(`${path}.{}.${secret}`, localize))
+                      .join(', '),
+                  })}
                 </McpNote>
               )}
               <McpServerEditor

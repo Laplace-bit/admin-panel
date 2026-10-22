@@ -75,8 +75,10 @@ export interface StorageChangeRequest {
   label: string;
   /** The `fileStrategies` key, or undefined for `fileStrategy`. */
   fileType?: StorageFileType;
-  from: StorageBackend;
-  to: StorageBackend;
+  /** Where these files go now: one backend, or two for skill files split by images and documents. */
+  from: readonly StorageBackend[];
+  /** Where they go after the change (two when it goes back to that split). */
+  to: readonly StorageBackend[];
   /** Stages the change once confirmed. */
   apply: () => void;
 }
@@ -126,8 +128,11 @@ export interface BackendRowProps {
   label: string;
   description?: string;
   fileType?: StorageFileType;
-  /** The backend in effect when neither the edit target nor the layer beneath sets this one. */
-  inherited: StorageBackend;
+  /**
+   * The backends in effect when neither the edit target nor the layer beneath
+   * sets this one: one, or skill files' image and document backends when they differ.
+   */
+  inherited: readonly StorageBackend[];
   /** Label of the Default choice in that case ("Inherit (Amazon S3)"). */
   inheritLabel: string;
   /** LibreChat set up CloudFront at startup, so it can be chosen. */

@@ -53,7 +53,7 @@ describe('planAgentSwitch', () => {
   it('hides the librechat.yaml agent ID when switching to an inline model', () => {
     const layers = createBaseLayers(baseData(YAML_ID), SCHEMA_PATHS);
     const plan = planAgentSwitch('inline', AGENT, statesFor(valuesData(layers)), {}, {});
-    expect(plan).toEqual({ hide: [`${AGENT}.id`], reset: [], unhide: [], discard: [] });
+    expect(plan).toEqual({ hide: [`${AGENT}.id`], reset: [], unhide: [], discard: [], show: [] });
   });
 
   it('removes an ID only the edit target stores instead of hiding it', () => {
@@ -62,7 +62,7 @@ describe('planAgentSwitch', () => {
       SCHEMA_PATHS,
     );
     const plan = planAgentSwitch('inline', AGENT, statesFor(valuesData(layers)), {}, {});
-    expect(plan).toEqual({ hide: [], reset: [`${AGENT}.id`], unhide: [], discard: [] });
+    expect(plan).toEqual({ hide: [], reset: [`${AGENT}.id`], unhide: [], discard: [], show: [] });
   });
 
   it('switching back shows the hidden ID again and drops the inline values typed meanwhile', () => {
@@ -93,10 +93,35 @@ describe('planAgentSwitch', () => {
     expect(plan.hide).toEqual([`${AGENT}.id`]);
   });
 
+  it('switching back after the switch away was saved unhides the stored ID and removes the inline override', () => {
+    const layers = createBaseLayers(
+      baseData(YAML_ID, { memory: { agent: { provider: 'openAI', model: 'gpt-4o-mini' } } }, [
+        `${AGENT}.id`,
+      ]),
+      SCHEMA_PATHS,
+    );
+    const plan = planAgentSwitch('id', AGENT, statesFor(valuesData(layers)), {}, {});
+    expect(plan).toEqual({
+      hide: [],
+      reset: [`${AGENT}.provider`, `${AGENT}.model`],
+      unhide: [],
+      discard: [],
+      show: [`${AGENT}.id`],
+    });
+    const unhiding = planAgentSwitch(
+      'id',
+      AGENT,
+      statesFor(valuesData(layers)),
+      { [`${AGENT}.id`]: 'unhide' },
+      {},
+    );
+    expect(unhiding.show).toEqual([]);
+  });
+
   it('leaves keys that are already hidden alone', () => {
     const layers = createBaseLayers(baseData(YAML_ID, {}, [`${AGENT}.id`]), SCHEMA_PATHS);
     const plan = planAgentSwitch('inline', AGENT, statesFor(valuesData(layers)), {}, {});
-    expect(plan).toEqual({ hide: [], reset: [], unhide: [], discard: [] });
+    expect(plan).toEqual({ hide: [], reset: [], unhide: [], discard: [], show: [] });
   });
 });
 

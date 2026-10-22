@@ -2,14 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { configSchema } from 'librechat-data-provider';
 import type * as t from '@/types';
 import {
+  isPathSet,
   isCountLeaf,
   countEntries,
   countSection,
   hasDescendant,
   hasPathOverlap,
+  hasPendingValue,
   countConfigured,
   isPathConfigured,
   overrideCountUnit,
+  hasPendingValueIn,
   countSectionOverrides,
   countEntrySectionOverrides,
 } from './counts';
@@ -211,6 +214,30 @@ describe('path helpers', () => {
     expect(hasPathOverlap('endpoints.custom.3.name', paths)).toBe(true);
     expect(hasPathOverlap('balance', paths)).toBe(true);
     expect(hasPathOverlap('endpoints.customX', paths)).toBe(false);
+  });
+
+  it('treats a pending value (not a pending reset) as set, at the path or inside it', () => {
+    const configured = new Set(['endpoints.openAI.titleModel']);
+    const edits: t.FlatConfigMap = {
+      'endpoints.openAI.streamRate': 50,
+      'endpoints.google.titleModel': undefined,
+    };
+    expect(hasPendingValue('endpoints.openAI', edits)).toBe(true);
+    expect(hasPendingValue('endpoints.openAI.streamRate', edits)).toBe(true);
+    expect(hasPendingValue('endpoints.google', edits)).toBe(false);
+    expect(isPathSet('endpoints.openAI.streamRate', configured, edits)).toBe(true);
+    expect(isPathSet('endpoints.openAI.titleModel', configured, edits)).toBe(true);
+    expect(isPathSet('endpoints.openAI.activityModel', configured, edits)).toBe(false);
+    expect(isPathSet('endpoints.google.titleModel', configured, edits)).toBe(false);
+  });
+
+  it('finds a pending value only in the section that renders its path', () => {
+    const edits: t.FlatConfigMap = { 'endpoints.openAI.streamRate': 50 };
+    const providers = { id: 'endpointsProviders', schemaKey: 'endpoints' };
+    expect(hasPendingValueIn(providers, edits)).toBe(true);
+    expect(hasPendingValueIn({ id: 'endpoints' }, edits)).toBe(false);
+    expect(hasPendingValueIn({ id: 'balance' }, edits)).toBe(false);
+    expect(hasPendingValueIn(providers, { 'endpoints.openAI.streamRate': undefined })).toBe(false);
   });
 
   it('counts list and record entries', () => {

@@ -25,6 +25,28 @@ describe('RegistrationRenderer', () => {
     expect(screen.queryByRole('button', { name: /Remove openid/i })).not.toBeInTheDocument();
   });
 
+  it('in a profile, lists the librechat.yaml providers, not a stale Base override', () => {
+    renderSections({
+      sections: ['registration'],
+      yaml: YAML,
+      overrides: { registration: { socialLogins: ['github'] } },
+      profile: { registration: { allowedDomains: ['example.com'] } },
+    });
+    expect(screen.getByText('OpenID Connect')).toBeInTheDocument();
+    expect(screen.getByText('Google')).toBeInTheDocument();
+    expect(screen.queryByText('GitHub')).not.toBeInTheDocument();
+  });
+
+  it("lists LibreChat's default providers when librechat.yaml sets none", () => {
+    renderSections({
+      sections: ['registration'],
+      overrides: { registration: { socialLogins: ['github'] } },
+      profile: { registration: { allowedDomains: ['example.com'] } },
+    });
+    expect(screen.getByText('Google')).toBeInTheDocument();
+    expect(screen.getByText('Discord')).toBeInTheDocument();
+  });
+
   it('adds domains as chips, normalized and validated', () => {
     const onChange = vi.fn();
     renderSections({ sections: ['registration'], yaml: YAML, onChange });

@@ -7,6 +7,7 @@ import translation from '@/locales/en/translation.json';
 import { extractSchemaTree } from '@/server/config';
 import { parseIssueMessages } from './issues';
 import { formatReviewValue } from './format';
+import { getValueAtPath } from '@/utils';
 import { planRevert } from './revert';
 
 const tree = extractSchemaTree(configSchema as t.ZodSchemaLike);
@@ -226,6 +227,24 @@ describe('summarizeChanges: required acceptance of the terms', () => {
 });
 
 describe('summarizeChanges: plain values', () => {
+  it('warns that a reset lifting the sign-up domain restriction opens registration', () => {
+    const own = { registration: { allowedDomains: ['example.com'] } };
+    const reset = (path: string, lower: t.ConfigValue) =>
+      summarizeChanges(
+        makeInput({
+          resets: [path],
+          ownAt: (at) => getValueAtPath(own, at),
+          lowerAt: () => ({ value: lower, source: 'yaml' }),
+        }),
+      )[0];
+    expect(reset('registration.allowedDomains', undefined).warnings).toEqual(['openRegistration']);
+    expect(reset('registration.allowedDomains', []).warnings).toEqual(['openRegistration']);
+    expect(reset('registration', { socialLogins: ['google'] }).warnings).toEqual([
+      'openRegistration',
+    ]);
+    expect(reset('registration.allowedDomains', ['librechat.ai']).warnings).toBeUndefined();
+  });
+
   it('lists a primitive list as one change with both lists', () => {
     const [item] = summarizeChanges(
       makeInput({
@@ -364,6 +383,7 @@ describe('summarizeChanges: MCP servers and secrets', () => {
           value,
         })),
         resets: ['mcpServers.dbsrv'],
+        renames: { 'mcpServers.dbsrv2': 'mcpServers.dbsrv' },
       }),
     );
     expect(items).toEqual([
@@ -389,6 +409,26 @@ describe('summarizeChanges: MCP servers and secrets', () => {
       path: 'mcpServers.dbsrv2.title',
       value: 'DB',
     });
+  });
+
+  it('keeps a removed server and a new one for the same URL apart when nothing renamed it', () => {
+    const dbsrv = { type: 'streamable-http', url: 'https://db.example/mcp', title: 'DB' };
+    const items = summarizeChanges(
+      makeInput({
+        baseline: { mcpServers: { dbsrv } },
+        ownAt: (path) => (path === 'mcpServers.dbsrv' ? dbsrv : undefined),
+        saves: [
+          { fieldPath: 'mcpServers.dbsrv-oauth.type', value: 'streamable-http' },
+          { fieldPath: 'mcpServers.dbsrv-oauth.url', value: 'https://db.example/mcp' },
+          { fieldPath: 'mcpServers.dbsrv-oauth.requiresOAuth', value: true },
+        ],
+        resets: ['mcpServers.dbsrv'],
+      }),
+    );
+    expect(items.map((item) => [item.kind, item.path]).sort()).toEqual([
+      ['added', 'mcpServers.dbsrv-oauth'],
+      ['removed', 'mcpServers.dbsrv'],
+    ]);
   });
 
   it('keeps a removed server and an unrelated new one apart', () => {

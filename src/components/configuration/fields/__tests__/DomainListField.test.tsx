@@ -32,6 +32,17 @@ function add(text: string) {
 }
 
 describe('DomainListField', () => {
+  it('gives the row id to its text input, so the row label focuses it', () => {
+    render(
+      <>
+        <label htmlFor="actions-allowedDomains">Allowed domains row</label>
+        <Harness />
+      </>,
+    );
+    expect(document.getElementById('actions-allowedDomains')).toBe(input());
+    expect(screen.getByText('Allowed domains row')).toHaveProperty('control', input());
+  });
+
   it('explains that an empty list means no restriction', () => {
     render(<Harness />);
     expect(

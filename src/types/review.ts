@@ -31,6 +31,8 @@ export interface ChangeSummaryInput {
   isScope: boolean;
   fields: SchemaField[];
   schemaPaths: ReadonlySet<string>;
+  /** Record entries renamed in the panel: new entry path → the saved entry path it came from. */
+  renames?: Readonly<Record<string, string>>;
 }
 
 /** Where a collection entry sits: its collection, data path and identity (WS7). */
@@ -170,6 +172,7 @@ export interface ChangeReviewOptions {
     | 'handleDiscardField'
     | 'handleDiscard'
     | 'visibilityEdits'
+    | 'renameEdits'
     | 'handleHideField'
     | 'handleUnhideField'
   >;

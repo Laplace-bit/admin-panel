@@ -147,6 +147,7 @@ function Harness({
           onDiscardField={edits.handleDiscardField}
           onHideField={edits.handleHideField}
           onUnhideField={edits.handleUnhideField}
+          onRenameEntry={edits.handleRenameEntry}
           editedValues={editedValues}
           yamlBaseKeys={new Set(Object.keys(YAML_SERVERS))}
           isEditingScope={scope}
@@ -401,6 +402,32 @@ describe('McpServersRenderer — transport and auth switches (MCP-2, MCP-4)', ()
     });
   });
 
+  it('drops a waiting transport switch when the edit session ends, and plans it from the current entry', () => {
+    render(<Harness />);
+    expand('acme');
+    const select = () =>
+      card('acme').querySelector<HTMLSelectElement>('select#mcpServers-acme-type')!;
+    const confirm = () =>
+      within(card('acme')).queryByRole('button', {
+        name: 'com_config_mcp_transport_switch_confirm',
+      });
+    fireEvent.change(select(), { target: { value: 'websocket' } });
+    expect(confirm()).toBeInTheDocument();
+    act(() => edits.handleDiscard());
+    expect(confirm()).toBeNull();
+    expect(select().value).toBe('streamable-http');
+
+    fireEvent.change(select(), { target: { value: 'websocket' } });
+    act(() => edits.handleFieldChange('mcpServers.acme.timeout', 30000));
+    act(() => edits.handleFieldChange('mcpServers.acme.proxy', 'http://proxy:8080'));
+    fireEvent.click(confirm()!);
+    expect(edits.editedValues).toEqual({
+      'mcpServers.acme.timeout': 30000,
+      'mcpServers.acme.headers': undefined,
+      'mcpServers.acme.type': 'websocket',
+    });
+  });
+
   it('starts an API key as the admin Bearer key, with a masked key input', () => {
     render(<Harness />);
     expand('acme');
@@ -466,6 +493,42 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     expect(
       within(card('acme-docs')).getByText('com_config_mcp_renamed_from:acme'),
     ).toBeInTheDocument();
+    expect(edits.renameEdits).toEqual({ 'mcpServers.acme-docs': 'mcpServers.acme' });
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    openMenu('acme-docs');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const again = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:acme-docs' });
+    fireEvent.change(again, { target: { value: 'acme-kb' } });
+    fireEvent.keyDown(again, { key: 'Enter' });
+    expect(edits.renameEdits).toEqual({ 'mcpServers.acme-kb': 'mcpServers.acme' });
+  });
+
+  it('lists a renamed server deleted before Save under its saved name, with Undo back to the rename', async () => {
+    render(<Harness />);
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:acme' });
+    fireEvent.change(input, { target: { value: 'acme-docs' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    const renamed = { ...edits.editedValues };
+    openMenu('acme-docs');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_delete'));
+    });
+    expect(edits.editedValues).toEqual({ 'mcpServers.acme': undefined });
+    expect(document.querySelector('[data-mcp-server="acme-docs"]')).toBeNull();
+    const ghost = document.querySelector('[data-mcp-deleted="acme"]') as HTMLElement;
+    expect(ghost).toBeInTheDocument();
+    fireEvent.click(within(ghost).getByRole('button'));
+    expect(edits.editedValues).toEqual(renamed);
+    expect(document.querySelector('[data-mcp-deleted="acme"]')).toBeNull();
+    expect(
+      within(card('acme-docs')).getByText('com_config_mcp_renamed_from:acme'),
+    ).toBeInTheDocument();
   });
 
   it('rejects a rename onto an existing name and keeps the input open', async () => {
@@ -479,6 +542,33 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(screen.getByRole('alert')).toHaveTextContent('com_config_server_name_exists');
     expect(edits.editedValues).toEqual({});
+  });
+
+  it('duplicates a server without the masked preview of its stored key, asking for the key again', async () => {
+    const vault: t.ConfigRecord = {
+      vault: {
+        type: 'streamable-http',
+        url: 'https://mcp.vault.dev/mcp',
+        apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '...4321' },
+      },
+    };
+    render(<Harness extra={vault} />);
+    openMenu('vault');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_duplicate'));
+    });
+    expect(edits.editedValues).toEqual({
+      'mcpServers.vault-copy.type': 'streamable-http',
+      'mcpServers.vault-copy.url': 'https://mcp.vault.dev/mcp',
+      'mcpServers.vault-copy.apiKey.source': 'admin',
+      'mcpServers.vault-copy.apiKey.authorization_type': 'bearer',
+    });
+    expect(
+      within(card('vault-copy')).getByText('com_config_mcp_duplicate_secrets'),
+    ).toBeInTheDocument();
+    expect(within(card('vault')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
+    act(() => edits.handleFieldChange('mcpServers.vault-copy.apiKey.key', 'sk-new-key'));
+    expect(within(card('vault-copy')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
   });
 
   it('duplicates a server under a free name', async () => {

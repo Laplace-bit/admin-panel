@@ -2,23 +2,27 @@ import { useContext } from 'react';
 import type * as t from '@/types';
 import { getSecretPreviewValue, isConfigRecord, isRowVisible } from '@/utils';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { hasPathOverlap } from '../../counts';
+import { hasPathOverlap, hasPendingValue } from '../../counts';
 
 const NO_PATHS: ReadonlySet<string> = new Set();
 import { SingleFieldRenderer } from '../../renderer';
 
 /**
  * Whether an area renderer's own row for `path` shows: the tab filter matches
- * it (or something in it), and with "Set values only" it is set.
+ * it (or something in it), and with "Set values only" it is set, or holds an
+ * unsaved value.
  */
 export function isRowShown(
   rowFilter: t.PathIndex | null,
   path: string,
-  fieldProps: Pick<t.FieldRendererProps, 'showConfiguredOnly' | 'configuredPaths'>,
+  fieldProps: Pick<t.FieldRendererProps, 'showConfiguredOnly' | 'configuredPaths' | 'editedValues'>,
 ): boolean {
   if (!isRowVisible(rowFilter, path)) return false;
   if (!fieldProps.showConfiguredOnly) return true;
-  return hasPathOverlap(path, fieldProps.configuredPaths ?? NO_PATHS);
+  return (
+    hasPathOverlap(path, fieldProps.configuredPaths ?? NO_PATHS) ||
+    hasPendingValue(path, fieldProps.editedValues)
+  );
 }
 
 /**

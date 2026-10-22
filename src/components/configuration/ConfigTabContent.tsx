@@ -9,7 +9,12 @@ import {
   UNFOLDED_READ_ONLY_SECTIONS,
   SELF_CONTAINED_SECTION_RENDERERS,
 } from './sections';
-import { countSection, countSectionOverrides, countEntrySectionOverrides } from './counts';
+import {
+  countSection,
+  hasPendingValueIn,
+  countSectionOverrides,
+  countEntrySectionOverrides,
+} from './counts';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { RevealTargetContext } from '@/contexts/RevealTargetContext';
 import { FieldRenderer, SingleFieldRenderer } from './renderer';
@@ -81,6 +86,7 @@ export function ConfigTabContent({
   visibilityEdits,
   onHideField,
   onUnhideField,
+  onRenameEntry,
   visibleSectionIds,
   filterPaths,
   filterText,
@@ -189,7 +195,9 @@ export function ConfigTabContent({
     filtering && sectionHasChanges ? sections.filter((s) => sectionHasChanges[s.id]) : sections;
 
   if (showConfiguredOnly && !previewMode) {
-    visibleSections = visibleSections.filter((s) => (countsById[s.id]?.configured ?? 0) > 0);
+    visibleSections = visibleSections.filter(
+      (s) => (countsById[s.id]?.configured ?? 0) > 0 || hasPendingValueIn(s, editedValues),
+    );
   }
 
   if (visibleSectionIds) {
@@ -272,6 +280,7 @@ export function ConfigTabContent({
       onValidationError,
       editSessionId,
       onUnhideField: sectionDisabled ? undefined : onUnhideField,
+      onRenameEntry,
     };
   };
 

@@ -43,6 +43,8 @@ const OPEN_WHEN_EMPTY_KEYS: ReadonlySet<string> = new Set([
 
 const INDEX_SEGMENT_RE = /^\d+$/;
 
+const NO_RENAMES: Readonly<Record<string, string>> = {};
+
 interface DiffContext {
   input: t.ChangeSummaryInput;
   sourcePath: string;
@@ -164,6 +166,23 @@ function termsWarning(
   return path === TERMS_ACCEPTANCE_PATH && after === true && before !== true
     ? ['requireTerms']
     : [];
+}
+
+const isRestricting = (value: t.ConfigValue): boolean => Array.isArray(value) && value.length > 0;
+
+/**
+ * A reset of a domain restriction (or of an object holding one) to a layer
+ * that sets none, or an empty list: everyone can sign up once it is saved.
+ */
+function resetWarning(
+  path: string,
+  before: t.ConfigValue,
+  after: t.ConfigValue,
+): t.ChangeWarning[] {
+  if (path !== REGISTRATION_DOMAINS && !REGISTRATION_DOMAINS.startsWith(`${path}.`)) return [];
+  const rest = REGISTRATION_DOMAINS.slice(path.length + 1);
+  const at = (value: t.ConfigValue) => (rest ? getValueAtPath(value, rest) : value);
+  return isRestricting(at(before)) && !isRestricting(at(after)) ? ['openRegistration'] : [];
 }
 
 /**
@@ -504,14 +523,16 @@ function resetItem(path: string, input: t.ChangeSummaryInput): t.ChangeSummaryIt
     path,
     (entryPath) => getValueAtPath(input.baseline, entryPath) ?? input.ownAt(entryPath),
   );
+  const before = input.ownAt(path);
   const item: t.ChangeSummaryItem = {
     path,
     kind: 'reverted',
-    before: input.ownAt(path),
+    before,
     after: undefined,
     revertTarget: lower,
     sourcePath: path,
     secret: isSecretPath(path) || undefined,
+    warnings: warningsOf(resetWarning(path, before, lower?.value)),
   };
   if (!entry) return item;
   if (entry.entryPath === path && lower?.value == null) {
@@ -563,23 +584,12 @@ export function summarizeChanges(input: t.ChangeSummaryInput): t.ChangeSummaryIt
     items.push(entryItem('added', entry, undefined, unflattenObject(leaves), ctx));
   }
   for (const path of input.resets) items.push(resetItem(path, input));
-  return pairRecordRenames(items);
+  return pairRecordRenames(items, input.renames ?? NO_RENAMES);
 }
 
 /** An entry change of a whole entry (added or removed), not one of its fields. */
 function isWholeEntry(item: t.ChangeSummaryItem, kind: t.ChangeKind): boolean {
   return item.kind === kind && item.entryPath === item.path && item.collectionPath != null;
-}
-
-/** Keys that say where a record entry points, so a renamed MCP server edited in the same save is still matched. */
-const RECORD_ENTRY_ANCHORS = ['url', 'command'];
-
-function sharesAnchor(before: t.ConfigValue, after: t.ConfigValue): boolean {
-  if (!isConfigRecord(before) || !isConfigRecord(after)) return false;
-  return RECORD_ENTRY_ANCHORS.some((key) => {
-    const value = before[key];
-    return typeof value === 'string' && value !== '' && value === after[key];
-  });
 }
 
 /** The fields a renamed entry changes as well, as rows under its new name. */
@@ -613,24 +623,35 @@ function renamedFieldChanges(
 /**
  * A record entry removed and one added in the same save (an MCP server
  * renamed: the old key's leaves are removed, the new key's written) read as
- * one rename: an added entry with the same value as a removed one, else one
- * that still points where the removed one did (same URL or command), whose
- * other changes are listed under it.
+ * one rename: the entry the panel recorded as renamed from the removed one
+ * (`renames`), whose other changes are listed under it, else an added entry
+ * with the same value as a removed one. A shared URL or command alone is no
+ * proof: a server deleted and an unrelated one added for the same endpoint
+ * stay a removal and an addition.
  */
-function pairRecordRenames(items: t.ChangeSummaryItem[]): t.ChangeSummaryItem[] {
+function pairRecordRenames(
+  items: t.ChangeSummaryItem[],
+  renames: Readonly<Record<string, string>>,
+): t.ChangeSummaryItem[] {
   const removed = items.filter((item) => isWholeEntry(item, 'removed'));
   if (removed.length === 0) return items;
   const paired = new Set<t.ChangeSummaryItem>();
-  const findMatch = (item: t.ChangeSummaryItem, matches: typeof isConfigValueEqual) =>
+  const findMatch = (
+    item: t.ChangeSummaryItem,
+    matches: (candidate: t.ChangeSummaryItem) => boolean,
+  ) =>
     removed.find(
       (candidate) =>
         !paired.has(candidate) &&
         candidate.collectionPath === item.collectionPath &&
-        matches(candidate.before, item.after),
+        matches(candidate),
     );
   const result = items.flatMap((item): t.ChangeSummaryItem[] => {
     if (!isWholeEntry(item, 'added') || !isConfigRecord(item.after)) return [item];
-    const match = findMatch(item, isConfigValueEqual) ?? findMatch(item, sharesAnchor);
+    const renamedFrom = item.entryPath ? renames[item.entryPath] : undefined;
+    const match =
+      findMatch(item, (candidate) => candidate.entryPath === renamedFrom) ??
+      findMatch(item, (candidate) => isConfigValueEqual(candidate.before, item.after));
     if (!match) return [item];
     paired.add(match);
     const renamed: t.ChangeSummaryItem = {

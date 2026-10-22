@@ -130,6 +130,19 @@ describe('auth methods (MCP-4)', () => {
     expect(plan.set).toEqual([]);
   });
 
+  it('keeps an inherited `requiresOAuth: false` without blocking another method', () => {
+    const yaml = { url: 'https://mcp.example.com', requiresOAuth: false };
+    for (const next of ['apiKey', 'obo', 'none'] as const) {
+      const plan = planAuthSwitch(yaml, next, yaml);
+      expect(plan.locked).toEqual([]);
+      expect(plan.prune).toEqual([]);
+    }
+    expect(planAuthSwitch(yaml, 'apiKey', yaml).set).toEqual([
+      ['apiKey', { source: 'admin', authorization_type: 'bearer' }],
+    ]);
+    expect(lockedAuthMethod(yaml)).toBeNull();
+  });
+
   it('cannot switch away from settings librechat.yaml defines', () => {
     const yaml = { oauth: { client_id: '${ID}' } };
     expect(planAuthSwitch({ oauth: { client_id: '${ID}' } }, 'none', yaml).locked).toEqual([

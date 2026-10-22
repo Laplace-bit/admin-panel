@@ -20,8 +20,14 @@ export function StorageConfirm({
   const localize = useLocalize();
   const scope = useValuesScope();
   if (!request) return null;
-  const to = localize(STORAGE_BACKEND_LABELS[request.to]);
-  const from = localize(STORAGE_BACKEND_LABELS[request.from]);
+  /** One backend by name; skill files split by type as "S3 (images) and Azure (documents)". */
+  const nameOf = ([first, second]: readonly t.StorageBackend[]): string => {
+    const name = (backend: t.StorageBackend) => localize(STORAGE_BACKEND_LABELS[backend]);
+    if (second === undefined) return name(first);
+    return localize('com_config_storage_split', { image: name(first), document: name(second) });
+  };
+  const to = nameOf(request.to);
+  const from = nameOf(request.from);
   const title = request.fileType
     ? localize(`com_config_storage_confirm_type_${request.fileType}`, { backend: to })
     : localize('com_config_storage_confirm_title', { backend: to });
@@ -48,7 +54,9 @@ export function StorageConfirm({
           </li>
         )}
       </ul>
-      <EnvVars backend={request.to} />
+      {[...new Set(request.to)].map((backend) => (
+        <EnvVars key={backend} backend={backend} />
+      ))}
     </ConfirmChoiceDialog>
   );
 }

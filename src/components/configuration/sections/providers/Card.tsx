@@ -2,7 +2,6 @@ import { useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import {
-  isPathSet,
   formatSummary,
   summarizeFields,
   createSummaryReader,
@@ -12,9 +11,9 @@ import { useLocalize, useGlobalTitleBlock, usePersistentExpanded } from '@/hooks
 import { getValueAtPath, isConfigRecord, getUnknownConfigEntries } from '@/utils';
 import { GLOBAL_PROVIDER_KEY, DEFAULT_RECURSION_LIMIT } from '@/constants';
 import { ProviderStatusBadge, ProviderStatusRow } from './ProviderStatus';
+import { isPathSet, countConfigured, hasPathOverlap } from '../../counts';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
 import { ProviderGroup, PROVIDERS_STORAGE_KEY } from './Group';
-import { countConfigured, hasPathOverlap } from '../../counts';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { UnknownSettings } from '../../UnknownSettings';
 import { SettingsSection } from '../../SettingsSection';

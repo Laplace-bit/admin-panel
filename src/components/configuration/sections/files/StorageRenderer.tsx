@@ -78,8 +78,14 @@ export function StorageRenderer({
     const from = type === 'default' ? resolved.primary : resolved.default;
     return localize('com_config_storage_inherit', { name: nameOf(from) });
   };
-  const inheritedOf = (type: t.StorageFileType): t.StorageBackend =>
-    type === 'default' ? resolved.primary : resolved.default;
+  /** Skill files follow the image and document backends (`getFileStrategy`), not the default. */
+  const inheritedOf = (type: t.StorageFileType): readonly t.StorageBackend[] => {
+    if (type === 'default') return [resolved.primary];
+    if (type !== 'skills') return [resolved.default];
+    return resolved.image === resolved.document
+      ? [resolved.image]
+      : [resolved.image, resolved.document];
+  };
 
   const cloudFrontValue = getValueAtPath(yaml, CLOUDFRONT);
   const cloudFrontConfigured =
@@ -113,7 +119,7 @@ export function StorageRenderer({
           path={PRIMARY}
           label={localize('com_config_storage_primary')}
           description={localize('com_config_storage_primary_desc')}
-          inherited={resolved.primary}
+          inherited={[resolved.primary]}
           inheritLabel={localize('com_config_storage_inherit_default', {
             name: nameOf(resolved.primary),
           })}

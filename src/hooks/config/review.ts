@@ -110,6 +110,7 @@ export function useChangeReview({
       isScope,
       fields: schemaTree,
       schemaPaths: schemaPathSet,
+      renames: edits.renameEdits,
     }),
     [
       savePlan,
@@ -121,6 +122,7 @@ export function useChangeReview({
       yamlEntryKeys,
       schemaTree,
       schemaPathSet,
+      edits.renameEdits,
     ],
   );
 

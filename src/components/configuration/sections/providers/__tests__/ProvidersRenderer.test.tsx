@@ -208,4 +208,31 @@ describe('ProvidersRenderer', () => {
     expect(card('google')).toBeNull();
     expect(card('allowedAddresses')).toBeNull();
   });
+
+  it('keeps unsaved values of unset settings reachable when only set values are shown', () => {
+    const edits: t.FlatConfigMap = {
+      'endpoints.openAI.streamRate': 50,
+      'endpoints.openAI.titleMethod': 'structured',
+      'endpoints.google.titleModel': 'gemini-x',
+    };
+    renderProviders({
+      showConfiguredOnly: true,
+      editedValues: edits,
+      getValue: (path, fallback) =>
+        path in edits ? edits[path] : (fallback ?? getValueAtPath(CONFIG, path)),
+    });
+    expect(card('google')).toBeTruthy();
+    fireEvent.click(trigger('openAI'));
+    const streaming = document.getElementById('section-endpoints.openAI-streaming') as HTMLElement;
+    expect(streaming).toBeTruthy();
+    expect(document.getElementById('section-endpoints.openAI-reasoning')).toBeNull();
+    fireEvent.click(streaming.querySelector('.settings-trigger') as HTMLButtonElement);
+    expect(document.getElementById('endpoints-openAI-streamRate')).toBeTruthy();
+    expect(document.getElementById('endpoints-openAI-maxToolResultChars')).toBeNull();
+    const titles = document.getElementById('section-endpoints.openAI-titles') as HTMLElement;
+    fireEvent.click(titles.querySelector('.settings-trigger') as HTMLButtonElement);
+    expect(within(titles).getByText('Structured', { exact: false })).toBeTruthy();
+    expect(document.getElementById('endpoints-openAI-titleModel')).toBeTruthy();
+    expect(document.getElementById('endpoints-openAI-titlePrompt')).toBeNull();
+  });
 });
