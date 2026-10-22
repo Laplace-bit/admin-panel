@@ -9,6 +9,7 @@ import { endpointGroups, mcpGroups } from './groups';
 import { TextField } from '../../fields/TextField';
 import { describeField, labelForPath } from '../../meta';
 import { GroupedSelect } from './GroupedSelect';
+import { ASSISTANT_ENDPOINTS } from './params';
 import { SpecFieldRow } from './SpecFieldRow';
 import { toFieldId } from '../../renderer';
 import { uniqueOptions } from './options';
@@ -252,8 +253,10 @@ export function GroupField({
 
 /**
  * Endpoint*: a built-in provider or a custom endpoint; one the configuration
- * lacks is flagged. Leaving the agents endpoint clears the agent ID, which
- * only an agents spec uses (and shows).
+ * lacks is flagged. A preset naming only an agent shows the agents endpoint
+ * LibreChat infers for it. Leaving the agents endpoint clears the agent ID,
+ * and leaving the assistants endpoints the assistant ID: only those specs
+ * use (and show) them.
  */
 export function EndpointField({
   field,
@@ -268,6 +271,7 @@ export function EndpointField({
   const dataPath = `${path}.preset.endpoint`;
   const { label, description } = useRowLabel(dataPath, field);
   const preset = isConfigRecord(spec.preset) ? spec.preset : {};
+  const endpoint = specEndpoint(spec);
   const problem = problemAt(problems, index, 'preset.endpoint');
   const isNew = useIsNewSpec(spec);
   return (
@@ -277,11 +281,11 @@ export function EndpointField({
       description={description}
       required
       problem={problem}
-      quietWhenEmpty={isNew && textOf(preset.endpoint).trim() === ''}
+      quietWhenEmpty={isNew && endpoint === ''}
       control={
         <GroupedSelect
           id={toFieldId(dataPath)}
-          value={textOf(preset.endpoint) || undefined}
+          value={endpoint || undefined}
           groups={endpointGroups(options, localize)}
           required
           disabled={disabled}
@@ -294,6 +298,9 @@ export function EndpointField({
             onPresetChange('endpoint', next);
             if (next !== EModelEndpoint.agents && preset.agent_id !== undefined) {
               onPresetChange('agent_id', undefined);
+            }
+            if (!ASSISTANT_ENDPOINTS.has(next) && preset.assistant_id !== undefined) {
+              onPresetChange('assistant_id', undefined);
             }
           }}
         />

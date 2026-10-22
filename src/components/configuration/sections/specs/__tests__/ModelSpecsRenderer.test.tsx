@@ -12,10 +12,12 @@ import {
 } from '@/test/layers';
 import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
+import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { ModelSpecsRenderer } from '../ModelSpecsRenderer';
 import { extractSchemaTree } from '@/server/config';
 import { previewText } from '../SpecsSettings';
 import { slugify } from '../SpecFields';
+import { createPathIndex } from '@/utils';
 import { withDefault } from '../SpecList';
 
 vi.mock('@/hooks/useLocalize', () => ({
@@ -344,6 +346,109 @@ describe('ModelSpecsRenderer', () => {
     expect(document.getElementById('modelSpecs-list-0-preset-model')).toHaveValue(
       'claude-sonnet-4-5',
     );
+  });
+
+  it('clears the assistant ID when an assistants spec moves to another endpoint', () => {
+    const assistant: t.ConfigRecord = {
+      name: 'helper',
+      label: 'Helper',
+      preset: { endpoint: 'assistants', model: 'gpt-4o', assistant_id: 'asst_1' },
+    };
+    const { onChange } = renderSpecs({ list: [assistant] });
+    fireEvent.click(document.querySelector('[data-entry-card] button[aria-expanded="false"]')!);
+    expect(document.getElementById('modelSpecs-list-0-preset-assistant_id')).not.toBeNull();
+    fireEvent.change(document.getElementById('modelSpecs-list-0-preset-endpoint')!, {
+      target: { value: 'azureAssistants' },
+    });
+    expect(onChange).toHaveBeenLastCalledWith('modelSpecs.list.0', {
+      ...assistant,
+      preset: { endpoint: 'azureAssistants', model: 'gpt-4o', assistant_id: 'asst_1' },
+    });
+    fireEvent.change(document.getElementById('modelSpecs-list-0-preset-endpoint')!, {
+      target: { value: 'openAI' },
+    });
+    expect(onChange).toHaveBeenLastCalledWith('modelSpecs.list.0', {
+      ...assistant,
+      preset: { endpoint: 'openAI', model: 'gpt-4o' },
+    });
+  });
+
+  it('shows the assistant ID once, in the Model group, never among the parameters', () => {
+    renderSpecs({
+      list: [
+        {
+          name: 'helper',
+          label: 'Helper',
+          preset: { endpoint: 'assistants', model: 'gpt-4o', assistant_id: 'asst_1', topK: 3 },
+        },
+      ],
+    });
+    fireEvent.click(document.querySelector('[data-entry-card] button[aria-expanded="false"]')!);
+    fireEvent.click(screen.getByRole('button', { name: /com_config_specs_group_params/ }));
+    expect(document.getElementById('modelSpecs-list-0-preset-topK')).not.toBeNull();
+    expect(document.querySelectorAll('#modelSpecs-list-0-preset-assistant_id')).toHaveLength(1);
+  });
+
+  it('lists only the parameters the tab filter matches', () => {
+    const filtered = (paths: string[]) =>
+      render(
+        <RowFilterContext.Provider value={createPathIndex(paths)}>
+          <ConfigValuesProvider value={valuesDataFixture(baseLayersFixture())}>
+            <ModelSpecsRenderer
+              fields={specFields}
+              parentPath="modelSpecs"
+              parentValue={{ list: SPECS }}
+              getValue={(path, fallback) => (path === 'modelSpecs.list' ? SPECS : fallback)}
+              onChange={vi.fn()}
+              permissions={{ canView: true, canEdit: true, canAssign: true }}
+            />
+          </ConfigValuesProvider>
+        </RowFilterContext.Provider>,
+      );
+    const first = filtered(['modelSpecs.list.0.preset.temperature']);
+    const params = screen.getByRole('button', { name: /com_config_specs_group_params/ });
+    if (params.getAttribute('aria-expanded') === 'false') fireEvent.click(params);
+    expect(document.getElementById('modelSpecs-list-0-preset-temperature')).not.toBeNull();
+    expect(document.getElementById('modelSpecs-list-0-preset-top_p')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'com_config_specs_raw' })).toBeNull();
+    first.unmount();
+    filtered(['modelSpecs.list.0.preset.model']);
+    expect(document.getElementById('modelSpecs-list-0-preset-model')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /com_config_specs_group_params/ })).toBeNull();
+  });
+
+  it('keeps settings the panel does not know visible under "Set values only"', () => {
+    renderSpecs(
+      {
+        list: [
+          {
+            name: 'gpt',
+            label: 'GPT',
+            futureSetting: true,
+            preset: { endpoint: 'openAI', model: 'gpt-4o', legacyKey: 1 },
+          },
+        ],
+      },
+      { showConfiguredOnly: true },
+    );
+    fireEvent.click(document.querySelector('[data-entry-card] button[aria-expanded="false"]')!);
+    const advanced = screen.getByRole('button', { name: /com_config_specs_group_advanced/ });
+    fireEvent.click(advanced);
+    expect(screen.getByText('futureSetting')).toBeInTheDocument();
+    expect(screen.getByText('legacyKey')).toBeInTheDocument();
+  });
+
+  it('shows the agents endpoint LibreChat infers for a preset naming only an agent', () => {
+    renderSpecs(
+      { list: [{ name: 'helper', label: 'Helper', preset: { agent_id: 'agent_1' } }] },
+      { showConfiguredOnly: true },
+    );
+    fireEvent.click(document.querySelector('[data-entry-card] button[aria-expanded="false"]')!);
+    const endpoint = document.getElementById(
+      'modelSpecs-list-0-preset-endpoint',
+    ) as HTMLSelectElement;
+    expect(endpoint.value).toBe('agents');
+    expect(endpoint.getAttribute('aria-invalid')).not.toBe('true');
   });
 
   it('offers an Anthropic spec only Anthropic parameters', () => {
