@@ -196,6 +196,20 @@ describe('ProvidersRenderer', () => {
     expect(card('allowedAddresses')).toBeNull();
   });
 
+  it('keeps configured Azure groups and their table when only set values are shown', () => {
+    renderProviders({ showConfiguredOnly: true });
+    fireEvent.click(trigger('azureOpenAI'));
+    const groups = document.getElementById('section-endpoints.azureOpenAI-groups') as HTMLElement;
+    expect(groups).toBeTruthy();
+    expect(within(groups).getByText('com_config_providers_azure_readonly')).toBeTruthy();
+    expect(
+      within(groups).getByRole('button', {
+        name: 'com_config_providers_azure_details_aria:{"group":"eastus"}',
+      }),
+    ).toBeTruthy();
+    expect(document.getElementById('endpoints-azureOpenAI-groups')).toBeNull();
+  });
+
   it('keeps unsaved values of unset settings reachable when only set values are shown', () => {
     const edits: t.FlatConfigMap = {
       'endpoints.openAI.streamRate': 50,
