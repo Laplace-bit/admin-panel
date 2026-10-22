@@ -135,6 +135,8 @@ export interface SpecEditorProps {
 export interface PresetEditorProps {
   presetField: SchemaField;
   preset: ConfigRecord;
+  /** The parameters the spec's endpoint and model offer (`presetParams`). */
+  params: PresetParam[];
   /** Data path of the preset (`modelSpecs.list.3.preset`). */
   path: string;
   onChange: (key: string, value: ConfigValue) => void;

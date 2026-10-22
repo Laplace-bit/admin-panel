@@ -25,6 +25,8 @@ import { labelForPath } from '../../meta';
 import { SetBadge } from './SetBadge';
 
 const NO_PATHS: ReadonlySet<string> = new Set();
+const AZURE_TABLE_KEYS: ReadonlySet<string> = new Set(['groups']);
+const VERTEX_KEYS: ReadonlySet<string> = new Set(['vertex']);
 
 /**
  * One provider of the AI providers tab (AP-4): an h2 card whose header names
@@ -110,7 +112,7 @@ export function ProviderCard({ field, parentPath, parentValue, ...rest }: t.Prov
       const groupsValue = getValue(groupsPath, getValueAtPath(providerValue, 'groups'));
       const groupCount = Array.isArray(groupsValue) ? groupsValue.length : 0;
       return {
-        group: { ...group, fields: group.fields.filter((child) => child.key !== 'groups') },
+        hiddenKeys: AZURE_TABLE_KEYS,
         countBadge:
           groupCount > 0 ? (
             <span className="config-count-badge config-count-badge-active">
@@ -142,7 +144,7 @@ export function ProviderCard({ field, parentPath, parentValue, ...rest }: t.Prov
       );
       if (vertexSet) return {};
       return {
-        group: { ...group, fields: group.fields.filter((child) => child.key !== 'vertex') },
+        hiddenKeys: VERTEX_KEYS,
         after: (
           <p className="settings-help m-0 py-2">{localize('com_config_providers_vertex_none')}</p>
         ),

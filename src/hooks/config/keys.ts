@@ -2,10 +2,38 @@ import { useRef } from 'react';
 import type * as t from '@/types';
 
 /**
+ * Keys for a list of unchanged length: by position (in-place edits and
+ * renames make new items), unless the changed positions only hold previous
+ * items moved there (a reorder), which take their keys with them.
+ */
+function keysOfSameLength<T>(
+  prev: readonly T[],
+  prevKeys: readonly string[],
+  next: readonly T[],
+): string[] {
+  const changed = next.flatMap((item, i) => (Object.is(item, prev[i]) ? [] : [i]));
+  if (changed.length < 2) return [...prevKeys];
+  const slots = new Map<T, number[]>();
+  for (const j of changed) {
+    const list = slots.get(prev[j]);
+    if (list) list.push(j);
+    else slots.set(prev[j], [j]);
+  }
+  const keys = [...prevKeys];
+  for (const i of changed) {
+    const from = slots.get(next[i])?.shift();
+    if (from === undefined) return [...prevKeys];
+    keys[i] = prevKeys[from];
+  }
+  return keys;
+}
+
+/**
  * Carries React keys from `prev` to `next` items: same length keeps keys by
- * position (in-place edits, renames); otherwise an item reuses the key of an
- * unused previous item that is the same reference or has the same identity,
- * and anything else gets a fresh key. Removing, appending or reloading a list
+ * position (in-place edits, renames) or, for a reorder, moves them with
+ * their items; otherwise an item reuses the key of an unused previous item
+ * that is the same reference or has the same identity, and anything else
+ * gets a fresh key. Removing, appending, moving or reloading entries
  * therefore never remounts (or collapses) the entries that stayed.
  */
 export function reconcileKeys<T>(
@@ -15,7 +43,9 @@ export function reconcileKeys<T>(
   identity: (item: T) => string | null,
   createKey: () => string,
 ): string[] {
-  if (prev.length === next.length && prevKeys.length === prev.length) return [...prevKeys];
+  if (prev.length === next.length && prevKeys.length === prev.length) {
+    return keysOfSameLength(prev, prevKeys, next);
+  }
   const used = new Set<number>();
   const byIdentity = new Map<string, number[]>();
   for (let i = 0; i < prev.length; i++) {

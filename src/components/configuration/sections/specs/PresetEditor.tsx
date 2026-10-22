@@ -1,23 +1,20 @@
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef, useContext } from 'react';
 import { Icon } from '@clickhouse/click-ui';
 import type * as t from '@/types';
-import { MODEL_KEYS, PROMPT_KEYS, PRESET_DENYLIST, paramField, presetParams } from './params';
+import { MODEL_KEYS, PROMPT_KEYS, PRESET_DENYLIST, paramField } from './params';
 import { INPUT_CLASSES, widthClass } from '../../fields/display';
+import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { renderInlineField, toFieldId } from '../../renderer';
+import { FieldControl } from '../../renderer/FieldControl';
+import { cn, isConfigRecord, isRowVisible } from '@/utils';
 import { describeField, labelForPath } from '../../meta';
 import { useFieldError, useLocalize } from '@/hooks';
-import { FieldControl } from '../../renderer/FieldControl';
 import { CodeField } from '../../fields/CodeField';
 import { SettingsRow } from '../../SettingsRow';
 import { specEndpoint } from './validation';
 import { useSpecList } from './context';
-import { cn, isConfigRecord } from '@/utils';
 
 const PICK = '\u0000pick';
-
-function textOf(value: t.ConfigValue): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
 
 /** One model parameter: the shared control with the endpoint's range, choices and default. */
 function ParamRow({
@@ -81,11 +78,13 @@ function ParamRow({
  * offers, with their ranges, choices and defaults. Preset fields the spec
  * sets that the endpoint doesn't offer stay listed (so they can be changed or
  * removed); "Advanced (raw)" adds any other preset field LibreChat accepts,
- * internal conversation fields excepted, or edits the preset as YAML.
+ * internal conversation fields excepted, or edits the preset as YAML. While
+ * the tab filter is on, only the matching parameters are listed.
  */
 export function PresetEditor({
   presetField,
   preset,
+  params,
   path,
   onChange,
   onReplace,
@@ -94,24 +93,24 @@ export function PresetEditor({
 }: t.PresetEditorProps) {
   const localize = useLocalize();
   const { options, configuredOnly } = useSpecList();
+  const rowFilter = useContext(RowFilterContext);
   const [addedKeys, setAddedKeys] = useState<string[]>([]);
   const [rawOpen, setRawOpen] = useState(false);
   const focusKeyRef = useRef<string | null>(null);
   const endpoint = specEndpoint({ preset });
-  const model = textOf(preset.model);
   const children = presetField.children ?? [];
   const byKey = useMemo(() => new Map(children.map((field) => [field.key, field])), [children]);
-  const { params } = useMemo(
-    () => presetParams(endpoint, model, options.customEndpoint(endpoint), new Set(byKey.keys())),
-    [endpoint, model, options, byKey],
-  );
+  const isShown = (key: string) => isRowVisible(rowFilter, `${path}.${key}`);
+  const showsNotes = !configuredOnly && !rowFilter;
   const endpointLabel =
     options.endpoints.find((option) => option.value === endpoint)?.label ?? endpoint;
 
   const handled = new Set([...MODEL_KEYS, ...PROMPT_KEYS, ...params.map((param) => param.key)]);
   const others = children.filter(
     (field) =>
-      !handled.has(field.key) && (preset[field.key] !== undefined || addedKeys.includes(field.key)),
+      !handled.has(field.key) &&
+      (preset[field.key] !== undefined || addedKeys.includes(field.key)) &&
+      isShown(field.key),
   );
   const pickable = children
     .filter(
@@ -143,17 +142,19 @@ export function PresetEditor({
 
   return (
     <>
-      {!endpoint && !configuredOnly && (
+      {!endpoint && showsNotes && (
         <p className="settings-group-desc">{localize('com_config_specs_params_no_endpoint')}</p>
       )}
-      {endpoint && params.length === 0 && !configuredOnly && (
+      {endpoint && params.length === 0 && showsNotes && (
         <p className="settings-group-desc">
           {localize('com_config_specs_params_none', { endpoint: endpointLabel })}
         </p>
       )}
       {params.map((param) => {
         const field = byKey.get(param.key);
-        if (!field || (configuredOnly && preset[param.key] === undefined)) return null;
+        if (!field || (configuredOnly && preset[param.key] === undefined) || !isShown(param.key)) {
+          return null;
+        }
         return (
           <ParamRow
             key={param.key}
@@ -192,7 +193,7 @@ export function PresetEditor({
           )}
         </>
       )}
-      {!disabled && !configuredOnly && (
+      {!disabled && showsNotes && (
         <div className="flex flex-col gap-2 pt-2">
           <button
             type="button"
