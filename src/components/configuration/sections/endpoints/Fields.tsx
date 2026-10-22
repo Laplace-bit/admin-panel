@@ -7,7 +7,7 @@
  */
 import { useId, useState } from 'react';
 import { Button } from '@clickhouse/click-ui';
-import { EModelEndpoint, paramSettings } from 'librechat-data-provider';
+import { EModelEndpoint, paramSettings, normalizeEndpointName } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { useLocalize, useFieldError, useFieldState, useOptionSources } from '@/hooks';
@@ -298,7 +298,8 @@ function ReferenceRow({
 /**
  * A setting that names an endpoint (`titleEndpoint`, …): the providers
  * LibreChat can hand the work to (built-in providers and custom endpoints),
- * except the endpoint being edited.
+ * except the endpoint being edited, matched by the name LibreChat serves it
+ * under (the options' values: `Ollama` is served as `ollama`).
  */
 export function EndpointRefRow({
   self,
@@ -315,7 +316,8 @@ export function EndpointRefRow({
 }) {
   const localize = useLocalize();
   const { options: providers } = useOptionSources('providers');
-  const options = providers.filter((option) => option.value !== self);
+  const served = normalizeEndpointName(self);
+  const options = providers.filter((option) => option.value !== served);
   return (
     <ReferenceRow
       {...props}

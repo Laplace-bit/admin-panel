@@ -313,6 +313,7 @@
   "com_config_mcp_create_fix_rows": "Fix the rows marked in red: {{fields}}",
   "com_config_mcp_create_missing": "Still needed: {{fields}}",
   "com_config_mcp_create_field_error": "{{field}}: {{message}}",
+  "com_config_mcp_create_invalid": "This server can't be created as set up: {{message}}",
   "com_config_mcp_create_name_placeholder": "e.g. github or acme-docs",
   "com_config_mcp_create_override": "Override {{name}}",
   "com_config_mcp_create_transport": "Transport",

@@ -10,40 +10,43 @@ export function findUnknownConfigPaths(raw: Record<string, t.ConfigValue>): stri
   return findUnknownImportPaths(raw);
 }
 
-/**
- * An imported `mcpServers` block for validation: an entry naming a server
- * that already exists is checked merged onto it, since a sparse override
- * (`github: { timeout: 120000 }`) is how the server editor saves changes too.
- */
-function withKnownMcpServers(
-  imported: t.ConfigValue,
-  known: t.ConfigRecord,
-): { mcpServers?: t.ConfigRecord } {
-  if (!isConfigRecord(imported)) return {};
-  const merged: t.ConfigRecord = {};
-  for (const [name, entry] of Object.entries(imported)) {
-    const existing = known[name];
-    merged[name] =
-      isConfigRecord(existing) && isConfigRecord(entry) ? { ...existing, ...entry } : entry;
-  }
-  return { mcpServers: merged };
+/** What a non-object value is, in Zod's words ("Expected object, received array"). */
+function received(value: t.ConfigValue): string {
+  if (Array.isArray(value)) return 'array';
+  return value === null ? 'null' : typeof value;
 }
 
 /**
- * Parses and validates pasted/uploaded YAML for import. MCP servers the
- * configuration already has (`knownMcpServers`) are validated with the
- * imported fields merged onto them. Validation runs on a
- * copy with `version` replaced (a snippet need not carry it, and import never
- * writes it, so `version: 1.2` read as a number must not fail), but the result
+ * Problems of an imported `mcpServers` block before a target is chosen: it
+ * must hold servers by name, each an object. Whether a server is complete
+ * depends on the target (a sparse `github: { timeout: 120000 }` overrides
+ * the target's own `github`), so the preview validates each one merged onto
+ * the chosen target's servers, as the save does.
+ */
+function mcpShapeErrors(servers: t.ConfigValue): t.ImportValidationError[] {
+  if (servers === undefined) return [];
+  if (!isConfigRecord(servers)) {
+    return [{ path: 'mcpServers', message: `Expected object, received ${received(servers)}` }];
+  }
+  return Object.entries(servers).flatMap(([name, server]) =>
+    isConfigRecord(server)
+      ? []
+      : [{ path: `mcpServers.${name}`, message: `Expected object, received ${received(server)}` }],
+  );
+}
+
+/**
+ * Parses and validates pasted/uploaded YAML for import. MCP servers are
+ * checked for shape only (`mcpShapeErrors`): the preview validates them
+ * against the chosen target. Validation runs on a copy with `version`
+ * replaced (a snippet need not carry it, and import never writes it, so
+ * `version: 1.2` read as a number must not fail), but the result
  * is the raw parsed object: no Zod defaults are injected and keys the bundled
  * schema does not know are kept (and reported in `unknownPaths`). Keys the
  * admin API can't store do not fail the parse: the import plan leaves out
  * only the leaves that carry them, and only when they would be written.
  */
-export function parseConfigYaml(
-  yamlContent: string,
-  knownMcpServers: t.ConfigRecord = {},
-): t.ImportParseResult {
+export function parseConfigYaml(yamlContent: string): t.ImportParseResult {
   const failure = (
     error: string,
     extra: Pick<t.ImportParseResult, 'validationErrors' | 'mark'> = {},
@@ -77,20 +80,19 @@ export function parseConfigYaml(
   }
 
   const appConfig = rawConfig as t.ConfigRecord;
-  const result = configSchema.safeParse({
-    ...appConfig,
-    ...withKnownMcpServers(appConfig.mcpServers, knownMcpServers),
-    version: '1.0.0',
-  });
-  if (!result.success) {
-    return failure('Config validation failed', {
-      validationErrors: result.error.errors.map(
-        (e: { path: (string | number)[]; message: string }) => ({
+  const { mcpServers, ...rest } = appConfig;
+  const result = configSchema.safeParse({ ...rest, version: '1.0.0' });
+  const validationErrors = [
+    ...(result.success
+      ? []
+      : result.error.errors.map((e: { path: (string | number)[]; message: string }) => ({
           path: e.path.join('.'),
           message: e.message,
-        }),
-      ),
-    });
+        }))),
+    ...mcpShapeErrors(mcpServers),
+  ];
+  if (validationErrors.length > 0) {
+    return failure('Config validation failed', { validationErrors });
   }
 
   return {
@@ -101,12 +103,5 @@ export function parseConfigYaml(
 }
 
 export const parseImportedYaml = createServerFn({ method: 'POST' })
-  .inputValidator(
-    z.object({
-      yamlContent: z.string(),
-      knownMcpServers: z.record(z.string(), z.unknown()).optional(),
-    }),
-  )
-  .handler(async ({ data }) =>
-    parseConfigYaml(data.yamlContent, data.knownMcpServers as t.ConfigRecord | undefined),
-  );
+  .inputValidator(z.object({ yamlContent: z.string() }))
+  .handler(async ({ data }) => parseConfigYaml(data.yamlContent));

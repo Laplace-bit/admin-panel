@@ -315,6 +315,29 @@ describe('McpServersRenderer — create (MCP-9)', () => {
   });
 });
 
+describe('McpServersRenderer — create explains an unparsable URL (MCP-9)', () => {
+  it('marks the URL invalid with a message instead of only disabling Create', async () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: /com_config_create_mcp_server/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(
+      within(dialog).getByPlaceholderText('com_config_mcp_create_name_placeholder'),
+      { target: { value: 'srv-u' } },
+    );
+    const url = dialog.querySelector<HTMLInputElement>('#mcpDraft-url input, input#mcpDraft-url');
+    if (!url) throw new Error('no URL input');
+    fireEvent.change(url, { target: { value: 'not a url' } });
+    fireEvent.blur(url);
+    expect(within(dialog).getByRole('button', { name: 'com_ui_create' })).toBeDisabled();
+    expect(url).toHaveAttribute('aria-invalid', 'true');
+    expect(url).toHaveAccessibleDescription(expect.stringContaining('must be a valid URL'));
+    fireEvent.change(url, { target: { value: 'https://mcp.example.com/u' } });
+    fireEvent.blur(url);
+    expect(url).not.toHaveAttribute('aria-invalid');
+    expect(within(dialog).getByRole('button', { name: 'com_ui_create' })).toBeEnabled();
+  });
+});
+
 describe('McpServersRenderer — create validates header rows (MCP-9)', () => {
   async function openFilledDialog() {
     render(<Harness />);

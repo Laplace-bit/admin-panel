@@ -27,7 +27,6 @@ export function ImportYamlDialog({
   schemaTree,
   schemaPathSet,
   onImport,
-  knownMcpServers,
 }: t.ImportYamlDialogProps) {
   const localize = useLocalize();
   const returnFocus = useReturnFocus(open);
@@ -133,9 +132,7 @@ export function ImportYamlDialog({
     setLoading(true);
     clearErrors();
     try {
-      const result = await parseImportedYaml({
-        data: { yamlContent: yamlText, knownMcpServers },
-      });
+      const result = await parseImportedYaml({ data: { yamlContent: yamlText } });
       if (!result.success || !result.appConfig) {
         setError(result.error ?? localize('com_config_import_error'));
         setErrorMark(result.mark);

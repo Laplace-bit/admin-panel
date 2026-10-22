@@ -3,8 +3,10 @@ import { configSchema } from 'librechat-data-provider';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import type * as t from '@/types';
+import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { ParamDefinitionsRow } from '../ParamDefinitions';
 import { extractSchemaTree } from '@/server/config';
+import { EndpointRefRow } from '../Fields';
 import { TagListField } from '../Request';
 import { PricingRow } from '../Pricing';
 
@@ -180,5 +182,29 @@ describe('PricingRow', () => {
     fireEvent.change(add, { target: { value: 'model-c' } });
     fireEvent.keyDown(add, { key: 'Enter' });
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ 'model-c': {} }));
+  });
+});
+
+describe('EndpointRefRow', () => {
+  it('leaves out the endpoint being edited by the name LibreChat serves it under', () => {
+    const field = custom?.children?.find((child) => child.key === 'titleEndpoint');
+    if (!field) throw new Error('no titleEndpoint field');
+    const configValues = { endpoints: { custom: [{ name: 'Ollama' }, { name: 'Moonshot' }] } };
+    render(
+      <ConfigValuesProvider value={{ configValues, editedValues: {} }}>
+        <EndpointRefRow
+          path="endpoints.custom.0.titleEndpoint"
+          field={field}
+          value={undefined}
+          self="Ollama"
+          onChange={vi.fn()}
+        />
+      </ConfigValuesProvider>,
+    );
+    const values = screen.getAllByRole('option').map((option) => option.getAttribute('value'));
+    expect(values).toContain('Moonshot');
+    expect(values).toContain('openAI');
+    expect(values).not.toContain('ollama');
+    expect(values).not.toContain('Ollama');
   });
 });

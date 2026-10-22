@@ -45,6 +45,13 @@ function useErrorDescription(htmlFor: string | undefined, hasError: boolean) {
     const described = control.getAttribute('aria-describedby')?.split(' ') ?? [];
     const addsDescription = !described.includes(errorId);
     if (setsInvalid) control.setAttribute('aria-invalid', 'true');
+    /**
+     * Writes to `aria-invalid` after ours are the control's own (React
+     * rendering its own error as the row's goes away), so they hand the
+     * attribute back to the control. Read synchronously in the cleanup.
+     */
+    const claims = setsInvalid ? new MutationObserver(() => undefined) : null;
+    claims?.observe(control, { attributes: true, attributeFilter: ['aria-invalid'] });
     if (addsDescription) {
       control.setAttribute('aria-describedby', [...described, errorId].join(' '));
     }
@@ -54,7 +61,9 @@ function useErrorDescription(htmlFor: string | undefined, hasError: boolean) {
      * away), and restoring a snapshot would bring back a stale id.
      */
     return () => {
-      if (setsInvalid && control.getAttribute('aria-invalid') === 'true') {
+      const reclaimed = (claims?.takeRecords().length ?? 0) > 0;
+      claims?.disconnect();
+      if (setsInvalid && !reclaimed && control.getAttribute('aria-invalid') === 'true') {
         control.removeAttribute('aria-invalid');
       }
       if (!addsDescription) return;

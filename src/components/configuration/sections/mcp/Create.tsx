@@ -15,6 +15,7 @@ import {
   toConfigIssues,
   asConfigRecord,
   hasConfigValue,
+  describeIssueCode,
   isConfigValueEqual,
 } from '@/utils';
 import { planTransportSwitch, transportLabelKey, transportOf, TRANSPORTS } from './transport';
@@ -123,6 +124,22 @@ function joinMissing(labels: string[]): string[] {
   );
 }
 
+const URL_PATH = `${DRAFT_PATH}.url`;
+
+/**
+ * Where a check that threw (an issue without a path) is reported: each
+ * transport's schema runs `new URL` on the URL, so with a URL that can't be
+ * parsed it is the URL's error, shown at the field; else the draft's, shown
+ * in the footer.
+ */
+function thrownIssue(entry: t.ConfigRecord, message: string): [string, string] {
+  const { url } = entry;
+  if (typeof url === 'string' && !URL.canParse(url)) {
+    return [URL_PATH, describeIssueCode('invalid_url', {}, message)];
+  }
+  return [DRAFT_PATH, message];
+}
+
 /** Validates the draft with its transport's schema: what is missing, and what is wrong where it was typed. */
 function checkDraft(
   entry: t.ConfigRecord,
@@ -135,6 +152,11 @@ function checkDraft(
   const missing: string[] = [];
   const errors: t.PathErrors = {};
   for (const issue of toConfigIssues(result.error.issues, DRAFT_PATH)) {
+    if (issue.path === DRAFT_PATH) {
+      const [path, message] = thrownIssue(entry, issue.message);
+      errors[path] ??= message;
+      continue;
+    }
     const rest = issue.path.slice(DRAFT_PATH.length + 1);
     if (issue.code === 'required' && valueAt(entry, rest) === undefined) {
       missing.push(missingLabel(rest, fields, localize));
@@ -347,6 +369,7 @@ export function CreateMcpServerDialog({
   })();
   const hint = (() => {
     if (isInherited || isHidden) return undefined;
+    const draftProblem = check.errors[DRAFT_PATH];
     const parts = [
       missing.length > 0
         ? localize('com_config_mcp_create_missing', { fields: missing.join(', ') })
@@ -354,6 +377,7 @@ export function CreateMcpServerDialog({
       rowsToFix.length > 0
         ? localize('com_config_mcp_create_fix_rows', { fields: rowsToFix.join(', ') })
         : null,
+      draftProblem ? localize('com_config_mcp_create_invalid', { message: draftProblem }) : null,
     ].filter((part): part is string => part != null);
     return parts.length > 0 ? parts.join(' · ') : undefined;
   })();

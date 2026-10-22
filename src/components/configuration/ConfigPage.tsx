@@ -35,7 +35,6 @@ import {
   formatScopeParam,
   findScopeByParam,
   getKeyedCollection,
-  isConfigRecord,
   isConfigValueEqual,
 } from '@/utils';
 import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
@@ -664,11 +663,6 @@ export function ConfigPage({
             onImport={imports.handleImport}
             schemaTree={schemaTree}
             schemaPathSet={layers.schemaPathSet}
-            knownMcpServers={
-              isConfigRecord(layers.baseActiveConfigValues?.mcpServers)
-                ? layers.baseActiveConfigValues.mcpServers
-                : undefined
-            }
           />
 
           <NavigationGuardDialog

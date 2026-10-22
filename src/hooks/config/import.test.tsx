@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { configSchema } from 'librechat-data-provider';
+import { configSchema, PrincipalType } from 'librechat-data-provider';
 import { renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
@@ -67,15 +67,35 @@ const base: t.BaseConfigData = {
   schemaDefaults: {},
 };
 
-function renderPreview(appConfig: t.ConfigRecord) {
+/** A profile that defines its own `github` MCP server, which Base does not have. */
+const engineering: t.ConfigScope = {
+  principalType: PrincipalType.GROUP,
+  principalId: 'eng',
+  name: 'Engineering',
+  priority: 20,
+  isActive: true,
+};
+const engineeringData: t.ResolvedConfigData = {
+  resolvedConfig: {},
+  changedPaths: [],
+  overrides: {
+    mcpServers: { github: { type: 'http', url: 'https://api.githubcopilot.com/mcp/' } },
+  },
+  tombstones: [],
+};
+
+function renderPreview(appConfig: t.ConfigRecord, target: t.ImportTarget = { type: 'base' }) {
   const client = new QueryClient();
   client.setQueryData(['baseConfig'], base);
+  client.setQueryData(
+    ['resolvedConfig', engineering.principalType, engineering.principalId],
+    engineeringData,
+  );
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
   return renderHook(
-    () =>
-      useImportPreview({ schemaTree: tree, schemaPathSet, appConfig, target: { type: 'base' } }),
+    () => useImportPreview({ schemaTree: tree, schemaPathSet, appConfig, target }),
     { wrapper },
   );
 }
@@ -149,5 +169,14 @@ describe('useImportPreview', () => {
     const { result } = renderPreview({ interface: { presets: false } });
     const [row] = result.current.groups[0].rows;
     expect(row.rows[0].item.revertTarget).toEqual({ value: true, source: 'yaml' });
+  });
+
+  it("validates a sparse MCP server override against the chosen target's server", () => {
+    const sparse = { mcpServers: { github: { timeout: 120000 } } };
+    const all = new Set(['mcpServers.github.timeout']);
+    const onProfile = renderPreview(sparse, { type: 'scope', scope: engineering, exists: true });
+    expect(onProfile.result.current.issuesFor(all)).toEqual([]);
+    const onBase = renderPreview(sparse);
+    expect(onBase.result.current.issuesFor(all)).toEqual(['Server URL is required']);
   });
 });
