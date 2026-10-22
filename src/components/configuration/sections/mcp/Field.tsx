@@ -6,7 +6,12 @@ import { useFieldState, useLocalize, useValuesScope, useHasValueLayers } from '@
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
 import { FieldProvenance, getRevertLabels } from '../../values';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { isRowVisible, isConfigRecord, isConfigValueEqual } from '@/utils';
+import {
+  isRowVisible,
+  isConfigRecord,
+  isConfigValueEqual,
+  getSecretPreviewValue,
+} from '@/utils';
 import { DecorativeIcon, StateChip } from '@/components/shared';
 import { FieldControl } from '../../renderer/FieldControl';
 import { fieldDescription, toFieldId } from '../../renderer/paths';
@@ -97,6 +102,12 @@ function McpFieldRow({
   const lower = lowerLayerValue(state);
   const revertTo = state.isOverride ? layerRevertTarget(state.revertTarget) : lower;
   const readOnly = disabled === true || lockReason != null;
+  /**
+   * A secret the server stores (`apiKey.key`, `oauth.client_secret`) is read
+   * back only as its masked preview (`keyPreview`): the row shows it, with
+   * Replace (and Cancel back to it) instead of an empty input.
+   */
+  const storedPreview = state.isPendingReset ? undefined : getSecretPreviewValue(entry, field.key);
 
   /**
    * "Default": remove the target's own value, so the server reads the layer
@@ -163,6 +174,7 @@ function McpFieldRow({
   const shownExtra = readOnly ? undefined : extra;
   const shownControl = control ?? renderControl?.({ id: fieldId, label, fieldDefault, clear }) ?? (
     <FieldControl
+      key={storedPreview == null ? undefined : `${fieldId}-${storedPreview}`}
       field={field}
       path={dataPath}
       id={fieldId}
@@ -174,6 +186,9 @@ function McpFieldRow({
       lockedKeys={recordKeys(state.isOverride ? state.revertTarget?.value : lower?.value)}
       disabled={readOnly}
       required={required}
+      secretPreview={storedPreview ?? null}
+      hasPendingEdit={state.isEdited}
+      onCancelSecret={() => onDiscard?.(dataPath)}
     />
   );
 

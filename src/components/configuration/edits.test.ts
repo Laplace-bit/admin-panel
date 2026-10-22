@@ -112,8 +112,8 @@ describe('identity-keyed collection ops (SV-1)', () => {
       context({ collections }),
     );
     expect(ops).toEqual([
-      expect.objectContaining({ op: 'upsertEntry', key: 'AdminC', identity: 'AdminB' }),
       { op: 'removeEntry', path: 'endpoints.custom', key: 'AdminA', identity: 'AdminA' },
+      expect.objectContaining({ op: 'upsertEntry', key: 'AdminC', identity: 'AdminB' }),
     ]);
   });
 
@@ -229,6 +229,28 @@ describe('identity-keyed collection ops (SV-1)', () => {
     expect(plan.sets.map((set) => set.fieldPath)).toEqual(['modelSpecs.list']);
     const saved = plan.sets[0].value as t.ConfigRecord[];
     expect(saved.map((spec) => spec.name)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('keeps the spec order when a save both removes and adds specs', () => {
+    const spec = (name: string): t.ConfigRecord => ({
+      name,
+      label: name.toUpperCase(),
+      preset: { endpoint: 'openAI', model: 'm' },
+    });
+    const specList = [spec('a'), spec('b'), spec('c')];
+    const specRoot: t.ConfigRecord = { modelSpecs: { list: specList } };
+    const pending = [specList[1], specList[2], spec('x')];
+    const collections = trackCollectionEdit({}, {}, 'modelSpecs.list', pending, specRoot);
+    const { ops } = buildConfigChanges(
+      new Set(['modelSpecs.list']),
+      { 'modelSpecs.list': pending },
+      schemaPaths,
+      context({ root: specRoot, collections }),
+    );
+    const plan = planConfigChanges(ops, { stored: {}, lower: specRoot, lowerKind: 'yaml' });
+    expect(plan.issues).toEqual([]);
+    const saved = plan.sets[0].value as t.ConfigRecord[];
+    expect(saved.map((entry) => entry.name)).toEqual(['b', 'c', 'x']);
   });
 
   it('sends no positions for a reordered custom endpoint list (merged by name)', () => {

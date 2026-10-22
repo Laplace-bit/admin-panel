@@ -13,6 +13,7 @@ import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { CustomEndpointsRenderer } from '../CustomEndpointsRenderer';
 import { extractSchemaTree } from '@/server/config';
+import { isConfigRecord } from '@/utils';
 
 vi.mock('@/hooks/useLocalize', () => {
   const localize = (key: string, params?: Record<string, string | number>) =>
@@ -68,11 +69,13 @@ function Harness({
   initial,
   onChange,
   collectionEdits = {},
+  showConfiguredOnly,
 }: {
   layers: t.ValueLayers;
   initial?: t.ConfigValue[];
   onChange?: (path: string, value: t.ConfigValue) => void;
   collectionEdits?: t.CollectionEdits;
+  showConfiguredOnly?: boolean;
 }) {
   const [items, setItems] = useState<t.ConfigValue[]>(initial ?? savedList(layers));
   const handleChange = (path: string, value: t.ConfigValue) => {
@@ -90,6 +93,7 @@ function Harness({
           parentValue={{ custom: items }}
           getValue={(path, fallback) => (path === 'endpoints.custom' ? items : fallback)}
           onChange={handleChange}
+          showConfiguredOnly={showConfiguredOnly}
         />
       </CollectionEditsContext.Provider>
     </ConfigValuesProvider>
@@ -189,6 +193,38 @@ describe('CustomEndpointsRenderer', () => {
     expect(onChange).toHaveBeenLastCalledWith('endpoints.custom', [...remaining, saved[2]]);
   });
 
+  it('restores an undone deletion relative to the surviving endpoints', () => {
+    const onChange = vi.fn();
+    const entry = (name: string): t.ConfigRecord => ({ ...ADMIN_ENTRY, name });
+    const saved = [entry('A'), entry('B'), entry('C')];
+    const layers = baseLayersFixture(
+      baseConfigFixture({
+        yamlConfig: {},
+        config: {},
+        yamlPaths: [],
+        dbOverrides: { endpoints: { custom: saved } },
+      }),
+    );
+    const remaining = [saved[2]];
+    const edits: t.CollectionEdits = {
+      'endpoints.custom': {
+        baseline: saved,
+        origins: [{ identity: 'C', baseline: saved[2] }],
+        detached: [
+          { value: saved[0], origin: { identity: 'A', baseline: saved[0] } },
+          { value: saved[1], origin: { identity: 'B', baseline: saved[1] } },
+        ],
+      },
+    };
+    render(
+      <Harness layers={layers} initial={remaining} onChange={onChange} collectionEdits={edits} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'com_config_ctl_entry_undo_a11y:B' }));
+    expect(onChange).toHaveBeenLastCalledWith('endpoints.custom', [saved[1], saved[2]]);
+    fireEvent.click(screen.getByRole('button', { name: 'com_config_ctl_entry_undo_a11y:A' }));
+    expect(onChange).toHaveBeenLastCalledWith('endpoints.custom', saved);
+  });
+
   it('opens an inherited endpoint read-only until it is overridden for the profile (CE-8)', () => {
     render(<Harness layers={scopeLayersFixture()} />);
     const drawer = openRow('Claude');
@@ -196,6 +232,20 @@ describe('CustomEndpointsRenderer', () => {
     expect(baseURL()?.tagName).not.toBe('INPUT');
     fireEvent.click(within(drawer).getByRole('button', { name: 'com_config_ce_override_for' }));
     expect(baseURL()?.tagName).toBe('INPUT');
+  });
+
+  it('keeps a pending override of an inherited endpoint listed under "set values only"', () => {
+    const layers = scopeLayersFixture();
+    const saved = savedList(layers);
+    const { rerender } = render(<Harness layers={layers} showConfiguredOnly />);
+    expect(document.querySelector('li[data-endpoint-row="Claude"]')).toBeNull();
+    const edited = saved.map((entry) =>
+      isConfigRecord(entry) && entry.name === 'Claude'
+        ? { ...entry, baseURL: 'https://edited.example.com' }
+        : entry,
+    );
+    rerender(<Harness layers={layers} initial={edited} showConfiguredOnly key="edited" />);
+    expect(row('Claude')).toBeInTheDocument();
   });
 
   it('keeps Create disabled until the endpoint can be served, then adds it', async () => {

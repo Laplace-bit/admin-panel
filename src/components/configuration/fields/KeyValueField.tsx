@@ -44,6 +44,7 @@ function KVInput({
   disabled,
   type = 'text',
   title,
+  part,
   'aria-label': ariaLabel,
   'aria-invalid': ariaInvalid,
   'aria-describedby': ariaDescribedBy,
@@ -57,6 +58,8 @@ function KVInput({
   disabled?: boolean;
   type?: 'text' | 'number';
   title?: string;
+  /** Which half of the pair the input edits, as `data-kv-part` (e.g. so placeholders go into values only). */
+  part: t.KVPart;
   'aria-label'?: string;
   'aria-invalid'?: boolean;
   'aria-describedby'?: string;
@@ -78,6 +81,7 @@ function KVInput({
       aria-label={ariaLabel}
       aria-invalid={ariaInvalid || undefined}
       aria-describedby={ariaDescribedBy}
+      data-kv-part={part}
       className={className}
     />
   );
@@ -254,6 +258,7 @@ export function KeyValueField({
     } else {
       control = (
         <KVInput
+          part="value"
           type={vType === 'number' && pinned.has(pair.key) ? 'number' : 'text'}
           value={pair.value}
           onCommit={onValue}
@@ -309,6 +314,7 @@ export function KeyValueField({
       >
         <div className="flex flex-wrap items-start gap-2 sm:flex-nowrap">
           <KVInput
+            part="key"
             value={pair.key}
             onCommit={handlers.onKey}
             delay={isDraft ? 0 : undefined}

@@ -1,8 +1,15 @@
 import type * as t from '@/types';
 import { DEFAULT_PROVIDER_LAYOUT, PROVIDER_LAYOUTS, labelForPath } from '../../meta';
-import { getValueAtPath, isConfigRecord, resolveShadowedBy } from '@/utils';
+import {
+  MASKED_SECRET,
+  isEnvReference,
+  getValueAtPath,
+  isConfigRecord,
+  resolveShadowedBy,
+} from '@/utils';
 import { BUILT_IN_PROVIDERS, GLOBAL_PROVIDER_KEY } from '@/constants';
 import { formatFieldValue, getFieldOptions } from '../../controls';
+import { fieldMetaFor, isSecretField } from '../../renderer/kinds';
 import { isPathSet } from '../../counts';
 
 const ADVANCED_KEY = 'advanced';
@@ -109,6 +116,20 @@ export function summaryValue(
   return formatFieldValue(field, value, localize) ?? '';
 }
 
+/** A summary's text for one field: a secret (even a pending plaintext one) shows only as masked. */
+function summaryText(
+  field: t.SchemaField,
+  path: string,
+  value: t.ConfigValue,
+  localize: t.LocalizeFn,
+): string {
+  const isHiddenSecret =
+    typeof value === 'string' &&
+    !isEnvReference(value) &&
+    isSecretField(field, path, fieldMetaFor(field, path));
+  return isHiddenSecret ? MASKED_SECRET : summaryValue(field, value, localize);
+}
+
 /**
  * The set values among `fields` (librechat.yaml, an override or a pending
  * edit), as "Label: value" items for a card or group summary line.
@@ -125,7 +146,7 @@ export function summarizeFields(
     if (!read.isSet(path)) continue;
     const value = read.valueAt(path);
     if (value === undefined) continue;
-    const text = summaryValue(field, value, localize);
+    const text = summaryText(field, path, value, localize);
     items.push({
       label: labelForPath(path, localize),
       value: read.isShadowed?.(path)

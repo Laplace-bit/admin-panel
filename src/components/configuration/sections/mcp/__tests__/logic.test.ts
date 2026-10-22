@@ -172,6 +172,10 @@ describe('server names', () => {
     expect(copyName('github', new Set(['github']))).toBe('github-copy');
     expect(copyName('github', new Set(['github-copy', 'github-copy-2']))).toBe('github-copy-3');
     expect(copyName('My Server', new Set())).toBe('My-Server-copy');
+    expect(copyName('Docs', new Set(['Docs', 'docs-copy']))).toBe('Docs-copy-2');
+    expect(
+      serverNameProblem(copyName('Docs', new Set(['Docs', 'docs-copy'])), ['Docs', 'docs-copy']),
+    ).toBeNull();
   });
 });
 
