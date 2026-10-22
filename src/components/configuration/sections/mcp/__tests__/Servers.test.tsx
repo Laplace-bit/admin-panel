@@ -333,6 +333,45 @@ describe('McpServersRenderer — transport and auth switches (MCP-2, MCP-4)', ()
   });
 });
 
+describe('McpServersRenderer — stored secrets', () => {
+  it('shows a stored OAuth client secret as its masked preview, with Replace and Cancel', () => {
+    const vault: t.ConfigRecord = {
+      vault: {
+        type: 'streamable-http',
+        url: 'https://mcp.vault.dev/mcp',
+        oauth: { client_id: 'vault-id', client_secretPreview: 'sec...1234' },
+      },
+    };
+    render(<Harness extra={vault} />);
+    expand('vault');
+    openGroup('vault', 'com_config_mcp_group_auth');
+    const masked = within(card('vault')).getByLabelText(
+      /com_a11y_secret_configured:.*client_secret/,
+    ) as HTMLInputElement;
+    expect(masked.value).toBe('sec...1234');
+    fireEvent.click(
+      within(card('vault')).getByRole('button', {
+        name: /com_a11y_secret_replace:.*client_secret/,
+      }),
+    );
+    const input = card('vault').querySelector<HTMLInputElement>(
+      'input#mcpServers-vault-oauth-client_secret',
+    );
+    expect(input?.type).toBe('password');
+    fireEvent.change(input as HTMLInputElement, { target: { value: 'new-secret' } });
+    act(() => edits.handleFieldChange('mcpServers.vault.oauth.client_secret', 'new-secret'));
+    fireEvent.click(
+      within(card('vault')).getByRole('button', {
+        name: /com_a11y_secret_cancel_replace:.*client_secret/,
+      }),
+    );
+    expect(edits.editedValues).toEqual({});
+    expect(
+      within(card('vault')).getByLabelText(/com_a11y_secret_configured:.*client_secret/),
+    ).toBeInTheDocument();
+  });
+});
+
 describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
   it('deletes a server the panel added from its menu, with Undo until Save', async () => {
     render(<Harness />);
