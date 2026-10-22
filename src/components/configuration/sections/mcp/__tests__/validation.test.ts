@@ -71,6 +71,42 @@ describe('validateMcpCrossField', () => {
     expect(validateMcpCrossField(saved, renamed)).toEqual([]);
   });
 
+  it('asks for no secret of an authentication the renamed server no longer uses', () => {
+    const saved = {
+      docs: {
+        type: 'streamable-http',
+        url: 'https://docs.example.com/mcp',
+        oauth: { client_id: 'id', client_secretPreview: 'sec...1234' },
+      },
+      kb: {
+        type: 'streamable-http',
+        url: 'https://kb.example.com/mcp',
+        apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '...4321' },
+      },
+    };
+    const renamedWithoutAuth: Array<[string, t.ConfigValue]> = [
+      ['mcpServers.docs', undefined],
+      ['mcpServers.docs2.type', 'streamable-http'],
+      ['mcpServers.docs2.url', 'https://docs.example.com/mcp'],
+    ];
+    const renames = { 'mcpServers.docs2': 'mcpServers.docs', 'mcpServers.kb2': 'mcpServers.kb' };
+    expect(validateMcpCrossField(saved, renamedWithoutAuth, undefined, renames)).toEqual([]);
+    const userKey: Array<[string, t.ConfigValue]> = [
+      ['mcpServers.kb', undefined],
+      ['mcpServers.kb2.type', 'streamable-http'],
+      ['mcpServers.kb2.url', 'https://kb.example.com/mcp'],
+      ['mcpServers.kb2.apiKey.source', 'user'],
+      ['mcpServers.kb2.apiKey.authorization_type', 'bearer'],
+    ];
+    expect(validateMcpCrossField(saved, userKey, undefined, renames)).toEqual([]);
+    const adminKey = userKey.map(([path, value]): [string, t.ConfigValue] =>
+      path.endsWith('.source') ? [path, 'admin'] : [path, value],
+    );
+    expect(validateMcpCrossField(saved, adminKey, undefined, renames)).toEqual([
+      { entryKey: 'kb2', missingField: ADMIN_API_KEY_FIELD },
+    ]);
+  });
+
   it('flags an existing sse entry whose transport is changed to stdio without command/args', () => {
     const baseline = {
       foo: { type: 'sse', url: 'https://x.example.com' },

@@ -141,10 +141,22 @@ export interface ChangeReviewModel {
   skipped: ReviewSkippedRow[];
 }
 
-/** How a review row is undone: drop pending edits, or replace one with a partly reverted value (WS7). */
+/**
+ * How a review row is undone: drop pending edits, replace one with a partly
+ * reverted value, or undo a record entry's rename (WS7): drop the edits under
+ * its new key and the old key's removal, then write its other field changes
+ * under the old key again and forget the rename.
+ */
 export type ReviewRevertAction =
   | { op: 'discard'; paths: string[] }
-  | { op: 'set'; path: string; value: ConfigValue };
+  | { op: 'set'; path: string; value: ConfigValue }
+  | {
+      op: 'unrename';
+      /** The renamed entry's path (`mcpServers.new`), whose rename record goes. */
+      entryPath: string;
+      discard: string[];
+      writes: Array<{ path: string; value: ConfigValue }>;
+    };
 
 /** Options of `useChangeReview` (WS7). */
 export interface ChangeReviewOptions {
@@ -175,6 +187,7 @@ export interface ChangeReviewOptions {
     | 'renameEdits'
     | 'handleHideField'
     | 'handleUnhideField'
+    | 'handleRenameEntry'
   >;
   save: Pick<
     ConfigSaveState,

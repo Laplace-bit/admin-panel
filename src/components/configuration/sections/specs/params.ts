@@ -25,7 +25,13 @@ export const PRESET_DENYLIST: ReadonlySet<string> = new Set([
 ]);
 
 /** Preset keys the editor shows in its own groups (Model, Prompt), not among the parameters. */
-export const MODEL_KEYS: readonly string[] = ['endpoint', 'model', 'modelLabel', 'agent_id'];
+export const MODEL_KEYS: readonly string[] = [
+  'endpoint',
+  'model',
+  'modelLabel',
+  'agent_id',
+  'assistant_id',
+];
 export const PROMPT_KEYS: readonly string[] = [
   'promptPrefix',
   'system',
@@ -129,6 +135,34 @@ function isSet(value: t.ConfigValue): boolean {
 }
 
 /**
+ * The Model group's fields for a spec's endpoint, in order: the endpoint, the
+ * agent (an agents spec) or else the model, the assistant on an assistants
+ * endpoint, and the model label. A field the endpoint doesn't use is listed
+ * only while the preset still sets it, so a stale value stays removable.
+ */
+export function specModelKeys(preset: t.ConfigRecord, endpoint: string): string[] {
+  const isAgent = endpoint === EModelEndpoint.agents;
+  const [primary, secondary] = isAgent ? ['agent_id', 'model'] : ['model', 'agent_id'];
+  const usesAssistant = ASSISTANT_ENDPOINTS.has(endpoint) || isSet(preset.assistant_id);
+  return [
+    'endpoint',
+    primary,
+    ...(isSet(preset[secondary]) ? [secondary] : []),
+    ...(usesAssistant ? ['assistant_id'] : []),
+    'modelLabel',
+  ];
+}
+
+/** The preset keys the Parameters group lists: the endpoint's parameters, then any other key set. */
+export function paramGroupKeys(params: t.PresetParam[], preset: t.ConfigRecord): string[] {
+  const keys = new Set(params.map((param) => param.key));
+  for (const key of Object.keys(preset)) {
+    if (!GROUPED_KEYS.has(key) && preset[key] !== undefined) keys.add(key);
+  }
+  return [...keys];
+}
+
+/**
  * The prompt fields a spec's editor shows, in order: the prompt field of its
  * endpoint's parameter panel (`promptKeyFor`), the greeting, the assistants'
  * instructions on an assistants endpoint, and any other prompt field the
@@ -184,10 +218,10 @@ function customEndpointOf(root: t.ConfigValue, name: string): t.ConfigRecord | u
 
 /**
  * A spec's fields as its editor shows them, for search: the preset narrowed
- * to the Model fields, the Prompt fields the editor shows for its endpoint
- * (`specPromptKeys`), its endpoint's parameters, and whatever else the preset
- * sets (so neither "Thinking budget" nor "System prompt" is found on an
- * OpenAI spec).
+ * to the Model fields of its endpoint (`specModelKeys`), the Prompt fields
+ * the editor shows for it (`specPromptKeys`), its endpoint's parameters, and
+ * whatever else the preset sets (so neither "Thinking budget", "System
+ * prompt" nor "Agent ID" is found on an OpenAI spec).
  */
 export function specSearchFields(
   fields: t.SchemaField[],
@@ -202,7 +236,7 @@ export function specSearchFields(
     const model = typeof preset.model === 'string' ? preset.model : '';
     const custom = customEndpointOf(root, endpoint);
     const shown = new Set([
-      ...MODEL_KEYS,
+      ...specModelKeys(preset, endpoint),
       ...specPromptKeys(preset, endpoint, custom),
       ...presetParams(endpoint, model, custom, presetKeys).params.map((param) => param.key),
       ...Object.keys(preset),
