@@ -1,9 +1,10 @@
 import type * as t from '@/types';
-import { getValueAtPath, isConfigRecord, deepSerializeKVPairs } from '@/utils';
+import { getValueAtPath, flattenObject, isConfigRecord, deepSerializeKVPairs } from '@/utils';
 import { isConfigValueEqual, normalizeForSave } from '../edits';
-import { identityKeyFor } from './diff';
+import { identityKeyFor, isSecretPath } from './diff';
 
 const INDEX_SEGMENT_RE = /^\d+$/;
+const PREVIEW_SUFFIX = 'Preview';
 
 function childOf(value: t.ConfigValue, segment: string): t.ConfigValue {
   if (Array.isArray(value))
@@ -159,6 +160,39 @@ function pendingUnder(editedValues: t.FlatConfigMap, path: string): string[] {
   return Object.keys(editedValues).filter((key) => key === path || key.startsWith(`${path}.`));
 }
 
+/** The masked preview the admin API returns for a stored secret (`oauth.client_secretPreview`). */
+function isSecretPreview(leaf: string): boolean {
+  return leaf.endsWith(PREVIEW_SUFFIX) && isSecretPath(leaf.slice(0, -PREVIEW_SUFFIX.length));
+}
+
+/**
+ * Undoes a record entry's rename (an MCP server is its new key's writes plus
+ * the old key's removal) and keeps the entry's other changes, which the
+ * review lists as rows of their own: each leaf the new key changes, adds or
+ * drops is written under the old key again. A stored secret's preview is no
+ * change (a rename never carries it).
+ */
+function revertRecordRename(
+  item: t.ChangeSummaryItem,
+  editedValues: t.FlatConfigMap,
+  entryPath: string,
+  previousPath: string,
+): t.ReviewRevertAction {
+  const discard = [
+    ...pendingUnder(editedValues, entryPath),
+    ...pendingUnder(editedValues, previousPath),
+  ];
+  if (!isConfigRecord(item.before) || !isConfigRecord(item.after))
+    return { op: 'discard', paths: discard };
+  const before = flattenObject(item.before);
+  const after = flattenObject(item.after);
+  const writes = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((leaf) => !isConfigValueEqual(before[leaf], after[leaf]))
+    .filter((leaf) => after[leaf] !== undefined || !isSecretPreview(leaf))
+    .map((leaf) => ({ path: `${previousPath}.${leaf}`, value: after[leaf] }));
+  return { op: 'unrename', entryPath, discard, writes };
+}
+
 /**
  * The pending edit a row comes from. A keyed collection is reviewed as its
  * whole pending list, but its entries are edited at their own positions
@@ -193,13 +227,9 @@ export function planRevert(
   const isPart = isPending && item.path.startsWith(`${source}.`);
   const isOrder = isPending && item.path === source && item.collectionPath === source;
   const isRename = isPending && item.path === source && item.kind === 'renamed';
-  /** A renamed record entry (an MCP server) is its new key's writes plus the old key's removals. */
   if (!isPending && item.kind === 'renamed' && item.previousIdentity && item.collectionPath) {
     const previousPath = `${item.collectionPath}.${item.previousIdentity}`;
-    return {
-      op: 'discard',
-      paths: [...pendingUnder(editedValues, source), ...pendingUnder(editedValues, previousPath)],
-    };
+    return revertRecordRename(item, editedValues, source, previousPath);
   }
   /** A field a renamed record entry also changed: the new key goes back to the old key's value. */
   const isRenamedField =

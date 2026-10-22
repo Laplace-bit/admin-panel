@@ -59,6 +59,16 @@ function countLeaves(value: t.ConfigValue): number {
   return isConfigRecord(value) ? leafEntries(value).length : 0;
 }
 
+/** `record` without the servers that no longer have pending edits (the same object when none went). */
+function pendingOnly<T>(
+  record: Readonly<Record<string, T>>,
+  pending: ReadonlySet<string>,
+): Readonly<Record<string, T>> {
+  const entries = Object.entries(record);
+  if (entries.every(([key]) => pending.has(key))) return record;
+  return Object.fromEntries(entries.filter(([key]) => pending.has(key)));
+}
+
 /** Keys of the servers a set of tombstone paths hides (`mcpServers.github` → `github`). */
 function hiddenServerKeys(paths: Iterable<string>, prefix: string): string[] {
   const keys: string[] = [];
@@ -181,6 +191,17 @@ export function McpServersRenderer({
     }
     return keys;
   }, [edits, prefix]);
+
+  /**
+   * A renamed or duplicated server whose edits went from outside the card (a
+   * change review Revert) is gone: so is what it was renamed from and which
+   * secrets it had to re-enter, so a server created later under its name
+   * isn't taken for it.
+   */
+  useEffect(() => {
+    setRenamedFrom((prev) => pendingOnly(prev, pendingByServer));
+    setReenter((prev) => pendingOnly(prev, pendingByServer));
+  }, [pendingByServer]);
 
   const visibility = valuesData?.visibilityEdits ?? EMPTY_RECORD;
   /** Servers the profile hides (true while the hide is unsaved), and hidden ones it is about to show again. */

@@ -554,6 +554,28 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     expect(within(card('acme-docs')).queryByText('com_config_mcp_renamed_from:acme')).toBeNull();
   });
 
+  it('forgets a rename the change review reverted, so a new server of that name is not it', async () => {
+    render(<Harness />);
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:acme' });
+    fireEvent.change(input, { target: { value: 'acme-docs' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    act(() => {
+      for (const path of Object.keys(edits.editedValues)) edits.handleDiscardField(path);
+      edits.handleRenameEntry('mcpServers.acme-docs', null);
+    });
+    act(() => edits.handleFieldChange('mcpServers.acme-docs.url', 'https://other.dev/mcp'));
+    expect(within(card('acme-docs')).queryByText('com_config_mcp_renamed_from:acme')).toBeNull();
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_delete'));
+    });
+    expect(document.querySelector('[data-mcp-deleted="acme"]')).toBeInTheDocument();
+  });
+
   it('rejects a rename onto an existing name and keeps the input open', async () => {
     render(<Harness />);
     openMenu('acme');
