@@ -3,12 +3,12 @@ import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { formatSummary, flattenedObject, summarizeFields, createSummaryReader } from './layout';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
+import { countConfigured, hasPendingValue } from '../../counts';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { useLocalize, usePersistentExpanded } from '@/hooks';
 import { UnknownSettings } from '../../UnknownSettings';
 import { SettingsSection } from '../../SettingsSection';
 import { isConfigRecord, isRowVisible } from '@/utils';
-import { countConfigured } from '../../counts';
 import { FieldRenderer } from '../../renderer';
 import { SetBadge } from './SetBadge';
 
@@ -76,7 +76,14 @@ export function ProviderGroup({
   const hasContent = fields.length > 0 || before != null || after != null;
   if (!hasContent) return null;
   if (rowFilter && !paths.some((path) => isRowVisible(rowFilter, path))) return null;
-  if (showConfiguredOnly && configured === 0 && !rowFilter) return null;
+  if (
+    showConfiguredOnly &&
+    !rowFilter &&
+    configured === 0 &&
+    !paths.some((path) => hasPendingValue(path, editedValues))
+  ) {
+    return null;
+  }
 
   const flat = flattenedObject(group);
   const parentValue = isConfigRecord(providerValue) ? providerValue : {};

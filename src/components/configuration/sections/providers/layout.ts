@@ -3,6 +3,7 @@ import { DEFAULT_PROVIDER_LAYOUT, PROVIDER_LAYOUTS, labelForPath } from '../../m
 import { getValueAtPath, isConfigRecord, resolveShadowedBy } from '@/utils';
 import { BUILT_IN_PROVIDERS, GLOBAL_PROVIDER_KEY } from '@/constants';
 import { formatFieldValue, getFieldOptions } from '../../controls';
+import { isPathSet } from '../../counts';
 
 const ADVANCED_KEY = 'advanced';
 export const NETWORK_KEY = 'allowedAddresses';
@@ -150,23 +151,6 @@ export function formatSummary(
   return rest > 0
     ? `${shown} · ${localize('com_config_providers_summary_rest', { count: rest })}`
     : shown;
-}
-
-/** Whether a path holds a value: librechat.yaml, an override, or a pending edit at or under it. */
-export function isPathSet(
-  path: string,
-  configuredPaths: ReadonlySet<string> | undefined,
-  editedValues: t.FlatConfigMap | undefined,
-): boolean {
-  const prefix = `${path}.`;
-  const matches = (candidate: string) => candidate === path || candidate.startsWith(prefix);
-  if (configuredPaths) {
-    for (const candidate of configuredPaths) if (matches(candidate)) return true;
-  }
-  for (const [candidate, value] of Object.entries(editedValues ?? {})) {
-    if (value !== undefined && matches(candidate)) return true;
-  }
-  return false;
 }
 
 /**

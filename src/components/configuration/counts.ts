@@ -1,5 +1,6 @@
 import type * as t from '@/types';
 import { createPathIndex, isConfigRecord, getValueAtPath } from '@/utils';
+import { isPathInSection } from './configMeta';
 
 /** Sections whose count is their entries (the schema describes one entry, not the keys). */
 const ENTRY_COUNT_SECTIONS: ReadonlySet<string> = new Set(['mcpServers']);
@@ -102,6 +103,52 @@ export function hasDescendant(path: string, paths?: ReadonlySet<string>): boolea
 export function isPathConfigured(path: string, paths?: ReadonlySet<string>): boolean {
   if (!paths) return false;
   return paths.has(path) || hasDescendant(path, paths);
+}
+
+const NO_PENDING: ReadonlySet<string> = new Set();
+const pendingCache = new WeakMap<t.FlatConfigMap, ReadonlySet<string>>();
+
+/** Paths an unsaved edit gives a value (pending resets excluded), cached per edit map. */
+function pendingValuePaths(editedValues?: t.FlatConfigMap): ReadonlySet<string> {
+  if (!editedValues) return NO_PENDING;
+  const cached = pendingCache.get(editedValues);
+  if (cached) return cached;
+  const paths = new Set<string>();
+  for (const [path, value] of Object.entries(editedValues)) {
+    if (value !== undefined) paths.add(path);
+  }
+  pendingCache.set(editedValues, paths);
+  return paths;
+}
+
+/** Whether `path` itself, or anything inside it, holds an unsaved value. */
+export function hasPendingValue(path: string, editedValues?: t.FlatConfigMap): boolean {
+  return isPathConfigured(path, pendingValuePaths(editedValues));
+}
+
+/** Whether an unsaved edit gives a value to a path the section renders. */
+export function hasPendingValueIn(
+  section: Pick<t.ConfigSectionConfig, 'id' | 'schemaKey'>,
+  editedValues?: t.FlatConfigMap,
+): boolean {
+  const key = section.schemaKey ?? section.id;
+  for (const path of pendingValuePaths(editedValues)) {
+    if (isPathInSection(section.id, key, path)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a path holds a value: librechat.yaml, an override, or a pending edit
+ * at or under it. The configured-only filter keeps such paths shown, so an
+ * unsaved edit never becomes unreachable by turning the filter on.
+ */
+export function isPathSet(
+  path: string,
+  configuredPaths: ReadonlySet<string> | undefined,
+  editedValues: t.FlatConfigMap | undefined,
+): boolean {
+  return isPathConfigured(path, configuredPaths) || hasPendingValue(path, editedValues);
 }
 
 /**

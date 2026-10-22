@@ -1,8 +1,8 @@
 import { useContext } from 'react';
 import type * as t from '@/types';
+import { isPathSet, countConfigured, hasPendingValue } from '../../counts';
 import { GlobalRevealContext } from '@/contexts/GlobalRevealContext';
 import { CUSTOM_KEY, NETWORK_KEY, providerFields } from './layout';
-import { isPathConfigured, countConfigured } from '../../counts';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { revealConfigPath } from '../../review/reveal';
 import { NetworkAccessCard } from './NetworkAccess';
@@ -31,9 +31,9 @@ export function ProvidersRenderer(props: t.FieldRendererProps) {
   const visibleProviders = showConfiguredOnly
     ? providers.filter((field) => {
         const path = `${parentPath}.${field.key}`;
-        const edited = Object.keys(editedValues ?? {}).some((p) => p.startsWith(`${path}.`));
         return (
-          edited || countConfigured(field.children ?? [], path, configuredPaths).configured > 0
+          hasPendingValue(path, editedValues) ||
+          countConfigured(field.children ?? [], path, configuredPaths).configured > 0
         );
       })
     : providers;
@@ -44,7 +44,8 @@ export function ProvidersRenderer(props: t.FieldRendererProps) {
       field.key !== CUSTOM_KEY &&
       field.key !== NETWORK_KEY &&
       !field.children?.length &&
-      (!showConfiguredOnly || isPathConfigured(`${parentPath}.${field.key}`, configuredPaths)),
+      (!showConfiguredOnly ||
+        isPathSet(`${parentPath}.${field.key}`, configuredPaths, editedValues)),
   );
 
   return (
