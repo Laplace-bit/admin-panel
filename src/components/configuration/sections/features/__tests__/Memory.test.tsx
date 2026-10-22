@@ -120,6 +120,16 @@ describe('MemoryRenderer: memory agent', () => {
     expect(screen.getByLabelText('Agent ID')).toHaveValue('agent_admin');
   });
 
+  it('keeps a newly edited agent under "Set values only"', () => {
+    renderSection(MemoryRenderer, {
+      section: 'memory',
+      yaml: { memory: { messageWindowSize: 3 } },
+      edited: { 'memory.agent.provider': 'openAI' },
+      props: { showConfiguredOnly: true },
+    });
+    expect(screen.getByLabelText('Provider')).toBeInTheDocument();
+  });
+
   it('forgets a definition chosen without values when the edit session ends', () => {
     const { startNewSession } = renderSection(MemoryRenderer, {
       section: 'memory',
