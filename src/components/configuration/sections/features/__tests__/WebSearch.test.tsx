@@ -32,7 +32,7 @@ describe('selectedServices', () => {
     expect(views[0].optionKeys).toEqual(['tavilySearchOptions', 'tavilyScraperOptions']);
   });
 
-  it('adds the settings of a used service\'s other roles to its view, without the role', () => {
+  it("adds the settings of a used service's other roles to its view, without the role", () => {
     const [tavily] = selectedServices({ providers: 'tavily' });
     expect(tavily.roles).toEqual(['providers']);
     expect(tavily.credentials.map((credential) => credential.key)).toEqual([
