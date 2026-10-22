@@ -131,7 +131,7 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
     (row) =>
       isRowVisible(rowFilter, `${path}.${row.index}`) &&
       matchesFilter(row, trimmedQuery) &&
-      (!configuredOnly || row.overridden || row.origin === 'scope'),
+      (!configuredOnly || row.overridden || row.edited || row.origin === 'scope'),
   );
   const shownRemovals = trimmedQuery === '' ? removals : [];
 

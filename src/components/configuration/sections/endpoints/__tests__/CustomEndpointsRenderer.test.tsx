@@ -13,6 +13,7 @@ import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { CustomEndpointsRenderer } from '../CustomEndpointsRenderer';
 import { extractSchemaTree } from '@/server/config';
+import { isConfigRecord } from '@/utils';
 
 vi.mock('@/hooks/useLocalize', () => {
   const localize = (key: string, params?: Record<string, string | number>) =>
@@ -68,11 +69,13 @@ function Harness({
   initial,
   onChange,
   collectionEdits = {},
+  showConfiguredOnly,
 }: {
   layers: t.ValueLayers;
   initial?: t.ConfigValue[];
   onChange?: (path: string, value: t.ConfigValue) => void;
   collectionEdits?: t.CollectionEdits;
+  showConfiguredOnly?: boolean;
 }) {
   const [items, setItems] = useState<t.ConfigValue[]>(initial ?? savedList(layers));
   const handleChange = (path: string, value: t.ConfigValue) => {
@@ -90,6 +93,7 @@ function Harness({
           parentValue={{ custom: items }}
           getValue={(path, fallback) => (path === 'endpoints.custom' ? items : fallback)}
           onChange={handleChange}
+          showConfiguredOnly={showConfiguredOnly}
         />
       </CollectionEditsContext.Provider>
     </ConfigValuesProvider>
@@ -228,6 +232,20 @@ describe('CustomEndpointsRenderer', () => {
     expect(baseURL()?.tagName).not.toBe('INPUT');
     fireEvent.click(within(drawer).getByRole('button', { name: 'com_config_ce_override_for' }));
     expect(baseURL()?.tagName).toBe('INPUT');
+  });
+
+  it('keeps a pending override of an inherited endpoint listed under "set values only"', () => {
+    const layers = scopeLayersFixture();
+    const saved = savedList(layers);
+    const { rerender } = render(<Harness layers={layers} showConfiguredOnly />);
+    expect(document.querySelector('li[data-endpoint-row="Claude"]')).toBeNull();
+    const edited = saved.map((entry) =>
+      isConfigRecord(entry) && entry.name === 'Claude'
+        ? { ...entry, baseURL: 'https://edited.example.com' }
+        : entry,
+    );
+    rerender(<Harness layers={layers} initial={edited} showConfiguredOnly key="edited" />);
+    expect(row('Claude')).toBeInTheDocument();
   });
 
   it('keeps Create disabled until the endpoint can be served, then adds it', async () => {
