@@ -12,13 +12,7 @@ import {
   DefaultField,
   EndpointField,
 } from './SpecFields';
-import {
-  MODEL_KEYS,
-  presetParams,
-  paramGroupKeys,
-  specModelKeys,
-  specPromptKeys,
-} from './params';
+import { MODEL_KEYS, presetParams, paramGroupKeys, specModelKeys, specPromptKeys } from './params';
 import { isAgentSpec, problemsOf, specEndpoint } from './validation';
 import { getUnknownConfigEntries, isConfigRecord } from '@/utils';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
