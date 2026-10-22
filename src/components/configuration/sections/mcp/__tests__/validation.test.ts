@@ -1,7 +1,46 @@
 import { describe, it, expect } from 'vitest';
-import { validateMcpCrossField } from '../validation';
+import { ADMIN_API_KEY_FIELD, validateMcpCrossField } from '../validation';
 
 describe('validateMcpCrossField', () => {
+  it('needs a key for a new server whose API key the admin provides (a duplicate copies no stored key)', () => {
+    const edits: Array<[string, string]> = [
+      ['mcpServers.docs-copy.type', 'streamable-http'],
+      ['mcpServers.docs-copy.url', 'https://docs.example.com/mcp'],
+      ['mcpServers.docs-copy.apiKey.source', 'admin'],
+      ['mcpServers.docs-copy.apiKey.authorization_type', 'bearer'],
+    ];
+    expect(validateMcpCrossField({}, edits)).toEqual([
+      { entryKey: 'docs-copy', missingField: ADMIN_API_KEY_FIELD },
+    ]);
+    expect(validateMcpCrossField({}, [...edits, ['mcpServers.docs-copy.apiKey.key', 'k']])).toEqual(
+      [],
+    );
+    expect(
+      validateMcpCrossField({}, [
+        ...edits.slice(0, 2),
+        ['mcpServers.docs-copy.apiKey.source', 'user'],
+      ]),
+    ).toEqual([]);
+  });
+
+  it('accepts a stored key (its masked preview) and leaves other edits of a saved server alone', () => {
+    const stored = {
+      type: 'streamable-http',
+      url: 'https://docs.example.com/mcp',
+      apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '...4321' },
+    };
+    expect(
+      validateMcpCrossField({ docs: stored }, [['mcpServers.docs.apiKey.source', 'admin']]),
+    ).toEqual([]);
+    const keyless = { ...stored, apiKey: { source: 'user', authorization_type: 'bearer' } };
+    expect(
+      validateMcpCrossField({ docs: keyless }, [['mcpServers.docs.apiKey.source', 'admin']]),
+    ).toEqual([{ entryKey: 'docs', missingField: ADMIN_API_KEY_FIELD }]);
+    expect(validateMcpCrossField({ docs: keyless }, [['mcpServers.docs.timeout', 60000]])).toEqual(
+      [],
+    );
+  });
+
   it('flags an existing sse entry whose transport is changed to stdio without command/args', () => {
     const baseline = {
       foo: { type: 'sse', url: 'https://x.example.com' },

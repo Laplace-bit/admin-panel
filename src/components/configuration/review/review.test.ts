@@ -324,6 +324,7 @@ describe('summarizeChanges: MCP servers and secrets', () => {
           value,
         })),
         resets: ['mcpServers.dbsrv'],
+        renames: { 'mcpServers.dbsrv2': 'mcpServers.dbsrv' },
       }),
     );
     expect(items).toEqual([
@@ -349,6 +350,26 @@ describe('summarizeChanges: MCP servers and secrets', () => {
       path: 'mcpServers.dbsrv2.title',
       value: 'DB',
     });
+  });
+
+  it('keeps a removed server and a new one for the same URL apart when nothing renamed it', () => {
+    const dbsrv = { type: 'streamable-http', url: 'https://db.example/mcp', title: 'DB' };
+    const items = summarizeChanges(
+      makeInput({
+        baseline: { mcpServers: { dbsrv } },
+        ownAt: (path) => (path === 'mcpServers.dbsrv' ? dbsrv : undefined),
+        saves: [
+          { fieldPath: 'mcpServers.dbsrv-oauth.type', value: 'streamable-http' },
+          { fieldPath: 'mcpServers.dbsrv-oauth.url', value: 'https://db.example/mcp' },
+          { fieldPath: 'mcpServers.dbsrv-oauth.requiresOAuth', value: true },
+        ],
+        resets: ['mcpServers.dbsrv'],
+      }),
+    );
+    expect(items.map((item) => [item.kind, item.path]).sort()).toEqual([
+      ['added', 'mcpServers.dbsrv-oauth'],
+      ['removed', 'mcpServers.dbsrv'],
+    ]);
   });
 
   it('keeps a removed server and an unrelated new one apart', () => {

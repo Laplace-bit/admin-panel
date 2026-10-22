@@ -135,6 +135,7 @@ export function McpServerEditor({
       </span>
     ) : (
       <TransportSelect
+        key={editSessionId}
         id={typeId}
         label={typeLabel}
         entry={entry}

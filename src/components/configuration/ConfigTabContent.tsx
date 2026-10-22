@@ -80,6 +80,7 @@ export function ConfigTabContent({
   visibilityEdits,
   onHideField,
   onUnhideField,
+  onRenameEntry,
   visibleSectionIds,
   filterPaths,
   filterText,
@@ -274,6 +275,7 @@ export function ConfigTabContent({
       editSessionId,
       onHideField,
       onUnhideField,
+      onRenameEntry,
     };
     const content = (
       <>

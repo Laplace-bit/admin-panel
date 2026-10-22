@@ -10,7 +10,10 @@ import {
   planConfigChanges,
   mergedBackChanges,
 } from '@/utils';
-import { validateMcpCrossField } from '@/components/configuration/sections/mcp/validation';
+import {
+  ADMIN_API_KEY_FIELD,
+  validateMcpCrossField,
+} from '@/components/configuration/sections/mcp/validation';
 import { specListIssues } from '@/components/configuration/sections/specs/validation';
 import { buildConfigChanges, normalizeEditValue } from '@/components/configuration/edits';
 import { isResetSent, summarizeChanges } from '@/components/configuration/summary';
@@ -345,6 +348,9 @@ export function useConfigSave({
     );
     if (mcpErrors.length === 0) return null;
     const { entryKey, missingField } = mcpErrors[0];
+    if (missingField === ADMIN_API_KEY_FIELD) {
+      return localize('com_config_mcp_missing_api_key', { entry: entryKey });
+    }
     return localize('com_config_mcp_invalid_after_edit', { entry: entryKey, field: missingField });
   }, [
     changeSet.payload,

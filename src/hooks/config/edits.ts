@@ -9,7 +9,13 @@ import {
 import { findSchemaField } from '@/components/configuration/controls';
 import { getValueAtPath } from '@/utils';
 
-const NO_EDITS: t.PendingEdits = { values: {}, collections: {}, baselines: {}, visibility: {} };
+const NO_EDITS: t.PendingEdits = {
+  values: {},
+  collections: {},
+  baselines: {},
+  visibility: {},
+  renames: {},
+};
 
 function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   if (!(key in record)) return record;
@@ -206,6 +212,14 @@ export function useConfigEdits({
     [setVisibility],
   );
 
+  /** A rename of a renamed entry still points at the saved entry it started from. */
+  const handleRenameEntry = useCallback((from: string, to: string) => {
+    setPending((prev) => {
+      const { [from]: original, ...rest } = prev.renames;
+      return { ...prev, renames: { ...rest, [to]: original ?? from } };
+    });
+  }, []);
+
   const discardEdits = useCallback(() => {
     setPending(NO_EDITS);
     setTouchedPaths(new Set());
@@ -235,10 +249,12 @@ export function useConfigEdits({
     collectionEdits: pending.collections,
     editBaselines: pending.baselines,
     visibilityEdits: pending.visibility,
+    renameEdits: pending.renames,
     handleFieldChange,
     handleResetField,
     handleHideField,
     handleUnhideField,
+    handleRenameEntry,
     handleDiscardField,
     discardEdits,
     startNewSession,

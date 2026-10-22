@@ -611,6 +611,7 @@ export function ConfigPage({
                           onUnhideField={
                             permissions.canAssign ? edits.handleUnhideField : undefined
                           }
+                          onRenameEntry={edits.handleRenameEntry}
                         />
                       </CollectionEditsContext.Provider>
                     </RevealTargetContext.Provider>

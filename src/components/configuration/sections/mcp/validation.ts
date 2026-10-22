@@ -1,6 +1,9 @@
 import type * as t from '@/types';
 import { transportOf } from './transport';
 
+/** The missing field reported for an admin API key with no key, typed or stored. */
+export const ADMIN_API_KEY_FIELD = 'apiKey.key';
+
 export const REQUIRED_BY_TRANSPORT: Record<string, Set<string>> = {
   stdio: new Set(['command', 'args']),
   sse: new Set(['url']),
@@ -138,31 +141,56 @@ export function validateMcpCrossField(
   const merged = mergeMcpEdits(baseline, edits, resetFallback);
   const knownKeys = new Set(Object.keys(baseline));
   const affected = new Set<string>();
+  /** New servers, and servers whose API key (or its source) was set: they must carry an admin key. */
+  const keyChecked = new Set<string>();
   for (const [path] of edits) {
     if (!path.startsWith('mcpServers.')) continue;
     const parsed = resolveEntryKey(path.slice('mcpServers.'.length), knownKeys);
     if (parsed) {
       knownKeys.add(parsed.entryKey);
       affected.add(parsed.entryKey);
+      const [head, child] = parsed.segments;
+      const setsKey = head === 'apiKey' && (child === undefined || child === 'source');
+      if (setsKey || !Object.hasOwn(baseline, parsed.entryKey)) keyChecked.add(parsed.entryKey);
     }
   }
   const errors: Array<{ entryKey: string; missingField: string }> = [];
   for (const entryKey of affected) {
     const entry = merged[entryKey];
     if (!isPlainObject(entry)) continue;
-    /** Clearing the field a type-less entry's transport is inferred from (a stdio `command`) leaves no transport: the saved entry's still applies, so the missing command is caught. */
-    const transport = transportOf(entry) || transportOf(baseline[entryKey]);
-    const required = REQUIRED_BY_TRANSPORT[transport];
-    if (!required) continue;
-    for (const field of required) {
-      const v = entry[field];
-      /** Empty array is a valid Zod value for required array fields like stdio `args` (the schema requires presence, not non-empty). Don't flag it as missing. */
-      const missing = v === undefined || v === null || v === '';
-      if (missing) {
-        errors.push({ entryKey, missingField: field });
-        break;
-      }
-    }
+    const missingField =
+      missingTransportField(entry, baseline[entryKey]) ??
+      (keyChecked.has(entryKey) && lacksAdminKey(entry) ? ADMIN_API_KEY_FIELD : null);
+    if (missingField) errors.push({ entryKey, missingField });
   }
   return errors;
+}
+
+/** The first field the entry's transport requires that it lacks. */
+function missingTransportField(
+  entry: Record<string, t.ConfigValue>,
+  saved: t.ConfigValue,
+): string | null {
+  /** Clearing the field a type-less entry's transport is inferred from (a stdio `command`) leaves no transport: the saved entry's still applies, so the missing command is caught. */
+  const transport = transportOf(entry) || transportOf(saved);
+  const required = REQUIRED_BY_TRANSPORT[transport];
+  if (!required) return null;
+  for (const field of required) {
+    const v = entry[field];
+    /** Empty array is a valid Zod value for required array fields like stdio `args` (the schema requires presence, not non-empty). Don't flag it as missing. */
+    if (v === undefined || v === null || v === '') return field;
+  }
+  return null;
+}
+
+/**
+ * An API key the admin provides for everyone, with no key: neither typed nor
+ * already stored (the admin API returns a stored key as its masked
+ * `keyPreview`). A duplicate never copies a stored key, so it needs one again.
+ */
+function lacksAdminKey(entry: Record<string, t.ConfigValue>): boolean {
+  const apiKey = entry.apiKey;
+  if (!isPlainObject(apiKey) || apiKey.source !== 'admin') return false;
+  const isSet = (value: t.ConfigValue) => typeof value === 'string' && value !== '';
+  return !isSet(apiKey.key) && !isSet(apiKey.keyPreview);
 }
