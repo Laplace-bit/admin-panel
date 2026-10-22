@@ -19,6 +19,7 @@ import { ToggleField } from '../fields/ToggleField';
 import { getDefaultHint } from '../controls';
 import { ConfigRow } from '../ConfigRow';
 import { labelForPath } from '../meta';
+import { isPathSet } from '../counts';
 
 /** Controls whose "Default (…)" choice names the default, so the row hint is dropped while it is selected. */
 const SHOWS_DEFAULT_CHOICE: ReadonlySet<t.ControlKind> = new Set([
@@ -140,7 +141,7 @@ export function SingleFieldRenderer({
   })();
 
   if (isPlainRecord(currentValue)) lastObjectRef.current = currentValue;
-  if (showConfiguredOnly && !hasPathOrDescendant(path, configuredPaths)) return null;
+  if (showConfiguredOnly && !isPathSet(path, configuredPaths, editedValues)) return null;
 
   /**
    * "Default": remove the target's own value, or drop a pending edit when it
