@@ -1,19 +1,20 @@
 import { useContext, useState } from 'react';
 import type * as t from '@/types';
-import { isConfigRecord, getValueAtPath, isConfigValueEqual } from '@/utils';
-import { NestedGroup, FieldRenderer, toFieldId } from '../../renderer';
 import { useLocalize, useOwnedField, useYamlConfig } from '@/hooks';
 import { ConfirmChoiceDialog } from '../../fields/ConfirmChoice';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { countConfigured, hasPathOverlap } from '../../counts';
-import { FieldRow, isRowShown } from '../files/FieldRow';
+import { getValueAtPath, isConfigValueEqual } from '@/utils';
 import { UnknownSettings } from '../../UnknownSettings';
 import { ReadOnlySection } from '../../ReadOnlySection';
+import { FieldRenderer, toFieldId } from '../../renderer';
 import { SOCIAL_LOGIN_PROVIDERS } from '@/constants';
 import { DomainListField } from './DomainListField';
+import { isRowShown } from '../files/FieldRow';
 import { SettingsRow } from '../../SettingsRow';
+import { hasPathOverlap } from '../../counts';
 import { ConfigRow } from '../../ConfigRow';
 import { labelForPath } from '../../meta';
+import { YamlRows } from './Yaml';
 
 const SECTION = 'registration';
 const NO_PATHS: ReadonlySet<string> = new Set();
@@ -212,8 +213,9 @@ function AllowedDomainsRow({ fieldProps }: { fieldProps: t.FieldRendererProps })
 
 /**
  * The sign-in settings LibreChat reads once at startup from librechat.yaml
- * (FX-10): shown read-only under one note, which offers to remove overrides
- * saved before (they never took effect).
+ * (FX-10): shown read-only with their librechat.yaml values (never an
+ * override's, nor in a profile Base's) under one note, which offers to remove
+ * overrides saved before (they never took effect).
  */
 function StartupSettings({
   fields,
@@ -248,39 +250,7 @@ function StartupSettings({
         ) : undefined
       }
     >
-      {fields.map((field) => {
-        const path = `${SECTION}.${field.key}`;
-        if (!field.children?.length) {
-          return (
-            <FieldRow
-              key={field.key}
-              field={field}
-              fieldProps={{ ...fieldProps, disabled: true }}
-            />
-          );
-        }
-        const value = getValueAtPath(fieldProps.parentValue ?? null, field.key);
-        const counts = countConfigured(field.children, path, fieldProps.configuredPaths);
-        return (
-          <NestedGroup
-            key={field.key}
-            label={labelForPath(path, localize)}
-            sectionId={`section-${path}`}
-            configuredCount={counts.configured}
-            totalCount={counts.total}
-            disabled
-            revealPaths={[path]}
-          >
-            <FieldRenderer
-              {...fieldProps}
-              fields={field.children}
-              parentValue={isConfigRecord(value) ? value : {}}
-              parentPath={path}
-              disabled
-            />
-          </NestedGroup>
-        );
-      })}
+      <YamlRows fields={fields} parentPath={SECTION} schemaDefaults={fieldProps.schemaDefaults} />
     </ReadOnlySection>
   );
 }
