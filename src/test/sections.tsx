@@ -92,7 +92,8 @@ export function baseLayers(yaml: t.ConfigRecord, overrides: t.ConfigRecord): t.V
   );
 }
 
-function Harness({
+/** The page around a tab's sections; re-render it with new options to keep its staged edits. */
+export function SectionsHarness({
   sections,
   yaml = {},
   overrides = {},
@@ -157,5 +158,5 @@ function Harness({
 
 /** Renders a tab's sections through the real `ConfigTabContent`, with staged edits applied. */
 export function renderSections(options: SectionsHarnessOptions) {
-  return render(<Harness {...options} />);
+  return render(<SectionsHarness {...options} />);
 }

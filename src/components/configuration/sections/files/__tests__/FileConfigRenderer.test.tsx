@@ -1,7 +1,7 @@
 import '@/locales/i18n';
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, screen, within } from '@testing-library/react';
-import { renderSections } from '@/test/sections';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { renderSections, SectionsHarness } from '@/test/sections';
 
 function addKey(text: string) {
   const input = screen.getByRole('combobox', { name: 'Key' });
@@ -32,6 +32,16 @@ describe('FileConfigRenderer', () => {
     expect(onChange).not.toHaveBeenCalled();
     addKey('Ollama');
     expect(onChange).toHaveBeenCalledWith('fileConfig.endpoints', { Ollama: {} });
+  });
+
+  it('keeps a pending endpoint limit under "Set values only"', async () => {
+    const { rerender } = render(<SectionsHarness sections={['fileConfig']} />);
+    const group = document.getElementById('section-fileConfig.endpoints')!;
+    fireEvent.click(within(group).getByRole('button', { name: 'Add endpoint' }));
+    await screen.findByRole('combobox', { name: 'Key' });
+    addKey('agents');
+    rerender(<SectionsHarness sections={['fileConfig']} showConfiguredOnly />);
+    expect(document.getElementById('section-fileConfig.endpoints')).not.toBeNull();
   });
 
   it('uses the MIME list editor, with plain group names', () => {

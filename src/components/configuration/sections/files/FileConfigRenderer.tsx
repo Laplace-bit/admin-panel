@@ -7,7 +7,7 @@ import { useCustomEndpointNames, useLocalize } from '@/hooks';
 import { UnknownSettings } from '../../UnknownSettings';
 import { isConfigRecord, isRowVisible } from '@/utils';
 import { FILE_ENDPOINT_KEYS } from '@/constants';
-import { hasDescendant } from '../../counts';
+import { isPathSet } from '../../counts';
 import { orderFields } from '../../controls';
 
 const SECTION = 'fileConfig';
@@ -47,20 +47,21 @@ function EndpointLimitsGroup({
   const rowFilter = useContext(RowFilterContext);
   const addTriggerRef = useRef<(() => void) | null>(null);
   const { options, known } = useEndpointKeyOptions();
-  const { getValue, onChange, disabled, editSessionId, configuredPaths, showConfiguredOnly } =
-    fieldProps;
+  const {
+    getValue,
+    onChange,
+    disabled,
+    editSessionId,
+    configuredPaths,
+    editedValues,
+    showConfiguredOnly,
+  } = fieldProps;
   const value = getValue(
     ENDPOINTS,
     isConfigRecord(fieldProps.parentValue) ? fieldProps.parentValue.endpoints : undefined,
   );
   if (!isRowVisible(rowFilter, ENDPOINTS)) return null;
-  if (
-    showConfiguredOnly &&
-    !configuredPaths?.has(ENDPOINTS) &&
-    !hasDescendant(ENDPOINTS, configuredPaths)
-  ) {
-    return null;
-  }
+  if (showConfiguredOnly && !isPathSet(ENDPOINTS, configuredPaths, editedValues)) return null;
 
   const validateKey = (key: string): string | null => {
     if (known.has(key)) return null;
