@@ -165,12 +165,45 @@ function isSecretPreview(leaf: string): boolean {
   return leaf.endsWith(PREVIEW_SUFFIX) && isSecretPath(leaf.slice(0, -PREVIEW_SUFFIX.length));
 }
 
+/** Whether a removed value is only what a rename never carries: stored secrets' previews. */
+function isPreviewOnly(value: t.ConfigValue, path: string): boolean {
+  if (!isConfigRecord(value)) return isSecretPreview(path);
+  return Object.keys(flattenObject(value, path)).every(isSecretPreview);
+}
+
+/**
+ * The writes that give an entry under its old key the changes it got under
+ * its new one: a setting it dropped is removed whole (an authentication
+ * method switched off goes with its stored secret), and within an object it
+ * kept, each leaf that changed is written (or removed). Stored secrets'
+ * previews are no change: a rename never carries them.
+ */
+function renamedChanges(
+  before: t.ConfigRecord,
+  after: t.ConfigRecord,
+  previousPath: string,
+): Array<{ path: string; value: t.ConfigValue }> {
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].flatMap((key) => {
+    const was = before[key];
+    const now = after[key];
+    if (isConfigValueEqual(was, now)) return [];
+    if (now === undefined)
+      return isPreviewOnly(was, key) ? [] : [{ path: `${previousPath}.${key}`, value: undefined }];
+    if (!isConfigRecord(was) || !isConfigRecord(now))
+      return [{ path: `${previousPath}.${key}`, value: now }];
+    const wasLeaves = flattenObject(was, key);
+    const nowLeaves = flattenObject(now, key);
+    return [...new Set([...Object.keys(wasLeaves), ...Object.keys(nowLeaves)])]
+      .filter((leaf) => !isConfigValueEqual(wasLeaves[leaf], nowLeaves[leaf]))
+      .filter((leaf) => nowLeaves[leaf] !== undefined || !isSecretPreview(leaf))
+      .map((leaf) => ({ path: `${previousPath}.${leaf}`, value: nowLeaves[leaf] }));
+  });
+}
+
 /**
  * Undoes a record entry's rename (an MCP server is its new key's writes plus
  * the old key's removal) and keeps the entry's other changes, which the
- * review lists as rows of their own: each leaf the new key changes, adds or
- * drops is written under the old key again. A stored secret's preview is no
- * change (a rename never carries it).
+ * review lists as rows of their own: they are written under the old key again.
  */
 function revertRecordRename(
   item: t.ChangeSummaryItem,
@@ -182,14 +215,10 @@ function revertRecordRename(
     ...pendingUnder(editedValues, entryPath),
     ...pendingUnder(editedValues, previousPath),
   ];
-  if (!isConfigRecord(item.before) || !isConfigRecord(item.after))
+  if (!isConfigRecord(item.before) || !isConfigRecord(item.after)) {
     return { op: 'discard', paths: discard };
-  const before = flattenObject(item.before);
-  const after = flattenObject(item.after);
-  const writes = [...new Set([...Object.keys(before), ...Object.keys(after)])]
-    .filter((leaf) => !isConfigValueEqual(before[leaf], after[leaf]))
-    .filter((leaf) => after[leaf] !== undefined || !isSecretPreview(leaf))
-    .map((leaf) => ({ path: `${previousPath}.${leaf}`, value: after[leaf] }));
+  }
+  const writes = renamedChanges(item.before, item.after, previousPath);
   return { op: 'unrename', entryPath, discard, writes };
 }
 
