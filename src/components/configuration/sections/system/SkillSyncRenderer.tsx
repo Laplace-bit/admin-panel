@@ -101,7 +101,9 @@ function SourcesGroup({
 }
 
 /**
- * Skill sync (FX-13): the GitHub settings as rows, and its sources as cards.
+ * Skill sync (FX-13): the GitHub settings as rows, and its sources as cards;
+ * GitHub settings the schema doesn't know (a newer LibreChat's) are listed
+ * read-only in the GitHub group.
  * Overrides apply to syncs LibreChat starts on request; the scheduled sync
  * reads librechat.yaml (the section banner says so).
  */
@@ -133,6 +135,9 @@ export function SkillSyncRenderer(props: t.FieldRendererProps) {
             parentPath={GITHUB}
           />
           <SourcesGroup field={sources} fieldProps={props} />
+          {!rowFilter && (
+            <UnknownSettings fields={github.children} value={githubValue} path={GITHUB} />
+          )}
         </NestedGroup>
       )}
       {others.length > 0 && <FieldRenderer {...props} fields={others} />}
