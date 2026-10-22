@@ -526,6 +526,34 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     expect(edits.renameEdits).toEqual({ 'mcpServers.acme-docs': 'mcpServers.acme' });
   });
 
+  it('forgets the Undo of a deleted rename once the edit session ends', async () => {
+    render(<Harness />);
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:acme' });
+    fireEvent.change(input, { target: { value: 'acme-docs' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    openMenu('acme-docs');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_delete'));
+    });
+    act(() => edits.handleDiscard());
+    expect(edits.editedValues).toEqual({});
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_delete'));
+    });
+    const ghost = document.querySelector('[data-mcp-deleted="acme"]') as HTMLElement;
+    fireEvent.click(within(ghost).getByRole('button'));
+    expect(edits.editedValues).toEqual({});
+    expect(edits.renameEdits).toEqual({});
+    act(() => edits.handleFieldChange('mcpServers.acme-docs.url', 'https://other.dev/mcp'));
+    expect(document.querySelector('[data-mcp-server="acme-docs"]')).toBeInTheDocument();
+    expect(within(card('acme-docs')).queryByText('com_config_mcp_renamed_from:acme')).toBeNull();
+  });
+
   it('rejects a rename onto an existing name and keeps the input open', async () => {
     render(<Harness />);
     openMenu('acme');

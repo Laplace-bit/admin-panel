@@ -154,12 +154,16 @@ export function McpServersRenderer({
     return () => cancelAnimationFrame(frame);
   }, [focusKey]);
 
+  /** A new edit session (Save, Discard) starts clean: no Undo of an earlier session's deletion survives. */
   useEffect(() => {
     setRenaming(null);
     setRenamedFrom({});
     setUnlocked(EMPTY_KEYS);
     setJustAdded(null);
     setReenter({});
+    setLastDeleted(null);
+    stash.current.clear();
+    renameStash.current.clear();
   }, [editSessionId]);
 
   const discard = (editPath: string) => {
