@@ -1,6 +1,6 @@
 import { useContext } from 'react';
 import type * as t from '@/types';
-import { countConfigured, isPathConfigured } from '../../counts';
+import { countConfigured, isPathSet } from '../../counts';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { UnknownSettings } from '../../UnknownSettings';
 import { isConfigRecord, isRowVisible } from '@/utils';
@@ -41,7 +41,7 @@ function FlatObject({ field, controls, titled, ...props }: t.FlatObjectProps) {
   const hidesUnset =
     props.showConfiguredOnly &&
     !props.previewMode &&
-    !isPathConfigured(path, props.configuredPaths);
+    !isPathSet(path, props.configuredPaths, props.editedValues);
   if (!isRowVisible(rowFilter, path) || hidesUnset) return null;
   return (
     <>
@@ -71,18 +71,18 @@ function FlatObject({ field, controls, titled, ...props }: t.FlatObjectProps) {
  * A purpose-based group of a feature section's settings (FX-5): a
  * collapsible heading with its set count, the listed fields in order, and
  * flattened objects under sub-headings. Hidden while the tab filter or "Set
- * values only" leaves none of its rows.
+ * values only" (saved or pending values) leaves none of its rows.
  */
 export function FeatureGroup({ group, allFields, controls, ...props }: t.FeatureGroupProps) {
   const localize = useLocalize();
   const rowFilter = useContext(RowFilterContext);
-  const { parentPath, configuredPaths, showConfiguredOnly, previewMode } = props;
+  const { parentPath, configuredPaths, editedValues, showConfiguredOnly, previewMode } = props;
   const fields = groupFields(group, allFields);
   const paths = groupPaths(group, fields, parentPath);
   const visible = paths.some(
     (path) =>
       isRowVisible(rowFilter, path) &&
-      (!showConfiguredOnly || previewMode || isPathConfigured(path, configuredPaths)),
+      (!showConfiguredOnly || previewMode || isPathSet(path, configuredPaths, editedValues)),
   );
   if (fields.length === 0 || !visible) return null;
 
