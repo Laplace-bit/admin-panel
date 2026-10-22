@@ -167,10 +167,7 @@ function hasText(value: t.ConfigValue | undefined): boolean {
 }
 
 /** The first stored secret of the server an entry was renamed from that the entry neither re-enters nor still stores. */
-function lostSecret(
-  entry: Record<string, t.ConfigValue>,
-  original: t.ConfigValue,
-): string | null {
+function lostSecret(entry: Record<string, t.ConfigValue>, original: t.ConfigValue): string | null {
   const lost = storedSecrets(original).find((secret) => {
     const segments = secret.split('.');
     const preview = [...segments.slice(0, -1), `${segments[segments.length - 1]}${PREVIEW_SUFFIX}`];

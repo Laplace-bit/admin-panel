@@ -6,12 +6,7 @@ import { useFieldState, useLocalize, useValuesScope, useHasValueLayers } from '@
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
 import { FieldProvenance, getRevertLabels } from '../../values';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
-import {
-  isRowVisible,
-  isConfigRecord,
-  isConfigValueEqual,
-  getSecretPreviewValue,
-} from '@/utils';
+import { isRowVisible, isConfigRecord, isConfigValueEqual, getSecretPreviewValue } from '@/utils';
 import { DecorativeIcon, StateChip } from '@/components/shared';
 import { FieldControl } from '../../renderer/FieldControl';
 import { fieldDescription, toFieldId } from '../../renderer/paths';
