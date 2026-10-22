@@ -13,6 +13,7 @@ import { PROVIDER_FIELD_META } from '../../../meta/providers';
 import translation from '@/locales/en/translation.json';
 import { extractSchemaTree } from '@/server/config';
 import { createField } from '@/test/fixtures';
+import { MASKED_SECRET } from '@/utils';
 
 const localeKeys = new Set(Object.keys(translation));
 const tree = extractSchemaTree(configSchema as t.ZodSchemaLike);
@@ -177,6 +178,23 @@ describe('summaries', () => {
       'com_config_providers_summary_shadowed(gpt-5-mini)',
       'com_config_providers_summary_more(a, b|1)',
     ]);
+  });
+
+  it('masks secret values (even a pending plaintext key) but shows env references', () => {
+    const apiKey = createField({ key: 'apiKey', type: 'string', path: 'x.apiKey' });
+    const values: t.ConfigRecord = {
+      'endpoints.assistants.apiKey': 'sk-live-plaintext-1234',
+      'endpoints.azureAssistants.apiKey': '${AZURE_KEY}',
+    };
+    const read: t.SummaryReader = {
+      isSet: (path) => path in values,
+      valueAt: (path) => values[path],
+    };
+    const [hidden] = summarizeFields([apiKey], 'endpoints.assistants', read, localize);
+    expect(hidden.value).toBe(MASKED_SECRET);
+    expect(JSON.stringify(hidden)).not.toContain('sk-live');
+    const [reference] = summarizeFields([apiKey], 'endpoints.azureAssistants', read, localize);
+    expect(reference.value).toBe('${AZURE_KEY}');
   });
 
   it('counts enum selections and Azure groups', () => {
