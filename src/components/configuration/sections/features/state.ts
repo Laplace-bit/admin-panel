@@ -60,9 +60,10 @@ export function isAgentKeyHidden(
  * an override over librechat.yaml key by key and validates the result, so a
  * key of the other definition that the layer beneath sets (the YAML `id`)
  * must be hidden, not just left out; keys only the edit target sets are
- * removed. Keys of `next` hidden earlier in this edit are shown again, and
- * keys of `next` a saved tombstone hides (the switch away was saved) are
- * unhidden, so the definition switched back to applies again.
+ * removed. Keys of `next` hidden earlier in this edit are shown again, keys
+ * of `next` a saved tombstone hides (the switch away was saved) are
+ * unhidden, and removals of `next`'s own keys queued by the switch away are
+ * dropped, so the definition switched back to applies again.
  */
 export function planAgentSwitch(
   next: t.MemoryAgentMode,
@@ -78,6 +79,9 @@ export function planAgentSwitch(
     const edit = visibility[keyPath];
     if (edit === 'hide') plan.unhide.push(keyPath);
     else if (edit === undefined && states[keyPath]?.isHidden) plan.show.push(keyPath);
+    if (editedValues != null && keyPath in editedValues && editedValues[keyPath] === undefined) {
+      plan.discard.push(keyPath);
+    }
   }
   for (const key of MEMORY_AGENT_KEYS[other]) {
     const keyPath = `${path}.${key}`;
