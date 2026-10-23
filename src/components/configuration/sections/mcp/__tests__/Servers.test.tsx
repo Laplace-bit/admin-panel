@@ -919,6 +919,74 @@ describe('McpServersRenderer — dotted record keys (dottedKeys)', () => {
     if (!headers) throw new Error('no headers editor');
     expect(within(headers).getByDisplayValue('x.api.version')).toBeInTheDocument();
   });
+
+  describe('user variables of a saved server', () => {
+    const PLAIN: t.ConfigRecord = { title: 'Region', description: 'Your region' };
+    const mixed: t.ConfigRecord = {
+      versioned: {
+        type: 'streamable-http',
+        url: 'https://mcp.versioned.dev/mcp',
+        customUserVars: { ...USER_VARS, REGION: PLAIN },
+      },
+    };
+
+    /** The user variables editor of `versioned`, its group open. */
+    function userVariables(): HTMLElement {
+      expand('versioned');
+      openGroup('versioned', 'com_config_mcp_group_user_vars');
+      const vars = card('versioned').querySelector<HTMLElement>(
+        '#mcpServers-versioned-customUserVars',
+      );
+      if (!vars) throw new Error('no user variables editor');
+      return vars;
+    }
+
+    function retitle(vars: HTMLElement, name: string, title: string) {
+      const entry = vars.querySelector<HTMLElement>(
+        `#section-mcpServers-versioned-customUserVars-${name}`,
+      );
+      if (!entry) throw new Error(`no card for ${name}`);
+      const toggle = entry.querySelector<HTMLButtonElement>('button[aria-expanded]');
+      if (toggle?.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle!);
+      const input = entry.querySelector<HTMLInputElement>('input[id$="-title"]');
+      if (!input) throw new Error(`no title input for ${name}`);
+      fireEvent.change(input, { target: { value: title } });
+      fireEvent.blur(input);
+    }
+
+    it('writes only the edited variable when a dotted one is inherited from Base', () => {
+      render(<Harness scope contract={dottedContract} extra={mixed} />);
+      expand('versioned');
+      fireEvent.click(
+        within(card('versioned')).getByRole('button', { name: 'com_config_mcp_override_fields' }),
+      );
+      retitle(userVariables(), 'REGION', 'Area');
+      expect(edits.editedValues).toEqual({
+        'mcpServers.versioned.customUserVars.REGION': { ...PLAIN, title: 'Area' },
+      });
+    });
+
+    it('writes only the edited variable of a Base server whose other variable is dotted', () => {
+      render(<Harness extra={mixed} />);
+      retitle(userVariables(), 'REGION', 'Area');
+      expect(edits.editedValues).toEqual({
+        'mcpServers.versioned.customUserVars.REGION': { ...PLAIN, title: 'Area' },
+      });
+    });
+
+    it('keeps the variables one record while removing a dotted one is pending', () => {
+      render(<Harness contract={dottedContract} extra={mixed} />);
+      const vars = userVariables();
+      fireEvent.click(within(vars).getByRole('button', { name: 'com_ui_delete MY.TOKEN' }));
+      expect(edits.editedValues).toEqual({
+        'mcpServers.versioned.customUserVars': { REGION: PLAIN },
+      });
+      retitle(vars, 'REGION', 'Area');
+      expect(edits.editedValues).toEqual({
+        'mcpServers.versioned.customUserVars': { REGION: { ...PLAIN, title: 'Area' } },
+      });
+    });
+  });
 });
 
 describe('McpServersRenderer — profiles (MCP-10)', () => {

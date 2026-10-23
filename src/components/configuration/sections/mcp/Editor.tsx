@@ -8,13 +8,7 @@ import {
   isHttpTransport,
   transportLabelKey,
 } from './transport';
-import {
-  hasDottedKey,
-  isConfigRecord,
-  asConfigRecord,
-  hasConfigValue,
-  isConfigValueEqual,
-} from '@/utils';
+import { isConfigRecord, isConfigValueEqual, asConfigRecord, hasConfigValue } from '@/utils';
 import { renderCollectionEntryFields, renderInlineField, toFieldId } from '../../renderer';
 import { RecordObjectField } from '../../fields/RecordObjectField';
 import { UnknownSettings } from '../../UnknownSettings';
@@ -83,6 +77,7 @@ export function McpServerEditor({
   quiet,
   owned,
   ownKeys,
+  isPendingWhole,
   editSessionId,
 }: t.McpEditorProps) {
   const localize = useLocalize();
@@ -299,6 +294,7 @@ export function McpServerEditor({
             onChange={onChange}
             disabled={disabled}
             editSessionId={editSessionId}
+            wholePending={isPendingWhole?.('customUserVars')}
           />
         </McpFieldGroup>
       )}
@@ -371,12 +367,20 @@ function UrlHint({ transport }: { transport: t.McpTransport }) {
   return <span className="settings-hint">{localize(key)}</span>;
 }
 
+/** Keys added, changed or removed between two records. */
+function changedKeys(current: t.ConfigRecord, next: t.ConfigRecord): string[] {
+  const keys = new Set([...Object.keys(next), ...Object.keys(current)]);
+  return [...keys].filter((key) => !isConfigValueEqual(current[key], next[key]));
+}
+
 /**
  * The values each user enters (customUserVars), as cards keyed by variable
  * name. Only the variables that change are written, so a server's override
  * stays sparse; variables the layer beneath defines can't be removed (D3).
- * While a variable's name has a dot (`dottedKeys`), the variables are
- * written as one record: a dot-path can't name that variable.
+ * A change to a variable whose name has a dot (`dottedKeys`) writes the
+ * variables as one record, since a dot-path can't name that variable; so
+ * does every change while such a write is pending (`wholePending`), which a
+ * write of one variable would replace.
  */
 function UserVariables({
   field,
@@ -386,6 +390,7 @@ function UserVariables({
   onChange,
   disabled,
   editSessionId,
+  wholePending,
 }: {
   field: t.SchemaField;
   entryPath: string;
@@ -394,20 +399,17 @@ function UserVariables({
   onChange: (leaf: string, value: t.ConfigValue) => void;
   disabled?: boolean;
   editSessionId?: number;
+  wholePending?: boolean;
 }) {
   const current = asConfigRecord(value);
   const write = (next: t.ConfigValue) => {
     const nextRecord = asConfigRecord(next);
-    if (hasDottedKey(current) || hasDottedKey(nextRecord)) {
+    const changed = changedKeys(current, nextRecord);
+    if (wholePending || changed.some((key) => key.includes('.'))) {
       onChange(field.key, Object.keys(nextRecord).length > 0 ? nextRecord : undefined);
       return;
     }
-    for (const [key, item] of Object.entries(nextRecord)) {
-      if (!isConfigValueEqual(current[key], item)) onChange(`${field.key}.${key}`, item);
-    }
-    for (const key of Object.keys(current)) {
-      if (!Object.hasOwn(nextRecord, key)) onChange(`${field.key}.${key}`, undefined);
-    }
+    for (const key of changed) onChange(`${field.key}.${key}`, nextRecord[key]);
   };
   return (
     <div className="py-2">

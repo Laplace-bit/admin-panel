@@ -174,6 +174,8 @@ export interface McpEditorProps {
   owned?: boolean;
   /** In a profile: the server keys the profile sets or edits, for "Set values only". */
   ownKeys?: ReadonlySet<string>;
+  /** Whether a pending edit writes the server's `leaf` whole (a record such as `customUserVars`). */
+  isPendingWhole?: (leaf: string) => boolean;
   editSessionId?: number;
 }
 

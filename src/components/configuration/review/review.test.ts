@@ -846,6 +846,48 @@ describe('planRevert', () => {
       });
     });
 
+    it('shows a dotted key whose text ends in a secret name as the value it is', () => {
+      const header = 'tenant.apiKey';
+      const team = { ...moonshot, headers: { [header]: 'acme' } };
+      const tree = { ...baseline, endpoints: { custom: [team, zai, vercel] } };
+      const changed = { ...team, headers: { [header]: 'globex' } };
+      const added = { ...zai, headers: { [header]: 'initech' } };
+      const items = summarizeChanges(
+        makeInput({ baseline: tree, saves: saveList([changed, added, vercel]) }),
+      );
+      expect(items).toHaveLength(2);
+      expect(items[0]).toMatchObject({ kind: 'changed', before: 'acme', after: 'globex' });
+      expect(items[1]).toMatchObject({ kind: 'added', after: 'initech' });
+      for (const item of items) {
+        expect(item.segments?.at(-1)).toBe(header);
+        expect(item.secret).toBeUndefined();
+      }
+      const profiles = summarizeChanges(
+        makeInput({
+          baseline: withProfiles({ 'us.secretKey': 'arn:a' }),
+          saves: [{ fieldPath: PROFILES, value: { 'us.secretKey': 'arn:b' } }],
+          isOwned: () => true,
+        }),
+      );
+      expect(profiles).toEqual([
+        expect.objectContaining({ kind: 'changed', before: 'arn:a', after: 'arn:b' }),
+      ]);
+      expect(profiles[0].secret).toBeUndefined();
+    });
+
+    it('still hides a secret field under a dotted key', () => {
+      const before = { 'team.one': { apiKey: 'sk-old' } };
+      const after = { 'team.one': { apiKey: 'sk-new' } };
+      const [item] = summarizeChanges(
+        makeInput({ baseline: { vaults: before }, saves: [{ fieldPath: 'vaults', value: after }] }),
+      );
+      expect(item).toMatchObject({
+        path: 'vaults.team.one.apiKey',
+        segments: ['vaults', 'team.one', 'apiKey'],
+        secret: true,
+      });
+    });
+
     it('restores a dotted entry name of a record collection saved as a whole', () => {
       const docs = { type: 'http', url: 'https://docs.example/mcp' };
       const tree = { mcpServers: { ...baseline.mcpServers, 'my.server': docs } };

@@ -732,6 +732,7 @@ export function McpServersRenderer({
                   quiet={badges.isNew}
                   owned={!lowerKeys.has(key)}
                   ownKeys={inScope ? ownKeysOf(key) : undefined}
+                  isPendingWhole={(leaf) => edits[`${prefix}${key}.${leaf}`] !== undefined}
                   editSessionId={editSessionId}
                 />
               </ConfiguredOnlyContext.Provider>
