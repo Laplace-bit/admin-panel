@@ -58,6 +58,9 @@ export const ABSENT_REVISION = 'absent';
 /** The admin API's code for a write whose `expectedRevision` no longer matches (409). */
 export const VERSION_CONFLICT_CODE = 'CONFIG_VERSION_CONFLICT';
 
+/** A save refused before anything is written: one section holds more changes than one batch takes (`maxChangeOps`). */
+export const TOO_MANY_CHANGES_CODE = 'TOO_MANY_CHANGES';
+
 /** A stdio MCP server's process fields: only librechat.yaml sets them (D10). */
 export const PROCESS_MCP_FIELDS: readonly string[] = ['command', 'args', 'env', 'cwd', 'stderr'];
 

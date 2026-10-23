@@ -43,6 +43,23 @@ function hasWrites(plan: t.WritePlan): boolean {
   );
 }
 
+/**
+ * The revision the pending edits were made against: the target's loaded
+ * revision when the first of them was made, held while any is pending. A
+ * re-read meanwhile (the review opening, a window-focus refetch) does not
+ * move it, so a save over a version someone else saved since is a conflict
+ * rather than a silent overwrite. Once the edits are saved or dropped it
+ * follows the loaded revision again.
+ */
+function useEditRevision(
+  loaded: string | null | undefined,
+  pending: boolean,
+): string | null | undefined {
+  const [held, setHeld] = useState({ pending, revision: loaded });
+  if (held.pending !== pending) setHeld({ pending, revision: loaded });
+  return pending && held.pending ? held.revision : loaded;
+}
+
 /** The admin session ended (signed out elsewhere or expired): the save never reached LibreChat. */
 const SESSION_ERROR_RE = /no admin session token|session (has )?expired|unauthori[sz]ed|\b401\b/i;
 
@@ -107,10 +124,14 @@ export function useConfigSave({
 
   useEffect(() => setServerIssues([]), [editedValues, visibilityEdits]);
 
-  /** The revision the edits are saved against: the target as the page last loaded it (`changesBatch`). */
+  const hasPendingEdits =
+    Object.keys(editedValues).length > 0 || Object.keys(visibilityEdits).length > 0;
+  const editRevision = useEditRevision(targetRevision, hasPendingEdits);
+
+  /** The revision the edits are saved against (`changesBatch`): see `useEditRevision`. */
   const expectedRevision = useMemo(
-    () => (usesChangeBatch(features) ? toRevisionPrecondition(targetRevision) : undefined),
-    [features, targetRevision],
+    () => (usesChangeBatch(features) ? toRevisionPrecondition(editRevision) : undefined),
+    [features, editRevision],
   );
 
   const clearEdits = useCallback(() => {
@@ -502,11 +523,12 @@ export function useConfigSave({
   );
 
   /**
-   * Save from the review. After a conflict the page has re-read the target,
-   * so `expectedRevision` names the other admin's version: saving against it
-   * would write over that version unasked. Only Reload or Merge resolves the
-   * conflict; closing the review ends it, and the review opened again
-   * compares the edits with what is stored now.
+   * Save from the review, against the revision the edits were made against.
+   * While the conflict notice is shown only Reload or Merge resolves it: Save
+   * would send that revision again and meet the same conflict. Closing the
+   * review ends the notice; the review opened again compares the edits with
+   * what is stored now, and its Save conflicts again until the admin reloads
+   * or merges.
    */
   const handleConfirmSave = useCallback(async () => {
     if (conflict) return;
@@ -524,8 +546,9 @@ export function useConfigSave({
 
   /**
    * Opening the review re-reads the target, so rows saved by someone else
-   * meanwhile are flagged as drifted (SV-8). Blocking problems are listed by
-   * the review from `issues`.
+   * meanwhile are flagged as drifted (SV-8); the revision Save sends stays the
+   * one the edits were made against. Blocking problems are listed by the
+   * review from `issues`.
    */
   const openReview = useCallback(() => {
     void invalidateTarget(editTarget);

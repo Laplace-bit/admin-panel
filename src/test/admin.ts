@@ -3,9 +3,11 @@ import {
   isConfigRecord,
   getValueAtPath,
   setValueAtPath,
+  validateSection,
   mergeConfigLayers,
   removeValueAtPath,
 } from '@/utils';
+import { getConfigSection } from '@/constants';
 
 /** One request the fake admin API received. */
 export interface FakeAdminRequest {
@@ -36,6 +38,12 @@ export type FakeAdminOverride = (
 ) => { status: number; body: unknown } | undefined;
 
 const SECRET_KEYS = new Set(['apiKey']);
+
+const BASE_KEY = 'role/__base__';
+
+function issueKey(issue: t.ConfigIssue): string {
+  return `${issue.path}|${issue.code ?? ''}`;
+}
 
 /** Whether `path` is `ancestor` or lies inside it. */
 function isAtOrUnder(path: string, ancestor: string): boolean {
@@ -96,6 +104,7 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
   let override: FakeAdminOverride | undefined;
   let report: FakeWriteReport | undefined;
   let meta: t.AdminConfigMetaBody | undefined;
+  let judging = false;
 
   const docKey = (principalType: string, principalId: string) =>
     `${principalType}/${decodeURIComponent(principalId)}`;
@@ -140,7 +149,7 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
   }
 
   function baseMerged(): t.ConfigRecord {
-    const base = docs.get(docKey('role', '__base__'));
+    const base = docs.get(BASE_KEY);
     return mergeConfigLayers(yaml, base?.overrides ?? {}) as t.ConfigRecord;
   }
 
@@ -220,6 +229,39 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
     return written(request, { config: { overrides: redact(overrides) } });
   }
 
+  /** A document's schema issues in `section`: its overrides over the layer beneath, without what it hides. */
+  function sectionIssues(
+    key: string,
+    state: Omit<FakeDoc, 'version'>,
+    section: string,
+  ): t.ConfigIssue[] {
+    const lower = key === BASE_KEY ? yaml : baseMerged();
+    const floor = state.tombstones.reduce(removeValueAtPath, lower);
+    return validateSection(
+      section,
+      mergeConfigLayers(floor[section], state.overrides[section], section),
+    );
+  }
+
+  /**
+   * The issues a batch introduces (`judgeEndStates`): those of each section
+   * it writes that the document did not have before, by the panel's own
+   * section validation. LibreChat judges a batch on its end state too, a
+   * little more leniently (only sections the document stores values in).
+   */
+  function endStateIssues(
+    key: string,
+    before: Omit<FakeDoc, 'version'>,
+    after: Omit<FakeDoc, 'version'>,
+    ops: t.ConfigBatchOp[],
+  ): t.ConfigIssue[] {
+    const sections = new Set(ops.map(({ fieldPath }) => getConfigSection(fieldPath)));
+    return [...sections].flatMap((section) => {
+      const had = new Set(sectionIssues(key, before, section).map(issueKey));
+      return sectionIssues(key, after, section).filter((issue) => !had.has(issueKey(issue)));
+    });
+  }
+
   /** One batch op applied to a document, as `POST …/changes` applies it. */
   function applyOp(
     current: Omit<FakeDoc, 'version'>,
@@ -253,7 +295,8 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
         currentRevision,
       });
     }
-    let next: Omit<FakeDoc, 'version'> = doc ?? { overrides: {}, tombstones: [] };
+    const current: Omit<FakeDoc, 'version'> = doc ?? { overrides: {}, tombstones: [] };
+    let next = current;
     const applied: object[] = [];
     const skipped: object[] = [];
     ops.forEach((op, opIndex) => {
@@ -265,6 +308,14 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
       next = applyOp(next, op);
       applied.push(ref);
     });
+    const issues = judging ? endStateIssues(key, current, next, ops) : [];
+    if (issues.length > 0) {
+      return reply(400, {
+        error: 'Invalid config override',
+        code: 'CONFIG_OVERRIDE_INVALID',
+        issues,
+      });
+    }
     store(key, next);
     const stored = docs.get(key)!;
     const revision = revisionOf(key, stored);
@@ -298,6 +349,10 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
     /** Adds a write report (`applied`, `skipped`, `ignored`) to each successful write's reply. */
     reportWrites: (next?: FakeWriteReport) => {
       report = next;
+    },
+    /** Refuses (400) a batch that leaves a section it writes with a schema issue it did not have. */
+    judgeEndStates: () => {
+      judging = true;
     },
     /** Serves `GET /api/admin/config/meta` (a server with the contract); unset, it answers 404 like an older server. */
     reportMeta: (body?: t.AdminConfigMetaBody) => {

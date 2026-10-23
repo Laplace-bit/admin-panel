@@ -1114,8 +1114,8 @@ describe('applyConfigChanges — change batches (changesBatch, expectedRevision)
     api.current!.reportMeta(batchMeta({ maxChangeOps: 2 }));
     await applyConfigChanges(base, [
       { op: 'set', path: 'balance.startBalance', value: 5 },
-      { op: 'set', path: 'balance.refillAmount', value: 6 },
-      { op: 'set', path: 'balance.refillIntervalValue', value: 7 },
+      { op: 'set', path: 'memory.tokenLimit', value: 6 },
+      { op: 'set', path: 'interface.presets', value: false },
     ]);
     expect(posts().map((request) => request.body?.ops?.length)).toEqual([2, 1]);
     expect(posts().map((request) => request.body?.expectedRevision)).toEqual([
@@ -1123,7 +1123,73 @@ describe('applyConfigChanges — change batches (changesBatch, expectedRevision)
       'role-__base__:1',
     ]);
     expect(api.current!.stored()).toEqual({
-      balance: { startBalance: 5, refillAmount: 6, refillIntervalValue: 7 },
+      balance: { startBalance: 5 },
+      memory: { tokenLimit: 6 },
+      interface: { presets: false },
+    });
+  });
+
+  describe('a split save, by sections', () => {
+    const switchAgent: t.ConfigChange[] = [
+      { op: 'set', path: 'memory.agent.provider', value: 'openAI' },
+      { op: 'set', path: 'memory.agent.model', value: 'gpt-4o-mini' },
+      { op: 'tombstone', path: 'memory.agent.id' },
+    ];
+
+    beforeEach(() => {
+      api.current = createFakeAdminApi({ ...yaml, memory: { agent: { id: 'agent_yaml' } } });
+      api.current.judgeEndStates();
+    });
+
+    it("keeps a section's changes in one batch, so each batch's end state is valid", async () => {
+      api.current!.reportMeta(batchMeta({ maxChangeOps: 3 }));
+      const result = await applyConfigChanges(base, [
+        { op: 'set', path: 'balance.startBalance', value: 5 },
+        ...switchAgent,
+      ]);
+      expect(result).toMatchObject({ applied: 4, failed: [], issues: [], skipped: [] });
+      expect(posts().map((request) => request.body?.ops)).toEqual([
+        [
+          { op: 'tombstone', fieldPath: 'memory.agent.id' },
+          { op: 'set', fieldPath: 'memory.agent.provider', value: 'openAI' },
+          { op: 'set', fieldPath: 'memory.agent.model', value: 'gpt-4o-mini' },
+        ],
+        [{ op: 'set', fieldPath: 'balance.startBalance', value: 5 }],
+      ]);
+      expect(api.current!.stored()).toEqual({
+        balance: { startBalance: 5 },
+        memory: { agent: { provider: 'openAI', model: 'gpt-4o-mini' } },
+      });
+      expect(api.current!.tombstones()).toEqual(['memory.agent.id']);
+    });
+
+    it('judges a batch that hides the agent ID alone, the end state a split must avoid', async () => {
+      const response = await api.current!.fetch('/api/admin/config/role/__base__/changes', {
+        method: 'POST',
+        body: JSON.stringify({ ops: [{ op: 'tombstone', fieldPath: 'memory.agent.id' }] }),
+      });
+      expect(response.status).toBe(400);
+      expect(api.current!.stored()).toBeUndefined();
+    });
+
+    it('refuses a section with more changes than one batch takes, writing nothing', async () => {
+      api.current!.reportMeta(batchMeta({ maxChangeOps: 2 }));
+      const result = await applyConfigChanges(base, [
+        { op: 'set', path: 'balance.startBalance', value: 5 },
+        ...switchAgent,
+      ]);
+      expect(result).toMatchObject({ applied: 0, issues: [] });
+      expect(result.partiallyWritten).toBeUndefined();
+      expect(result.failed).toEqual([
+        {
+          path: 'memory',
+          code: 'TOO_MANY_CHANGES',
+          message:
+            'has 3 changes, more than the 2 LibreChat takes in one save: save some of them first, then the rest',
+          params: { count: 3, limit: 2 },
+        },
+      ]);
+      expect(api.current!.writes()).toEqual([]);
     });
   });
 
@@ -1136,7 +1202,7 @@ describe('applyConfigChanges — change batches (changesBatch, expectedRevision)
     );
     const result = await applyConfigChanges(base, [
       { op: 'set', path: 'balance.startBalance', value: 5 },
-      { op: 'set', path: 'balance.refillAmount', value: 6 },
+      { op: 'set', path: 'memory.tokenLimit', value: 6 },
     ]);
     expect(result).toMatchObject({ partiallyWritten: true, applied: 0 });
     expect(result.failed.map((issue) => issue.message)).toEqual(['Failed to apply config changes']);
@@ -1161,7 +1227,7 @@ describe('applyConfigChanges — change batches (changesBatch, expectedRevision)
       base,
       [
         { op: 'set', path: 'balance.startBalance', value: 5 },
-        { op: 'set', path: 'balance.refillAmount', value: 6 },
+        { op: 'set', path: 'memory.tokenLimit', value: 6 },
       ],
       loaded ?? 'absent',
     );

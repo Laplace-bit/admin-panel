@@ -714,6 +714,7 @@
   "com_config_issue_custom_format": "must be only host:port, without http:// or a path",
   "com_config_issue_custom_missing_port": "must include a port, for example localhost:11434",
   "com_config_issue_custom_public_ip": "is a public IP address: enter a private address, or a hostname that resolves to one",
+  "com_config_issue_too_many_changes": "has {{count}} changes, more than the {{limit}} LibreChat takes in one save: save some of them first, then the rest",
   "com_config_issue_invalid_value": "is not a valid value",
   "com_config_issue_wrong_type": "has the wrong type of value",
   "com_config_issue_invalid_option": "is not one of the allowed values",

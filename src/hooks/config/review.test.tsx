@@ -218,6 +218,13 @@ describe('saving against the loaded revision (changesBatch)', () => {
       ([call]) => (call as { data: { expectedRevision?: string } }).data.expectedRevision,
     );
 
+  /** A server whose target is stored at `revision`: a save named by another one writes nothing. */
+  const storedAt = (revision: string) =>
+    applyMock.mockImplementation(async (call) => {
+      const { expectedRevision } = (call as { data: { expectedRevision?: string } }).data;
+      return expectedRevision === undefined || expectedRevision === revision ? saved : conflicted;
+    });
+
   beforeEach(() => {
     applyMock.mockReset();
   });
@@ -281,8 +288,21 @@ describe('saving against the loaded revision (changesBatch)', () => {
     expect(result.current.edits.editedValues).toEqual({});
   });
 
-  it('saves against the version the review re-read once it is closed and opened again', async () => {
-    applyMock.mockResolvedValueOnce(conflicted).mockResolvedValue(saved);
+  it('keeps the revision the edits were made against when the target is re-read meanwhile', async () => {
+    storedAt('base:5');
+    const { result, rerender } = renderPage(yaml, {}, yaml, batch, 'base:4');
+    act(() => result.current.edits.handleFieldChange('balance.startBalance', 5));
+    rerender({ targetRevision: 'base:5' });
+    act(() => result.current.save.openReview());
+    rerender({ targetRevision: 'base:5' });
+    await act(() => result.current.review.confirm());
+    expect(sentRevisions()).toEqual(['base:4']);
+    expect(result.current.review.conflict).toBe(true);
+    expect(result.current.edits.editedValues).toEqual({ 'balance.startBalance': 5 });
+  });
+
+  it('conflicts again from a review opened again, until the edits are merged', async () => {
+    storedAt('base:5');
     const { result, rerender } = renderPage(yaml, {}, yaml, batch, 'base:4');
     await editAndSave(result);
     rerender({ targetRevision: 'base:5' });
@@ -291,7 +311,44 @@ describe('saving against the loaded revision (changesBatch)', () => {
     expect(result.current.edits.editedValues).toEqual({ 'balance.startBalance': 5 });
     act(() => result.current.review.openReview());
     await act(() => result.current.review.confirm());
+    expect(sentRevisions()).toEqual(['base:4', 'base:4']);
+    expect(result.current.review.conflict).toBe(true);
+    await act(() => result.current.review.mergeLatest());
+    expect(sentRevisions()).toEqual(['base:4', 'base:4', undefined]);
+    expect(result.current.edits.editedValues).toEqual({});
+  });
+
+  it('follows a re-read while no edits are pending', async () => {
+    storedAt('base:5');
+    const { result, rerender } = renderPage(yaml, {}, yaml, batch, 'base:4');
+    rerender({ targetRevision: 'base:5' });
+    await editAndSave(result);
+    expect(sentRevisions()).toEqual(['base:5']);
+    expect(result.current.review.conflict).toBe(false);
+    expect(result.current.edits.editedValues).toEqual({});
+  });
+
+  it('follows the loaded revision again once the edits are saved', async () => {
+    storedAt('base:4');
+    const { result, rerender } = renderPage(yaml, {}, yaml, batch, 'base:4');
+    await editAndSave(result);
+    storedAt('base:5');
+    rerender({ targetRevision: 'base:5' });
+    act(() => result.current.edits.handleFieldChange('balance.startBalance', 6));
+    act(() => result.current.save.openReview());
+    await act(() => result.current.review.confirm());
     expect(sentRevisions()).toEqual(['base:4', 'base:5']);
+    expect(result.current.edits.editedValues).toEqual({});
+  });
+
+  it('follows the loaded revision again once the edits are discarded', async () => {
+    storedAt('base:5');
+    const { result, rerender } = renderPage(yaml, {}, yaml, batch, 'base:4');
+    act(() => result.current.edits.handleFieldChange('balance.startBalance', 5));
+    rerender({ targetRevision: 'base:5' });
+    act(() => result.current.edits.handleDiscard());
+    await editAndSave(result);
+    expect(sentRevisions()).toEqual(['base:5']);
     expect(result.current.edits.editedValues).toEqual({});
   });
 
@@ -306,6 +363,27 @@ describe('saving against the loaded revision (changesBatch)', () => {
     await editAndSave(result);
     expect(result.current.review.conflict).toBe(false);
     expect(result.current.edits.saveError).toMatch(/^Save failed partway: the changes written/);
+    expect(result.current.edits.editedValues).toEqual({ 'balance.startBalance': 5 });
+  });
+
+  it('says which section holds more changes than one save takes, and keeps the edits', async () => {
+    applyMock.mockResolvedValueOnce({
+      ...saved,
+      applied: 0,
+      failed: [
+        {
+          path: 'balance',
+          code: 'TOO_MANY_CHANGES',
+          message: 'has 1200 changes',
+          params: { count: 1200, limit: 1000 },
+        },
+      ],
+    });
+    const { result } = renderPage(yaml, {}, yaml, batch, 'base:4');
+    await editAndSave(result);
+    expect(result.current.edits.saveError).toBe(
+      'Save failed and nothing was changed — Balance has 1,200 changes, more than the 1,000 LibreChat takes in one save: save some of them first, then the rest',
+    );
     expect(result.current.edits.editedValues).toEqual({ 'balance.startBalance': 5 });
   });
 

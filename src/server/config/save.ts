@@ -30,6 +30,7 @@ import {
   getConfigSection,
   MERGED_BACK_REASONS,
   VERSION_CONFLICT_CODE,
+  TOO_MANY_CHANGES_CODE,
   TERMS_NOT_ACCEPTED_CODE,
   TERMS_NOT_ACCEPTED_ISSUE,
 } from '@/constants';
@@ -560,30 +561,101 @@ function batchFailure(
   return describeFailure(body, status, (refused ?? ops[0]).fieldPath, features, sets);
 }
 
+/** How many changes of a batch fall in each config section, in the order the sections first appear. */
+function countSectionChanges(ops: t.ConfigBatchOp[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const { fieldPath } of ops) {
+    const section = getConfigSection(fieldPath);
+    counts.set(section, (counts.get(section) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Sections packed in order into groups of at most `size` changes in all; a section is never split. */
+function packSections(counts: ReadonlyMap<string, number>, size: number): string[][] {
+  const groups: string[][] = [];
+  let group: string[] = [];
+  let filled = 0;
+  for (const [section, count] of counts) {
+    if (group.length > 0 && filled + count > size) {
+      groups.push(group);
+      group = [];
+      filled = 0;
+    }
+    group.push(section);
+    filled += count;
+  }
+  if (group.length > 0) groups.push(group);
+  return groups;
+}
+
+function tooManyChangesIssue(section: string, count: number, limit: number): t.ConfigIssue {
+  const params = { count, limit };
+  return {
+    path: section,
+    code: TOO_MANY_CHANGES_CODE,
+    message: describeIssueCode(TOO_MANY_CHANGES_CODE, params, 'has too many changes for one save'),
+    params,
+  };
+}
+
 /**
- * Writes a plan as `POST …/changes` batches (`changesBatch`): one batch, or
- * one per `maxChangeOps` changes for a larger plan, each named by the
- * revision the one before it left. A batch applies whole or not at all, so
- * nothing is rolled back by hand; a failure after earlier batches were
- * written is `partial`.
+ * The batches a plan is sent in: one, or for a plan above `maxChangeOps`, one
+ * per group of whole config sections. LibreChat judges each batch on its own
+ * end state, section by section, so the changes of one section (a hide and
+ * the values that replace it, an entry and the settings that depend on it)
+ * always go together. Each batch is planned again from its sections' changes,
+ * against the layers as read (the batches before it write other sections
+ * only), and sent as that plan writes it. Nothing is written, and the refused
+ * save's result is returned instead, when one section alone holds more
+ * changes than a batch takes or a batch's own plan finds an issue.
+ */
+function splitPlan(
+  changes: t.ConfigChange[],
+  plan: t.WritePlan,
+  snapshot: t.WriteSnapshot,
+  contract: t.ConfigContract,
+  rules: t.ConfigWriteRules,
+): t.ConfigBatchOp[][] | t.ApplyConfigChangesResult {
+  const ops = toBatchOps(plan);
+  const size = contract.limits.maxChangeOps;
+  if (size <= 0 || ops.length <= size) return [ops];
+  const counts = countSectionChanges(ops);
+  const oversized = [...counts]
+    .filter(([, count]) => count > size)
+    .map(([section, count]) => tooManyChangesIssue(section, count, size));
+  if (oversized.length > 0) return { ...planResult(plan), failed: oversized };
+  const batches = packSections(counts, size).map((sections) => {
+    const included = new Set(sections);
+    const own = changes.filter((change) => included.has(getConfigSection(change.path)));
+    return planConfigChanges(own, snapshot, contract.features, rules);
+  });
+  const issues = batches.flatMap((batch) => batch.issues);
+  if (issues.length > 0) return { ...planResult(plan), issues };
+  return batches.map(toBatchOps);
+}
+
+/**
+ * Writes a plan's batches (`splitPlan`) as `POST …/changes` requests
+ * (`changesBatch`), each named by the revision the one before it left. A
+ * batch applies whole or not at all, so nothing is rolled back by hand; a
+ * failure after earlier batches were written is `partial`.
  */
 async function writeBatches(
   target: t.WriteTargetRef,
+  batches: t.ConfigBatchOp[][],
   plan: t.WritePlan,
   contract: t.ConfigContract,
   revision: string | undefined,
 ): Promise<BatchOutcome> {
-  const ops = toBatchOps(plan);
   const changed = createPathIndex(plan.changed);
-  const { features, limits } = contract;
-  const size = limits.maxChangeOps > 0 ? limits.maxChangeOps : ops.length;
   const priority = target.type === 'base' ? { priority: 0 } : {};
   const outcome: BatchOutcome = { dropped: [], reported: [] };
   let expected = revision;
-  let start = 0;
+  let index = 0;
   try {
-    for (; start < ops.length; start += size) {
-      const batch = ops.slice(start, start + size);
+    for (; index < batches.length; index++) {
+      const batch = batches[index];
       const response = await apiFetch(`${targetConfigUrl(target)}/changes`, {
         method: 'POST',
         body: JSON.stringify({
@@ -595,8 +667,8 @@ async function writeBatches(
       const body = await readJson<t.ChangesBatchResponse & { section?: string }>(response);
       if (!response.ok) {
         outcome.conflict = response.status === 409 && body.code === VERSION_CONFLICT_CODE;
-        outcome.failure = batchFailure(body, response.status, batch, features);
-        outcome.partial = start > 0;
+        outcome.failure = batchFailure(body, response.status, batch, contract.features);
+        outcome.partial = index > 0;
         return outcome;
       }
       const written = batch.map(({ fieldPath }) => fieldPath);
@@ -608,7 +680,7 @@ async function writeBatches(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     outcome.failure = [{ path: '', code: 'WRITE_FAILED', message }];
-    outcome.partial = start > 0;
+    outcome.partial = index > 0;
   }
   return outcome;
 }
@@ -654,13 +726,14 @@ function conflictResult(plan?: t.WritePlan): t.ApplyConfigChangesResult {
 
 /**
  * With `changesBatch`: the plan is written as one `POST …/changes` batch
- * (`writeBatches`) named by the revision it was planned against. The edits
- * were made against `expectedRevision`: when the target is stored at another
+ * (`writeBatches`) named by the revision it was planned against, or above
+ * `maxChangeOps` as batches of whole sections (`splitPlan`). The edits were
+ * made against `expectedRevision`: when the target is stored at another
  * revision now, or a write lands between the read and the batch (409),
  * nothing is written and the result is a `conflict`. Without one (an import),
  * a batch that loses that race is planned and sent once more. A 409 on a
- * later batch of a split save (`maxChangeOps`) is `partiallyWritten`, not a
- * conflict: the batches before it stay saved.
+ * later batch of a split save is `partiallyWritten`, not a conflict: the
+ * batches before it stay saved.
  */
 async function applyBatch(
   target: t.WriteTargetRef,
@@ -669,6 +742,7 @@ async function applyBatch(
   rules: t.ConfigWriteRules,
   expectedRevision: string | undefined,
 ): Promise<t.ApplyConfigChangesResult> {
+  const changes = sanitizeOps(ops);
   for (let attempt = 0; ; attempt++) {
     const snapshot = await readWriteSnapshot(target);
     const revision = toRevisionPrecondition(snapshot.revision);
@@ -676,9 +750,11 @@ async function applyBatch(
     if (comparable && revision !== expectedRevision) {
       return conflictResult();
     }
-    const plan = planConfigChanges(sanitizeOps(ops), snapshot, contract.features, rules);
+    const plan = planConfigChanges(changes, snapshot, contract.features, rules);
     if (plan.issues.length > 0 || !hasWrites(plan)) return planResult(plan);
-    const outcome = await writeBatches(target, plan, contract, revision);
+    const batches = splitPlan(changes, plan, snapshot, contract, rules);
+    if (!Array.isArray(batches)) return batches;
+    const outcome = await writeBatches(target, batches, plan, contract, revision);
     const retry = outcome.conflict && !outcome.partial && expectedRevision === undefined;
     if (retry && attempt === 0) continue;
     if (outcome.failure) {
