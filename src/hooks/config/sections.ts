@@ -18,10 +18,18 @@ const PERMISSIONS_BANNER_LINK: t.InfoBannerLink = {
   labelKey: 'com_config_ui_permissions_link',
 };
 
-/** Display name of a list entry: its name or label, else "Entry N". */
-function entryLabel(entry: t.ConfigValue, index: number, localize: t.LocalizeFn): string {
+/** A model spec is shown by its label (what the model menu shows), else its name. */
+const SPEC_LABEL_KEYS = ['label', 'name'] as const;
+
+/** Display name of a list entry: its name or label (label first for specs), else "Entry N". */
+function entryLabel(
+  entry: t.ConfigValue,
+  index: number,
+  localize: t.LocalizeFn,
+  keys: readonly string[] = ['name', 'label'],
+): string {
   if (isConfigRecord(entry)) {
-    for (const key of ['name', 'label'] as const) {
+    for (const key of keys) {
       const value = entry[key];
       if (typeof value === 'string' && value) return value;
     }
@@ -82,7 +90,7 @@ function collectionTocItems(
     const list = getValueAtPath(values, 'modelSpecs.list');
     return (Array.isArray(list) ? list : []).map((entry, i) => ({
       id: `section-modelSpecs-list-${i}`,
-      label: entryLabel(entry, i, localize),
+      label: entryLabel(entry, i, localize, SPEC_LABEL_KEYS),
       dataPath: `modelSpecs.list.${i}`,
       path: `modelSpecs.list.${i}`,
     }));

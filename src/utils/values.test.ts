@@ -8,6 +8,7 @@ import {
   scopeLayersFixture,
 } from '@/test/layers';
 import { deriveFieldState, deriveFieldValue, resolveShadowedBy } from './values';
+import { mergeScopeLayer } from './layers';
 
 function data(overrides: Partial<t.ConfigValuesData> = {}): t.ConfigValuesData {
   return {
@@ -334,6 +335,93 @@ describe('deriveFieldValue', () => {
     );
     const data = valuesDataFixture(layers, { 'speech.tts.url': undefined });
     expect(deriveFieldValue('speech.tts.url', 'x', data)).toBeUndefined();
+  });
+});
+
+describe('deriveFieldState for model specs (a list replaced whole)', () => {
+  const base = baseConfigFixture({
+    dbOverrides: {
+      modelSpecs: {
+        list: [
+          { name: 'spec-b', label: 'Spec B' },
+          { name: 'spec-a', label: 'Spec A (admin)' },
+        ],
+      },
+    },
+  });
+  const data = valuesDataFixture(baseLayersFixture(base));
+
+  it("reads each spec's lower value from the same spec, not from its index", () => {
+    expect(deriveFieldState('modelSpecs.list.0.label', data)).toMatchObject({
+      value: 'Spec B',
+      source: 'admin',
+      revertTarget: { value: undefined, source: 'default' },
+    });
+    expect(deriveFieldState('modelSpecs.list.1.label', data)).toMatchObject({
+      value: 'Spec A (admin)',
+      source: 'admin',
+      revertTarget: { value: 'Spec A', source: 'yaml' },
+    });
+  });
+});
+
+describe('deriveFieldState for a spec the owned list leaves a field out of', () => {
+  const yaml: t.ConfigRecord = {
+    modelSpecs: { list: [{ name: 'spec-a', label: 'Spec A', description: 'From YAML' }] },
+  };
+  const owned: t.ConfigRecord = {
+    modelSpecs: { list: [{ name: 'spec-a', label: 'Spec A (admin)' }] },
+  };
+
+  it('does not present librechat.yaml’s field as what Base users get (Base owns the list)', () => {
+    const layers = baseLayersFixture(
+      baseConfigFixture({
+        yamlConfig: yaml,
+        yamlPaths: ['modelSpecs.list'],
+        dbOverrides: owned,
+        config: mergeScopeLayer(yaml, owned),
+      }),
+    );
+    expect(
+      deriveFieldState('modelSpecs.list.0.description', valuesDataFixture(layers)),
+    ).toMatchObject({
+      value: undefined,
+      effective: undefined,
+      source: 'default',
+      isConfigured: false,
+      isOverride: false,
+    });
+    expect(deriveFieldState('modelSpecs.list.0.label', valuesDataFixture(layers))).toMatchObject({
+      value: 'Spec A (admin)',
+      source: 'admin',
+      revertTarget: { value: 'Spec A', source: 'yaml' },
+    });
+  });
+
+  it('does not present Base’s field as what a profile gets (the profile owns the list)', () => {
+    const base = baseConfigFixture({
+      yamlConfig: yaml,
+      yamlPaths: ['modelSpecs.list'],
+      dbOverrides: {},
+      config: yaml,
+    });
+    const layers = scopeLayersFixture(
+      scopeConfigFixture({
+        resolvedConfig: {},
+        changedPaths: ['modelSpecs.list'],
+        overrides: owned,
+        tombstones: [],
+      }),
+      base,
+    );
+    expect(
+      deriveFieldState('modelSpecs.list.0.description', valuesDataFixture(layers)),
+    ).toMatchObject({
+      value: undefined,
+      effective: undefined,
+      source: 'default',
+      inherited: { value: 'From YAML' },
+    });
   });
 });
 

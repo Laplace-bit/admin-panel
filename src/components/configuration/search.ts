@@ -19,6 +19,7 @@ import { getFieldMeta, labelForPath, describeField } from './meta';
 import { formatFieldValue } from './controls';
 import { inferTransportType } from './sections/mcp/validation';
 import { isMcpFieldShown } from './sections/mcpFieldMeta';
+import { specSearchFields } from './sections/specs/params';
 import { getEntryTitle } from './fields/entries';
 
 const VALUE_MAX = 40;
@@ -219,7 +220,15 @@ function walkField(ctx: WalkContext, field: t.SchemaField, path: string, breadcr
       pushItem(ctx, { label: title, breadcrumb: entryCrumbs, path: entryPath, kind: 'entry' }, [
         segment,
       ]);
-      walkChildren(ctx, field.children ?? [], entryPath, crumbs([...entryCrumbs, title]));
+      const children =
+        path === 'modelSpecs.list'
+          ? specSearchFields(
+              field.children ?? [],
+              getValueAtPath(values ?? null, entryPath),
+              values ?? null,
+            )
+          : (field.children ?? []);
+      walkChildren(ctx, children, entryPath, crumbs([...entryCrumbs, title]));
     }
     return;
   }

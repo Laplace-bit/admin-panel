@@ -112,8 +112,8 @@ describe('identity-keyed collection ops (SV-1)', () => {
       context({ collections }),
     );
     expect(ops).toEqual([
-      expect.objectContaining({ op: 'upsertEntry', key: 'AdminC', identity: 'AdminB' }),
       { op: 'removeEntry', path: 'endpoints.custom', key: 'AdminA', identity: 'AdminA' },
+      expect.objectContaining({ op: 'upsertEntry', key: 'AdminC', identity: 'AdminB' }),
     ]);
   });
 
@@ -203,6 +203,95 @@ describe('identity-keyed collection ops (SV-1)', () => {
     expect(issues).toMatchObject([
       { path: 'endpoints.custom.0.name', code: 'required', entryIdentity: 'AdminA' },
     ]);
+  });
+
+  it('sends a reordered spec list with every kept spec at its new index', () => {
+    const specList: t.ConfigRecord[] = [
+      { name: 'a', label: 'A', preset: { endpoint: 'openAI', model: 'm' } },
+      { name: 'b', label: 'B', preset: { endpoint: 'openAI', model: 'm' } },
+      { name: 'c', label: 'C', preset: { endpoint: 'openAI', model: 'm' } },
+    ];
+    const specRoot: t.ConfigRecord = { modelSpecs: { list: specList } };
+    const reordered = [specList[2], specList[0], specList[1]];
+    const collections = trackCollectionEdit({}, {}, 'modelSpecs.list', reordered, specRoot);
+    const { ops } = buildConfigChanges(
+      new Set(['modelSpecs.list']),
+      { 'modelSpecs.list': reordered },
+      schemaPaths,
+      context({ root: specRoot, collections }),
+    );
+    expect(ops).toEqual([
+      expect.objectContaining({ op: 'upsertEntry', identity: 'c', index: 0 }),
+      expect.objectContaining({ op: 'upsertEntry', identity: 'a', index: 1 }),
+      expect.objectContaining({ op: 'upsertEntry', identity: 'b', index: 2 }),
+    ]);
+    const plan = planConfigChanges(ops, { stored: {}, lower: specRoot, lowerKind: 'yaml' });
+    expect(plan.sets.map((set) => set.fieldPath)).toEqual(['modelSpecs.list']);
+    const saved = plan.sets[0].value as t.ConfigRecord[];
+    expect(saved.map((spec) => spec.name)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('keeps the spec order when a save both removes and adds specs', () => {
+    const spec = (name: string): t.ConfigRecord => ({
+      name,
+      label: name.toUpperCase(),
+      preset: { endpoint: 'openAI', model: 'm' },
+    });
+    const specList = [spec('a'), spec('b'), spec('c')];
+    const specRoot: t.ConfigRecord = { modelSpecs: { list: specList } };
+    const pending = [specList[1], specList[2], spec('x')];
+    const collections = trackCollectionEdit({}, {}, 'modelSpecs.list', pending, specRoot);
+    const { ops } = buildConfigChanges(
+      new Set(['modelSpecs.list']),
+      { 'modelSpecs.list': pending },
+      schemaPaths,
+      context({ root: specRoot, collections }),
+    );
+    const plan = planConfigChanges(ops, { stored: {}, lower: specRoot, lowerKind: 'yaml' });
+    expect(plan.issues).toEqual([]);
+    const saved = plan.sets[0].value as t.ConfigRecord[];
+    expect(saved.map((entry) => entry.name)).toEqual(['b', 'c', 'x']);
+  });
+
+  it('saves two specs whose names were swapped', () => {
+    const specList: t.ConfigRecord[] = [
+      { name: 'a', label: 'A', preset: { endpoint: 'openAI', model: 'm' } },
+      { name: 'b', label: 'B', preset: { endpoint: 'openAI', model: 'm' } },
+    ];
+    const specRoot: t.ConfigRecord = { modelSpecs: { list: specList } };
+    const edited: t.FlatConfigMap = {
+      'modelSpecs.list.0': { ...specList[0], name: 'b' },
+      'modelSpecs.list.1': { ...specList[1], name: 'a' },
+    };
+    const collections = Object.entries(edited).reduce<t.CollectionEdits>(
+      (acc, [path, value]) => trackCollectionEdit(acc, {}, path, value, specRoot),
+      {},
+    );
+    const { ops } = buildConfigChanges(
+      new Set(Object.keys(edited)),
+      edited,
+      schemaPaths,
+      context({ root: specRoot, collections }),
+    );
+    const plan = planConfigChanges(ops, { stored: {}, lower: specRoot, lowerKind: 'yaml' });
+    expect(plan.issues).toEqual([]);
+    const saved = plan.sets[0].value as t.ConfigRecord[];
+    expect(saved.map((spec) => [spec.name, spec.label])).toEqual([
+      ['b', 'A'],
+      ['a', 'B'],
+    ]);
+  });
+
+  it('sends no positions for a reordered custom endpoint list (merged by name)', () => {
+    const reordered = [endpoints[2], endpoints[0], endpoints[1]];
+    const collections = trackCollectionEdit({}, {}, 'endpoints.custom', reordered, root);
+    const { ops } = buildConfigChanges(
+      new Set(['endpoints.custom']),
+      { 'endpoints.custom': reordered },
+      schemaPaths,
+      context({ collections }),
+    );
+    expect(ops).toEqual([]);
   });
 
   it('turns a reset of the whole collection into a reset op (revert list to librechat.yaml)', () => {

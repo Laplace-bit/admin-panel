@@ -45,6 +45,8 @@ export function ObjectEntryCard({
   isNew,
   markers,
   summary,
+  leading,
+  stackedSummary,
   disabled,
   defaultExpanded = false,
   renderFields,
@@ -173,6 +175,12 @@ export function ObjectEntryCard({
           },
         });
 
+  const newChip = isNew ? (
+    <span className="shrink-0 rounded-full bg-(--cui-color-background-muted) px-1.5 py-0.5 text-xs font-semibold text-(--cui-color-text-default) uppercase">
+      {localize('com_config_ctl_entry_new')}
+    </span>
+  ) : null;
+
   if (pendingRemoval) {
     return (
       <div
@@ -271,25 +279,44 @@ export function ObjectEntryCard({
             >
               <DecorativeIcon name="chevron-right" size="sm" />
             </span>
-            <span
-              className="max-w-[60%] min-w-16 shrink truncate text-sm font-medium text-(--cui-color-text-default)"
-              title={entryKey}
-            >
-              {entryKey}
-            </span>
-            {isNew && (
-              <span className="shrink-0 rounded-full bg-(--cui-color-background-muted) px-1.5 py-0.5 text-xs font-semibold text-(--cui-color-text-default) uppercase">
-                {localize('com_config_ctl_entry_new')}
+            {leading}
+            {stackedSummary ? (
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span
+                    className="min-w-0 truncate text-sm font-medium text-(--cui-color-text-default)"
+                    title={entryKey}
+                  >
+                    {entryKey}
+                  </span>
+                  {newChip}
+                  {markers && <EntryMarkerChips markers={markers} />}
+                </span>
+                {summaryNode && !isExpanded && (
+                  <span className="min-w-0 truncate text-xs text-(--cui-color-text-muted)">
+                    {summaryNode}
+                  </span>
+                )}
               </span>
-            )}
-            {markers && <EntryMarkerChips markers={markers} />}
-            {summaryNode && !isExpanded && (
-              <span
-                className="min-w-0 flex-1 truncate text-xs text-(--cui-color-text-muted)"
-                title={typeof summaryNode === 'string' ? summaryNode : undefined}
-              >
-                {summaryNode}
-              </span>
+            ) : (
+              <>
+                <span
+                  className="max-w-[60%] min-w-16 shrink truncate text-sm font-medium text-(--cui-color-text-default)"
+                  title={entryKey}
+                >
+                  {entryKey}
+                </span>
+                {newChip}
+                {markers && <EntryMarkerChips markers={markers} />}
+                {summaryNode && !isExpanded && (
+                  <span
+                    className="min-w-0 flex-1 truncate text-xs text-(--cui-color-text-muted)"
+                    title={typeof summaryNode === 'string' ? summaryNode : undefined}
+                  >
+                    {summaryNode}
+                  </span>
+                )}
+              </>
             )}
           </button>
         )}

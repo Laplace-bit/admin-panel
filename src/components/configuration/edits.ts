@@ -304,10 +304,36 @@ export function trackCollectionEdit(
 }
 
 /**
- * The entry ops for one collection: an upsert for each added or changed item
- * (keyed by the identity it was loaded with, with that loaded entry as the
- * baseline so only the edit is applied) and a remove for each loaded entry no
- * pending item came from. Items without a key are reported, not sent.
+ * Whether the pending items keep loaded entries in a different order than
+ * they were loaded in. Only lists whose order matters (model specs: list
+ * order is menu order) send it.
+ */
+function isReordered(
+  collection: t.KeyedCollection,
+  items: t.ConfigValue[],
+  edit: t.CollectionEdit,
+): boolean {
+  if (collection.merge !== 'replace') return false;
+  const pending = items.flatMap((_, index) => {
+    const origin = edit.origins[index];
+    return origin ? [origin.identity] : [];
+  });
+  const kept = new Set(pending);
+  const loaded = edit.baseline.flatMap((entry) => {
+    const identity = getEntryKey(entry, collection.key);
+    return identity !== undefined && kept.has(identity) ? [identity] : [];
+  });
+  return pending.some((identity, i) => identity !== loaded[i]);
+}
+
+/**
+ * The entry ops for one collection: a remove for each loaded entry no pending
+ * item came from, then an upsert for each added or changed item (keyed by the
+ * identity it was loaded with, with that loaded entry as the baseline so only
+ * the edit is applied). Items without a key are reported, not sent. Removes
+ * go first so each `index` (a new entry's position, or every kept entry's
+ * when a list whose order matters was reordered) counts only the entries
+ * that stay: applied in order, the upserts rebuild the pending order.
  */
 export function diffCollection(
   collection: t.KeyedCollection,
@@ -315,12 +341,22 @@ export function diffCollection(
   edit: t.CollectionEdit,
   normalize: (value: t.ConfigValue) => t.ConfigValue,
 ): { ops: t.ConfigChange[]; issues: t.ConfigIssue[] } {
-  const ops: t.ConfigChange[] = [];
   const issues: t.ConfigIssue[] = [];
-  const kept = new Set<string>();
+  const kept = new Set(
+    items.flatMap((_, index) => {
+      const origin = edit.origins[index];
+      return origin ? [origin.identity] : [];
+    }),
+  );
+  const ops: t.ConfigChange[] = edit.baseline.flatMap((entry): t.ConfigChange[] => {
+    const identity = getEntryKey(entry, collection.key);
+    return identity === undefined || kept.has(identity)
+      ? []
+      : [{ op: 'removeEntry', path: collection.path, key: identity, identity }];
+  });
+  const moved = isReordered(collection, items, edit);
   items.forEach((item, index) => {
     const origin = edit.origins[index] ?? null;
-    if (origin) kept.add(origin.identity);
     if (item === undefined) return;
     const value = normalize(item);
     const key = getEntryKey(value, collection.key);
@@ -339,7 +375,7 @@ export function diffCollection(
       return;
     }
     const baseline = normalize(origin.baseline);
-    if (isConfigValueEqual(value, baseline)) return;
+    if (!moved && isConfigValueEqual(value, baseline)) return;
     ops.push({
       op: 'upsertEntry',
       path: collection.path,
@@ -347,14 +383,9 @@ export function diffCollection(
       identity: origin.identity,
       value,
       baseline,
+      ...(moved && { index }),
     });
   });
-  for (const entry of edit.baseline) {
-    const identity = getEntryKey(entry, collection.key);
-    if (identity !== undefined && !kept.has(identity)) {
-      ops.push({ op: 'removeEntry', path: collection.path, key: identity, identity });
-    }
-  }
   return { ops, issues };
 }
 

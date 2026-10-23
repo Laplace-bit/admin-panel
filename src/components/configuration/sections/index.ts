@@ -15,6 +15,7 @@ import { McpServersRenderer } from './McpServersRenderer';
 import { CustomEndpointsRenderer } from './endpoints';
 import { LangfuseRenderer } from './LangfuseRenderer';
 import { ProvidersRenderer } from './providers';
+import { ModelSpecsRenderer } from './specs';
 
 export const SECTION_RENDERERS: Partial<Record<string, React.ComponentType<t.FieldRendererProps>>> =
   {
@@ -22,6 +23,7 @@ export const SECTION_RENDERERS: Partial<Record<string, React.ComponentType<t.Fie
     endpointsProviders: ProvidersRenderer,
     mcpServers: McpServersRenderer,
     langfuse: LangfuseRenderer,
+    modelSpecs: ModelSpecsRenderer,
   };
 
 /** Sections whose custom renderer handles its own accordion — they are rendered

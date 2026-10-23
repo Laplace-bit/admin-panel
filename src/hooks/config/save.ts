@@ -11,6 +11,7 @@ import {
   mergedBackChanges,
 } from '@/utils';
 import { validateMcpCrossField } from '@/components/configuration/sections/mcp/validation';
+import { specListIssues } from '@/components/configuration/sections/specs/validation';
 import { buildConfigChanges, normalizeEditValue } from '@/components/configuration/edits';
 import { isResetSent, summarizeChanges } from '@/components/configuration/summary';
 import { describeSkippedChanges } from '@/components/configuration/review/group';
@@ -236,8 +237,8 @@ export function useConfigSave({
   const plan = useMemo(() => planConfigChanges(changeSet.ops, snapshot), [changeSet, snapshot]);
 
   const clientIssues = useMemo(
-    () => [...changeSet.issues, ...plan.issues],
-    [changeSet.issues, plan.issues],
+    () => [...changeSet.issues, ...plan.issues, ...specListIssues(changeSet)],
+    [changeSet, plan.issues],
   );
 
   const issues = useMemo(() => [...clientIssues, ...serverIssues], [clientIssues, serverIssues]);

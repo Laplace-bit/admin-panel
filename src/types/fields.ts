@@ -248,6 +248,10 @@ export interface ArrayObjectFieldProps {
   getEntryTitle?: (item: ConfigValue, index: number) => string | null;
   /** Collapsed-row summary for an entry. */
   renderSummary?: (item: ConfigValue, index: number) => ReactNode;
+  /** Shown before an entry's title (e.g. a model spec's icon). */
+  renderLeading?: (item: ConfigValue, index: number) => ReactNode;
+  /** Each card's summary on its own line under the title. */
+  stackedSummary?: boolean;
   /** Offer move up/down on each card (order matters, e.g. model specs). */
   reorderable?: boolean;
   /** Text shown when the list is empty. */
@@ -329,6 +333,10 @@ export interface ObjectEntryCardProps {
   markers?: EntryMarkers;
   /** Collapsed-row summary; `null` hides it. Defaults to the entry's type/url/label. */
   summary?: ReactNode;
+  /** Shown before the title (e.g. a model spec's icon). */
+  leading?: ReactNode;
+  /** The summary on its own line under the title (rich summaries, narrow cards). */
+  stackedSummary?: boolean;
   disabled?: boolean;
   /** Expanded on mount, or as soon as it turns true unless the admin toggled the card. */
   defaultExpanded?: boolean;

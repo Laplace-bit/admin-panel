@@ -16,6 +16,7 @@ export type * from './scope';
 export type * from './server';
 export type * from './settings';
 export type * from './shared';
+export type * from './specs';
 export type * from './shell';
 export type * from './theme';
 export type * from './user';

@@ -103,6 +103,15 @@ export function useActiveSection(
         if (top <= probeY) bestId = id;
       }
 
+      /** At the top (or when nothing scrolls), the first entry is the one being read. */
+      if (scrollContainer.scrollTop <= 0) {
+        const first = [...headers].find((header) =>
+          tocIds.has(header.getAttribute('data-section-id') ?? ''),
+        );
+        applyActive(first?.getAttribute('data-section-id') ?? bestId);
+        return;
+      }
+
       // Near-bottom override: when scrolled to the bottom, pick the last visible
       // TOC-eligible header — it may never reach the probe point.
       const atBottom =

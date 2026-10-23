@@ -282,6 +282,61 @@ describe('resolveCollectionOps — merge-by-key (endpoints.custom)', () => {
     expect(resolve([upsert('OpenRouter Direct', null, entry)]).next).toEqual([entry]);
   });
 
+  it('resolves swapped and chained renames of DB-only entries as a whole', () => {
+    const stored = [
+      { name: 'AdminA', baseURL: 'https://a', apiKey: 'user_provided' },
+      { name: 'AdminB', baseURL: 'https://b', apiKey: 'user_provided' },
+    ];
+    const swapped = resolve(
+      [
+        upsert('AdminB', 'AdminA', { ...stored[0], name: 'AdminB' }, stored[0]),
+        upsert('AdminA', 'AdminB', { ...stored[1], name: 'AdminA' }, stored[1]),
+      ],
+      stored,
+    );
+    expect(swapped.issues).toEqual([]);
+    expect(swapped.next).toEqual([
+      { ...stored[0], name: 'AdminB' },
+      { ...stored[1], name: 'AdminA' },
+    ]);
+    const chained = resolve(
+      [
+        upsert('AdminB', 'AdminA', { ...stored[0], name: 'AdminB' }, stored[0]),
+        upsert('AdminC', 'AdminB', { ...stored[1], name: 'AdminC' }, stored[1]),
+        upsert('AdminA', null, { name: 'AdminA', baseURL: 'https://new' }),
+      ],
+      stored,
+    );
+    expect(chained.issues).toEqual([]);
+    expect(chained.next).toEqual([
+      { ...stored[0], name: 'AdminB' },
+      { ...stored[1], name: 'AdminC' },
+      { name: 'AdminA', baseURL: 'https://new' },
+    ]);
+  });
+
+  it('still rejects a rename onto a name the final list repeats, without temporary names', () => {
+    const stored = [
+      { name: 'AdminA', baseURL: 'https://a', apiKey: 'user_provided' },
+      { name: 'Secret EP', baseURL: 'https://s', apiKeyPreview: 'sk-abc...1234' },
+    ];
+    const result = resolve(
+      [
+        upsert('Secret EP', 'AdminA', { ...stored[0], name: 'Secret EP' }, stored[0]),
+        upsert('AdminA', 'Secret EP', { name: 'AdminA', baseURL: 'https://s' }, stored[1]),
+      ],
+      stored,
+    );
+    expect(result.issues.map((issue) => issue.code)).toEqual(['SECRET_REQUIRED_FOR_RENAME']);
+    const names = (result.next ?? []).map((entry) => (entry as t.ConfigRecord).name);
+    expect(names).toEqual(['Secret EP', 'Secret EP']);
+    const onYaml = resolve(
+      [upsert('Moonshot', 'AdminA', { ...stored[0], name: 'Moonshot' }, stored[0])],
+      stored,
+    );
+    expect(onYaml.issues.map((issue) => issue.code)).toEqual(['DUPLICATE_ENTRY']);
+  });
+
   it('requires a new API key to rename an entry whose stored key is encrypted (SV-10)', () => {
     const stored = [{ name: 'Secret EP', baseURL: 'https://s', apiKeyPreview: 'sk-abc...1234' }];
     const value = { name: 'Renamed EP', baseURL: 'https://s' };
@@ -402,5 +457,58 @@ describe('resolveCollectionOps — replace (modelSpecs.list)', () => {
     const own = [{ ...yamlSpecs[0], label: 'GPT 5' }, yamlSpecs[1]];
     const reverted = resolve([specOp('gpt', 'gpt', yamlSpecs[0], own[0])], own, yamlSpecs, specs);
     expect(reverted).toMatchObject({ next: undefined, changed: true });
+  });
+
+  it('moves existing specs to their index, so a reorder alone is saved', () => {
+    const moves = [
+      { ...specOp('claude', 'claude', yamlSpecs[1], yamlSpecs[1]), index: 0 },
+      { ...specOp('gpt', 'gpt', yamlSpecs[0], yamlSpecs[0]), index: 1 },
+    ] as t.EntryChange[];
+    const result = resolve(moves, undefined, yamlSpecs, specs);
+    expect(result.changed).toBe(true);
+    expect(result.next?.map((s) => (s as t.ConfigRecord).name)).toEqual(['claude', 'gpt']);
+    const back = resolve(
+      [
+        { ...specOp('gpt', 'gpt', yamlSpecs[0], yamlSpecs[0]), index: 0 },
+        { ...specOp('claude', 'claude', yamlSpecs[1], yamlSpecs[1]), index: 1 },
+      ] as t.EntryChange[],
+      [yamlSpecs[1], yamlSpecs[0]],
+      yamlSpecs,
+      specs,
+    );
+    expect(back).toMatchObject({ next: undefined, changed: true });
+  });
+
+  it('swaps the names of two specs in one batch', () => {
+    const swap = [
+      specOp('claude', 'gpt', { ...yamlSpecs[0], name: 'claude' }, yamlSpecs[0]),
+      specOp('gpt', 'claude', { ...yamlSpecs[1], name: 'gpt' }, yamlSpecs[1]),
+    ];
+    const result = resolve(swap, yamlSpecs, yamlSpecs, specs);
+    expect(result.issues).toEqual([]);
+    expect(result.next).toEqual([
+      { ...yamlSpecs[0], name: 'claude' },
+      { ...yamlSpecs[1], name: 'gpt' },
+    ]);
+    const clash = resolve(
+      [specOp('claude', 'gpt', { ...yamlSpecs[0], name: 'claude' }, yamlSpecs[0])],
+      yamlSpecs,
+      yamlSpecs,
+      specs,
+    );
+    expect(clash.issues.map((issue) => issue.code)).toEqual(['DUPLICATE_ENTRY']);
+  });
+
+  it('rebuilds a reorder with an added and a removed spec in one batch', () => {
+    const third = { name: 'mini', label: 'Mini', preset: { endpoint: 'openAI' } };
+    const ops = [
+      { ...specOp('new', null, { name: 'new', label: 'New' }), index: 0 },
+      { ...specOp('claude', 'claude', yamlSpecs[1], yamlSpecs[1]), index: 1 },
+      { ...specOp('mini', 'mini', third, third), index: 2 },
+      { op: 'removeEntry', path: 'modelSpecs.list', key: 'gpt', identity: 'gpt' },
+    ] as t.EntryChange[];
+    const result = resolve(ops, undefined, [...yamlSpecs, third], specs);
+    expect(result.issues).toEqual([]);
+    expect(result.next?.map((s) => (s as t.ConfigRecord).name)).toEqual(['new', 'claude', 'mini']);
   });
 });

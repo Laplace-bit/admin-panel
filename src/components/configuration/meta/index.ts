@@ -4,12 +4,14 @@ import { PROVIDER_FIELD_META } from './providers';
 import { SECRET_CONFIG_KEYS } from '@/constants';
 import { ENDPOINT_FIELD_META } from './endpoints';
 import { GENERIC_FIELD_META } from './generic';
+import { SPEC_FIELD_META } from './specs';
 
 /** Registries merged in order; area files are appended here (WS2 owns, WS9–13 contribute). */
 const META_SOURCES: t.FieldMetaRegistry[] = [
   GENERIC_FIELD_META,
   PROVIDER_FIELD_META,
   ENDPOINT_FIELD_META,
+  SPEC_FIELD_META,
 ];
 
 const REGISTRY = buildFieldMetaRegistry(META_SOURCES);
