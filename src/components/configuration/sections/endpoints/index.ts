@@ -1,7 +1,6 @@
 /**
- * Custom Endpoints tab: renders the `endpoints.custom` array — each entry is
- * an expandable card with field ordering and progressive disclosure, plus a
- * "Create Endpoint" button that opens a dialog for building new entries
- * without inline render lag. New schema fields surface automatically.
+ * Custom Endpoints tab (WS10): a compact list of `endpoints.custom` with an
+ * editor drawer per endpoint and a create flow with provider templates. New
+ * schema fields appear in the editor's "Other settings" automatically.
  */
 export { CustomEndpointsRenderer } from './CustomEndpointsRenderer';

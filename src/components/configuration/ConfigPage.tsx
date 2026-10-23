@@ -37,6 +37,7 @@ import {
   getKeyedCollection,
   isConfigValueEqual,
 } from '@/utils';
+import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
 import { ConfigErrorsProvider } from '@/contexts/ConfigErrorsContext';
 import { buildTocEntries, findTocEntry, toJumpTargets } from './toc';
 import { RevealTargetContext } from '@/contexts/RevealTargetContext';
@@ -571,41 +572,43 @@ export function ConfigPage({
                 {isReady && (
                   <ScopeActionsProvider value={scopeActions}>
                     <RevealTargetContext.Provider value={highlightField ?? null}>
-                      <ConfigTabContent
-                        sections={sectionsForActiveTab}
-                        configValues={activeConfigValues}
-                        editedValues={editedValues}
-                        onFieldChange={edits.handleFieldChange}
-                        onResetField={edits.handleResetField}
-                        onDiscardField={edits.handleDiscardField}
-                        previewMode={false}
-                        previewScope={editingScope}
-                        previewChangedPaths={layers.scopeChangedPaths}
-                        resolvedValues={layers.scopeResolvedValues}
-                        permissions={permissions}
-                        showChangedOnly={false}
-                        readOnly={!canEditActiveTab || scopeNotFound != null}
-                        configuredPaths={layers.activeConfiguredPaths}
-                        dbOverridePaths={layers.overridePaths}
-                        listOverrideCounts={layers.listOverrideCounts}
-                        touchedPaths={edits.touchedPaths}
-                        pendingResets={edits.pendingResets}
-                        sectionPermissions={sectionPermissions}
-                        schemaDefaults={layers.schemaDefaults}
-                        showConfiguredOnly={customizedOnly}
-                        isEditingScope={isEditingScope}
-                        baseRecordKeys={layers.baseRecordKeys}
-                        onValidationError={notifyError}
-                        editSessionId={edits.editSessionId}
-                        unknownSettings={topLevelUnknown}
-                        onShowAll={showAllSettings}
-                        filterText={filterText}
-                        onClearFilter={clearFilter}
-                        visibleSectionIds={filterSectionIds}
-                        filterPaths={filterPaths}
-                        valueLayers={layers.valueLayers}
-                        visibilityEdits={edits.visibilityEdits}
-                      />
+                      <CollectionEditsContext.Provider value={edits.collectionEdits}>
+                        <ConfigTabContent
+                          sections={sectionsForActiveTab}
+                          configValues={activeConfigValues}
+                          editedValues={editedValues}
+                          onFieldChange={edits.handleFieldChange}
+                          onResetField={edits.handleResetField}
+                          onDiscardField={edits.handleDiscardField}
+                          previewMode={false}
+                          previewScope={editingScope}
+                          previewChangedPaths={layers.scopeChangedPaths}
+                          resolvedValues={layers.scopeResolvedValues}
+                          permissions={permissions}
+                          showChangedOnly={false}
+                          readOnly={!canEditActiveTab || scopeNotFound != null}
+                          configuredPaths={layers.activeConfiguredPaths}
+                          dbOverridePaths={layers.overridePaths}
+                          listOverrideCounts={layers.listOverrideCounts}
+                          touchedPaths={edits.touchedPaths}
+                          pendingResets={edits.pendingResets}
+                          sectionPermissions={sectionPermissions}
+                          schemaDefaults={layers.schemaDefaults}
+                          showConfiguredOnly={customizedOnly}
+                          isEditingScope={isEditingScope}
+                          baseRecordKeys={layers.baseRecordKeys}
+                          onValidationError={notifyError}
+                          editSessionId={edits.editSessionId}
+                          unknownSettings={topLevelUnknown}
+                          onShowAll={showAllSettings}
+                          filterText={filterText}
+                          onClearFilter={clearFilter}
+                          visibleSectionIds={filterSectionIds}
+                          filterPaths={filterPaths}
+                          valueLayers={layers.valueLayers}
+                          visibilityEdits={edits.visibilityEdits}
+                        />
+                      </CollectionEditsContext.Provider>
                     </RevealTargetContext.Provider>
                   </ScopeActionsProvider>
                 )}

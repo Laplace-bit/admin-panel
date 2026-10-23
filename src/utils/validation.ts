@@ -104,6 +104,7 @@ const ISSUE_MESSAGES: Readonly<Record<string, string>> = {
   invalid_document: 'is not a valid configuration',
   invalid_union: 'is not a valid value',
   models_required: 'needs at least one model',
+  name_whitespace: 'starts or ends with a space',
   YAML_MANAGED:
     'is managed in librechat.yaml; LibreChat ignores admin overrides for it until it re-processes them',
   PROCESS_MCP_FIELD:
@@ -254,7 +255,9 @@ export function validateLoadableEndpoint(
   });
   const models = isConfigRecord(entry.models) ? entry.models : {};
   const hasModels = Array.isArray(models.default) && models.default.length > 0;
+  const paddedName = typeof entry.name === 'string' && entry.name.trim() !== entry.name;
   return [
+    ...(paddedName && hasText(entry.name) ? [issue('name', 'name_whitespace')] : []),
     ...(hasText(entry.apiKey) || hasStoredKey ? [] : [issue('apiKey', 'required')]),
     ...(hasText(entry.baseURL) ? [] : [issue('baseURL', 'required')]),
     ...(hasModels ? [] : [issue('models.default', 'models_required')]),

@@ -1,129 +1,154 @@
-import type { ReactNode } from 'react';
 import type * as t from '@/types';
-import { renderInlineField } from '../../renderer';
 
 /**
- * Defines how fields are grouped inside custom endpoint cards and the create
- * dialog. Fields not listed in any group are collected into a catch-all
- * "Advanced" group (collapsed by default).
- *
- * To apply this pattern to other collection types, add a new entry keyed by
- * the collection's schema parent key and define the groups.
+ * Sections of the custom endpoint editor (WS10 CE-7), by purpose. Fields
+ * marked `optional` are shown only when set (or added from "Add setting"),
+ * so an endpoint reads as what it configures rather than every option
+ * LibreChat has. Schema keys no section lists land in "Other settings", so
+ * new LibreChat fields still appear without a change here.
  */
-export const FIELD_GROUPS: Record<string, t.FieldGroupDef[]> = {
-  custom: [
-    {
-      labelKey: 'com_config_group_connection',
-      fields: ['name', 'apiKey', 'baseURL', 'iconURL'],
-      defaultExpanded: true,
-    },
-    {
-      labelKey: 'com_config_group_models',
-      fields: ['models', 'modelDisplayLabel'],
-      defaultExpanded: true,
-    },
-    {
-      labelKey: 'com_config_group_title_generation',
-      fields: [
-        'titleConvo',
-        'titleModel',
-        'titleMethod',
-        'titlePrompt',
-        'titlePromptTemplate',
-        'titleEndpoint',
-        'titleMessageRole',
-      ],
-      defaultExpanded: false,
-    },
-    {
-      labelKey: 'com_config_group_summarization',
-      fields: ['summarize', 'summaryModel'],
-      defaultExpanded: false,
-    },
-  ],
-};
+export const ENDPOINT_SECTIONS: t.EndpointSectionDef[] = [
+  {
+    id: 'connection',
+    labelKey: 'com_config_ce_section_connection',
+    descriptionKey: 'com_config_ce_section_connection_desc',
+    fields: [
+      { key: 'name' },
+      { key: 'baseURL' },
+      { key: 'apiKey' },
+      { key: 'provider' },
+      { key: 'iconURL' },
+    ],
+  },
+  {
+    id: 'models',
+    labelKey: 'com_config_ce_section_models',
+    descriptionKey: 'com_config_ce_section_models_desc',
+    fields: [
+      { key: 'models.default' },
+      { key: 'models.fetch' },
+      { key: 'models.userIdQuery' },
+      { key: 'modelDisplayLabel' },
+    ],
+  },
+  {
+    id: 'request',
+    labelKey: 'com_config_ce_section_request',
+    descriptionKey: 'com_config_ce_section_request_desc',
+    fields: [
+      { key: 'headers' },
+      { key: 'addParams' },
+      { key: 'dropParams' },
+      { key: 'directEndpoint' },
+    ],
+  },
+  {
+    id: 'behaviour',
+    labelKey: 'com_config_ce_section_behaviour',
+    descriptionKey: 'com_config_ce_section_behaviour_desc',
+    fields: [
+      { key: 'titleConvo' },
+      { key: 'titleModel' },
+      { key: 'titleMethod' },
+      { key: 'titleEndpoint', optional: true },
+      { key: 'titleTiming', optional: true },
+      { key: 'titlePrompt', optional: true },
+      { key: 'titlePromptTemplate', optional: true },
+      { key: 'titleMessageRole', optional: true },
+      { key: 'streamRate', optional: true },
+      { key: 'maxToolResultChars', optional: true },
+    ],
+  },
+  {
+    id: 'labels',
+    labelKey: 'com_config_ce_section_labels',
+    descriptionKey: 'com_config_ce_section_labels_desc',
+    fields: [
+      { key: 'activityLabel', optional: true },
+      { key: 'activityModel', optional: true },
+      { key: 'activityEndpoint', optional: true },
+      { key: 'activityPrompt', optional: true },
+      { key: 'activityMaxPerRun', optional: true },
+      { key: 'activityCharLimit', optional: true },
+      { key: 'activityPhaseLabel', optional: true },
+      { key: 'activityPhaseModel', optional: true },
+      { key: 'activityPhaseEndpoint', optional: true },
+      { key: 'activityPhasePrompt', optional: true },
+      { key: 'activityPhaseMaxPerRun', optional: true },
+      { key: 'reasoningLabel', optional: true },
+      { key: 'reasoningLabelModel', optional: true },
+      { key: 'reasoningLabelEndpoint', optional: true },
+      { key: 'reasoningLabelPrompt', optional: true },
+      { key: 'reasoningLabelMinChars', optional: true },
+      { key: 'reasoningLabelUpdateChars', optional: true },
+      { key: 'reasoningLabelUpdateIntervalMs', optional: true },
+      { key: 'reasoningLabelMaxPerRun', optional: true },
+      { key: 'customParams.reasoningFormat', optional: true },
+      { key: 'customParams.reasoningKey', optional: true },
+      { key: 'customParams.includeReasoningContent', optional: true },
+      { key: 'customParams.includeReasoningHistory', optional: true },
+    ],
+  },
+  {
+    id: 'parameters',
+    labelKey: 'com_config_ce_section_parameters',
+    descriptionKey: 'com_config_ce_section_parameters_desc',
+    fields: [
+      { key: 'customParams.defaultParamsEndpoint' },
+      { key: 'customParams.paramDefinitions' },
+    ],
+  },
+  {
+    id: 'pricing',
+    labelKey: 'com_config_ce_section_pricing',
+    descriptionKey: 'com_config_ce_section_pricing_desc',
+    fields: [{ key: 'tokenConfig' }],
+  },
+  {
+    id: 'other',
+    labelKey: 'com_config_ce_section_other',
+    fields: [],
+    catchAll: true,
+  },
+];
 
-/**
- * Fields that are effectively required for a functional custom endpoint.
- * The config schema uses `endpointSchema.partial()` which makes everything
- * optional at the Zod level, but these fields are needed for an endpoint
- * to actually work. We override `isOptional` for these keys so the UI
- * shows required indicators.
- */
-const REQUIRED_ENDPOINT_KEYS = new Set(['name', 'apiKey', 'baseURL']);
+/** The sections a new endpoint starts with: what LibreChat needs to serve it. */
+export const ESSENTIAL_SECTION_IDS: ReadonlySet<string> = new Set(['connection', 'models']);
 
-function withRequired(field: t.SchemaField): t.SchemaField {
-  if (REQUIRED_ENDPOINT_KEYS.has(field.key)) {
-    return { ...field, isOptional: false };
-  }
-  if (field.key === 'default' && field.path?.endsWith('models.default')) {
-    return { ...field, isOptional: false };
-  }
-  return field;
-}
+/** Entry keys never edited directly: the stored key's masked preview travels with the key. */
+export const HIDDEN_ENDPOINT_KEYS: ReadonlySet<string> = new Set(['apiKeyPreview']);
 
-/**
- * Flatten a field's children into the group when the field is a nested object.
- * This prevents double-collapsible nesting (e.g. Models group > models collapsible).
- * The children are rendered with a prefixed onChange that writes back into the
- * parent object at the correct key.
- */
-export function flattenGroupFields(
-  fields: t.SchemaField[],
-  parentValue: t.ConfigValue,
-  parentPath: string,
-  onChange: (path: string, value: t.ConfigValue) => void,
-  localize: (key: string, interpolation?: Record<string, string | number>) => string,
-  disabled?: boolean,
-  collectionRenderOverrides?: Record<string, t.CollectionRenderFields>,
-  editSessionId?: number,
-  lockedKeys?: ReadonlySet<string>,
-): ReactNode[] {
-  const values =
-    typeof parentValue === 'object' && parentValue !== null && !Array.isArray(parentValue)
-      ? (parentValue as Record<string, t.ConfigValue>)
-      : {};
+/** Fields that name another endpoint (titles and labels can be generated by a different one). */
+export const ENDPOINT_REFERENCE_KEYS: ReadonlySet<string> = new Set([
+  'titleEndpoint',
+  'activityEndpoint',
+  'activityPhaseEndpoint',
+  'reasoningLabelEndpoint',
+]);
 
-  const nodes: ReactNode[] = [];
-  for (const field of fields) {
-    if (field.children && field.children.length > 0 && !field.isArray && field.type !== 'record') {
-      const nested = values[field.key];
-      const nestedObj =
-        typeof nested === 'object' && nested !== null && !Array.isArray(nested)
-          ? (nested as Record<string, t.ConfigValue>)
-          : {};
-      for (const child of field.children) {
-        nodes.push(
-          renderInlineField(
-            withRequired(child),
-            nested,
-            `${parentPath}.${field.key}`,
-            (childKey, childValue) => {
-              onChange(field.key, { ...nestedObj, [childKey]: childValue });
-            },
-            localize,
-            disabled,
-            collectionRenderOverrides,
-            true,
-            editSessionId,
-          ),
-        );
-      }
-    } else {
-      nodes.push(
-        renderInlineField(
-          withRequired(field),
-          parentValue,
-          parentPath,
-          onChange,
-          localize,
-          disabled || (lockedKeys?.has(field.key) ?? false),
-          collectionRenderOverrides,
-          true,
-          editSessionId,
-        ),
-      );
+/** Fields that name a model of this endpoint (or `current_model`). */
+export const MODEL_REFERENCE_KEYS: ReadonlySet<string> = new Set([
+  'titleModel',
+  'activityModel',
+  'activityPhaseModel',
+  'reasoningLabelModel',
+]);
+
+/** Top-level entry keys the sections place (a nested key places its parent). */
+export const PLACED_TOP_KEYS: ReadonlySet<string> = new Set(
+  ENDPOINT_SECTIONS.flatMap((section) => section.fields.map((field) => field.key.split('.')[0])),
+);
+
+/** The section an entry field (`models.default`, `customParams.paramDefinitions.0.key`) is edited in. */
+export function sectionOfField(fieldPath: string): string {
+  for (const section of ENDPOINT_SECTIONS) {
+    for (const field of section.fields) {
+      if (fieldPath === field.key || fieldPath.startsWith(`${field.key}.`)) return section.id;
     }
   }
-  return nodes;
+  const top = fieldPath.split('.')[0];
+  const owner = ENDPOINT_SECTIONS.find((section) =>
+    section.fields.some((field) => field.key.split('.')[0] === top),
+  );
+  return owner?.id ?? 'other';
 }

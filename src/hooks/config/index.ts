@@ -2,6 +2,7 @@ export * from './baseline';
 export * from './counts';
 export * from './draft';
 export * from './edits';
+export * from './endpoints';
 export * from './expand';
 export * from './field';
 export * from './guard';
