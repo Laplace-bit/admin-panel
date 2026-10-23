@@ -62,6 +62,7 @@ const SOURCE_KEYS: Record<t.ProvenanceSource, string> = {
 /** Row-level warnings; `yamlEntry` is reported as a blocking problem on the row instead. */
 const WARNING_KEYS: Partial<Record<t.ChangeWarning, string>> = {
   emptyAllowlist: 'com_config_review_warning_empty_allowlist',
+  openRegistration: 'com_config_review_warning_open_registration',
   shadowed: 'com_config_review_warning_shadowed',
   shadowedBlock: 'com_config_review_warning_shadowed_block',
 };

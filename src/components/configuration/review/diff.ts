@@ -30,6 +30,7 @@ const ALLOWLIST_KEYS: ReadonlySet<string> = new Set([
   'allowedAddresses',
   'addedEndpoints',
   'allowedProviders',
+  'supportedMimeTypes',
 ]);
 
 const INDEX_SEGMENT_RE = /^\d+$/;
@@ -134,10 +135,33 @@ function withEntry(
   };
 }
 
+/** An empty list here lets everyone in rather than no one. */
+const OPEN_WHEN_EMPTY: ReadonlySet<string> = new Set(['registration.allowedDomains']);
+
 function allowlistWarning(path: string, after: t.ConfigValue): t.ChangeWarning[] {
-  return Array.isArray(after) && after.length === 0 && ALLOWLIST_KEYS.has(lastSegment(path))
-    ? ['emptyAllowlist']
-    : [];
+  if (!Array.isArray(after) || after.length > 0) return [];
+  if (OPEN_WHEN_EMPTY.has(path)) return ['openRegistration'];
+  return ALLOWLIST_KEYS.has(lastSegment(path)) ? ['emptyAllowlist'] : [];
+}
+
+const isRestricting = (value: t.ConfigValue): boolean => Array.isArray(value) && value.length > 0;
+
+/**
+ * A reset of a domain restriction (or of an object holding one) to a layer
+ * that sets none, or an empty list: everyone can sign up once it is saved.
+ */
+function resetWarning(
+  path: string,
+  before: t.ConfigValue,
+  after: t.ConfigValue,
+): t.ChangeWarning[] {
+  const opens = [...OPEN_WHEN_EMPTY].some((open) => {
+    if (open !== path && !open.startsWith(`${path}.`)) return false;
+    const rest = open.slice(path.length + 1);
+    const at = (value: t.ConfigValue) => (rest ? getValueAtPath(value, rest) : value);
+    return isRestricting(at(before)) && !isRestricting(at(after));
+  });
+  return opens ? ['openRegistration'] : [];
 }
 
 /**
@@ -474,14 +498,16 @@ function resetItem(path: string, input: t.ChangeSummaryInput): t.ChangeSummaryIt
     path,
     (entryPath) => getValueAtPath(input.baseline, entryPath) ?? input.ownAt(entryPath),
   );
+  const before = input.ownAt(path);
   const item: t.ChangeSummaryItem = {
     path,
     kind: 'reverted',
-    before: input.ownAt(path),
+    before,
     after: undefined,
     revertTarget: lower,
     sourcePath: path,
     secret: isSecretPath(path) || undefined,
+    warnings: warningsOf(resetWarning(path, before, lower?.value)),
   };
   if (!entry) return item;
   if (entry.entryPath === path && lower?.value == null) {

@@ -62,7 +62,7 @@ test.describe('Configuration: Enter never edits another field', () => {
     await page.getByRole('button', { name: /^Review & save$/ }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog).toContainText('Save 1 change to the base configuration?');
-    await expect(dialog).toContainText('Start balance');
+    await expect(dialog).toContainText('Starting credits');
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await page.getByRole('button', { name: 'Discard' }).click();
   });

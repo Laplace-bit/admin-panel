@@ -35,6 +35,10 @@ export const READ_ONLY_CONFIG_SECTIONS: ReadonlyMap<string, t.ReadOnlyReason> = 
   ['cloudfront', 'yamlOnly'],
   ['rateLimits', 'yamlOnly'],
   ['turnstile', 'yamlOnly'],
+  /** Read as `req.config.config.permissions`: the raw librechat.yaml, never the merged overrides. */
+  ['permissions', 'yamlOnly'],
+  /** The docs gate reads `getAppConfig({ baseOnly: true }).config.openapi`. */
+  ['openapi', 'yamlOnly'],
   /** Only librechat.yaml's own loader knows it; AppService never carries it into the app config. */
   ['cache', 'yamlOnly'],
 ]);
@@ -62,6 +66,11 @@ export const APP_SERVICE_KEY_ALIASES: Readonly<Record<string, string>> = {
 export const YAML_MANAGED_FIELDS: ReadonlySet<string> = new Set([
   'endpoints.azureOpenAI.groups',
   'endpoints.anthropic.vertex',
+  /** The sign-in page reads it before login, from librechat.yaml only (unauthenticated `/api/config`). */
+  'registration.socialLogins',
+  /** Social sign-in and OpenID discovery are set up once at startup from librechat.yaml. */
+  'registration.oauthStateTtlMs',
+  'registration.openidDiscovery',
 ]);
 
 /** Config keys for values that must never be displayed in plain text. */

@@ -23,6 +23,13 @@ import { McpServersRenderer } from './mcp';
 import { LangfuseRenderer } from './LangfuseRenderer';
 import { ProvidersRenderer } from './providers';
 import { ModelSpecsRenderer } from './specs';
+import {
+  CreditsRenderer,
+  RateLimitsRenderer,
+  SkillSyncRenderer,
+  RegistrationRenderer,
+} from './system';
+import { StorageRenderer, FileConfigRenderer } from './files';
 
 export const SECTION_RENDERERS: Partial<Record<string, React.ComponentType<t.FieldRendererProps>>> =
   {
@@ -36,8 +43,35 @@ export const SECTION_RENDERERS: Partial<Record<string, React.ComponentType<t.Fie
     memory: MemoryRenderer,
     webSearch: WebSearchRenderer,
     summarization: SummarizationRenderer,
+    fileConfig: FileConfigRenderer,
+    registration: RegistrationRenderer,
+    rateLimits: RateLimitsRenderer,
+    skillSync: SkillSyncRenderer,
   };
 
 /** Sections whose custom renderer handles its own accordion — they are rendered
  *  directly in ConfigTabContent without an outer MultiAccordion.Item wrapper. */
 export const SELF_CONTAINED_SECTION_RENDERERS = new Set(['endpointsProviders']);
+
+/**
+ * Renderers for sections that share a `SectionMeta.group`: the group's
+ * sections on a tab render together as one card (WS14: Storage).
+ */
+export const SECTION_GROUP_RENDERERS: Partial<
+  Record<string, React.ComponentType<t.SectionGroupRendererProps>>
+> = {
+  storage: StorageRenderer,
+  credits: CreditsRenderer,
+};
+
+/** Read-only sections whose renderer stays open when nothing is set (a table of LibreChat's defaults). */
+export const UNFOLDED_READ_ONLY_SECTIONS: ReadonlySet<string> = new Set(['rateLimits']);
+
+/** Section-specific detail under the read-only banner (FX-10): what LibreChat reads instead. */
+export const READ_ONLY_DETAIL_KEYS: Readonly<Record<string, string>> = {
+  cloudfront: 'com_config_readonly_detail_cloudfront',
+  rateLimits: 'com_config_readonly_detail_rate_limits',
+  turnstile: 'com_config_readonly_detail_turnstile',
+  permissions: 'com_config_readonly_detail_permissions',
+  openapi: 'com_config_readonly_detail_openapi',
+};

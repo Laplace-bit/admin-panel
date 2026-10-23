@@ -187,11 +187,11 @@ describe('getFieldOptions / coerceEnumValue', () => {
 
   it('uses brand and format labels', () => {
     expect(labels('fileStrategy')).toEqual([
-      'Local',
-      'Firebase',
+      'Local filesystem',
+      'Firebase Storage',
       'Amazon S3',
       'Azure Blob Storage',
-      'Amazon CloudFront',
+      'Amazon CloudFront (S3)',
     ]);
     expect(labels('imageOutputType')).toEqual(['PNG', 'WebP', 'JPEG']);
     expect(labels('ocr.strategy')).toContain('Vertex AI Mistral OCR');

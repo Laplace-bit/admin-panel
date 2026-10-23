@@ -4,10 +4,10 @@ import type * as t from '@/types';
 import { summarizeChanges, applySaves, isSecretPath } from './diff';
 import { buildReviewModel, describePath } from './group';
 import translation from '@/locales/en/translation.json';
+import { flattenObject, getValueAtPath } from '@/utils';
 import { extractSchemaTree } from '@/server/config';
 import { parseIssueMessages } from './issues';
 import { formatReviewValue } from './format';
-import { flattenObject } from '@/utils';
 import { planRevert } from './revert';
 
 const tree = extractSchemaTree(configSchema as t.ZodSchemaLike);
@@ -187,6 +187,24 @@ describe('summarizeChanges: keyed lists', () => {
 });
 
 describe('summarizeChanges: plain values', () => {
+  it('warns that a reset lifting the sign-up domain restriction opens registration', () => {
+    const own = { registration: { allowedDomains: ['example.com'] } };
+    const reset = (path: string, lower: t.ConfigValue) =>
+      summarizeChanges(
+        makeInput({
+          resets: [path],
+          ownAt: (at) => getValueAtPath(own, at),
+          lowerAt: () => ({ value: lower, source: 'yaml' }),
+        }),
+      )[0];
+    expect(reset('registration.allowedDomains', undefined).warnings).toEqual(['openRegistration']);
+    expect(reset('registration.allowedDomains', []).warnings).toEqual(['openRegistration']);
+    expect(reset('registration', { socialLogins: ['google'] }).warnings).toEqual([
+      'openRegistration',
+    ]);
+    expect(reset('registration.allowedDomains', ['librechat.ai']).warnings).toBeUndefined();
+  });
+
   it('lists a primitive list as one change with both lists', () => {
     const [item] = summarizeChanges(
       makeInput({
@@ -484,8 +502,8 @@ describe('buildReviewModel', () => {
     expect(custom.entries[0].rows[0].label).toBe('Base URL');
     expect(custom.rows[0]).toMatchObject({ label: 'Zai 2', noun: 'endpoint' });
     const system = model.tabs[1].sections[0];
-    expect(system.title).toBe('Balance');
-    expect(system.rows[0].label).toBe('Start balance');
+    expect(system.title).toBe('Balance & credits');
+    expect(system.rows[0].label).toBe('Starting credits');
   });
 
   it('lists changes of a nested list under the entry that holds it', () => {

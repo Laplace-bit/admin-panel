@@ -43,8 +43,12 @@ export function RecordObjectField({
   renderFields,
   editSessionId,
   lockedKeys,
+  keyOptions,
+  validateKey,
+  addLabel,
 }: t.RecordObjectFieldProps) {
   const localize = useLocalize();
+  const keyListId = keyOptions ? `${id}-keys` : undefined;
   const rowFilter = useContext(RowFilterContext);
   const [showAddInput, setShowAddInput] = useState(false);
   const [newKeys, setNewKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -146,6 +150,10 @@ export function RecordObjectField({
         if (path && !isRowVisible(rowFilter, `${path}.${key}`)) return null;
         const isLocked = lockedKeys?.has(key) ?? false;
         const canEdit = !disabled && !isLocked;
+        const validateRename = (renamed: string): string | null =>
+          renamed in recordRef.current
+            ? localize('com_config_ctl_kv_duplicate')
+            : (validateKey?.(renamed) ?? null);
         return (
           <ObjectEntryCard
             key={key}
@@ -157,6 +165,8 @@ export function RecordObjectField({
             onRemove={canEdit ? () => handleRemove(key, index) : undefined}
             onRename={canEdit ? (renamed) => handleRename(key, renamed) : undefined}
             lockedNote={isLocked ? localize('com_config_ctl_kv_locked') : undefined}
+            validateKey={validateRename}
+            keyListId={keyListId}
             disabled={disabled}
             isNew={newKeys.has(key)}
             defaultExpanded={newKeys.has(key)}
@@ -170,17 +180,26 @@ export function RecordObjectField({
           {localize('com_config_no_entries')}
         </p>
       )}
+      {keyOptions && keyListId && (
+        <datalist id={keyListId}>
+          {keyOptions.map((option) => (
+            <option key={option.value} value={option.value} label={option.label} />
+          ))}
+        </datalist>
+      )}
       {!disabled && showAddInput && (
         <AddKeyInput
           existingKeys={record}
           onAdd={handleAdd}
           onCancel={() => setShowAddInput(false)}
+          validateKey={validateKey}
+          keyListId={keyListId}
         />
       )}
       {!disabled && !addTriggerRef && !showAddInput && (
         <div className="self-start">
           <AddItemButton
-            label={localize('com_ui_add_item', { item: localize('com_ui_entry') })}
+            label={addLabel ?? localize('com_ui_add_item', { item: localize('com_ui_entry') })}
             onClick={() => setShowAddInput(true)}
           />
         </div>
@@ -194,10 +213,14 @@ const AddKeyInput = memo(function AddKeyInput({
   existingKeys,
   onAdd,
   onCancel,
+  validateKey,
+  keyListId,
 }: {
   existingKeys: Record<string, t.ConfigValue>;
   onAdd: (key: string) => void;
   onCancel: () => void;
+  validateKey?: t.KeyValidator;
+  keyListId?: string;
 }) {
   const localize = useLocalize();
   const [newKey, setNewKey] = useState('');
@@ -215,6 +238,11 @@ const AddKeyInput = memo(function AddKeyInput({
       setError(localize('com_config_unsafe_key_error'));
       return;
     }
+    const problem = validateKey?.(trimmed) ?? null;
+    if (problem) {
+      setError(problem);
+      return;
+    }
     (document.activeElement as HTMLElement)?.blur();
     onAdd(trimmed);
   };
@@ -224,6 +252,7 @@ const AddKeyInput = memo(function AddKeyInput({
       <div className="flex flex-wrap items-center gap-2">
         <input
           type="text"
+          list={keyListId}
           value={newKey}
           aria-label={localize('com_ui_key')}
           aria-invalid={error ? true : undefined}

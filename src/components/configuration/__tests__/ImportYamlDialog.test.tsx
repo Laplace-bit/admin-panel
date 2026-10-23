@@ -123,14 +123,16 @@ describe('ImportYamlDialog wizard', () => {
     );
     await toPreview();
     const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText('Start balance')).toBeInTheDocument();
+    expect(within(dialog).getByText('Starting credits')).toBeInTheDocument();
     expect(within(dialog).getByText('1,000,000 (librechat.yaml)')).toBeInTheDocument();
     expect(within(dialog).queryByText('Enabled')).toBeNull();
     fireEvent.click(
       within(dialog).getByRole('button', { name: /Show 1 setting that is already set/ }),
     );
     expect(within(dialog).getByText(/Already set to this value/)).toBeInTheDocument();
-    expect(within(dialog).getByRole('checkbox', { name: 'Include Enabled' })).not.toBeChecked();
+    expect(
+      within(dialog).getByRole('checkbox', { name: 'Include Track balances' }),
+    ).not.toBeChecked();
     expect(within(dialog).getByText(/2 keys won't be imported/)).toBeInTheDocument();
     expect(within(dialog).getByText(/managed with role permissions/)).toBeInTheDocument();
     expect(within(dialog).getByText(/"us.anthropic.claude"/)).toBeInTheDocument();

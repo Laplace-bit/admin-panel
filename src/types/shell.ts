@@ -112,8 +112,8 @@ export interface ReadOnlySectionProps {
   title?: string;
   /** Overrides the default banner text for the reason. */
   message?: string;
-  /** A further note under the reason (e.g. values a profile stores there in vain). */
-  detail?: string;
+  /** A further note under the reason (e.g. values a profile stores there in vain), or an action. */
+  detail?: ReactNode;
   /** For `scope`: leaves the profile so the section can be edited in Base. */
   onEditInBase?: () => void;
   /** Nothing in the section is set: its rows (all "Not set") stay folded behind "Show all fields". */

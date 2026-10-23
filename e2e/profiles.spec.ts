@@ -62,7 +62,7 @@ test.describe('Configuration: profile lifecycle', () => {
     await page.getByRole('option', { name: new RegExp(`^${name}`) }).click();
     expect(dialogs).toEqual([]);
     await expect(unsavedBar(page)).toHaveCount(1);
-    await expect(startBalance).toHaveValue('4321');
+    await expect(startBalance).toHaveValue('4,321');
 
     await openSelector(page);
     const trash = page.getByRole('option', { name: new RegExp(`^Delete profile ${name}`) });

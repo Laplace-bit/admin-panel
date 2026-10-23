@@ -3,12 +3,18 @@ import { Button } from '@clickhouse/click-ui';
 import type { KeyboardEvent, ReactNode } from 'react';
 import type * as t from '@/types';
 import {
+  SECTION_RENDERERS,
+  READ_ONLY_DETAIL_KEYS,
+  SECTION_GROUP_RENDERERS,
+  UNFOLDED_READ_ONLY_SECTIONS,
+  SELF_CONTAINED_SECTION_RENDERERS,
+} from './sections';
+import {
   countSection,
   hasPendingValueIn,
   countSectionOverrides,
   countEntrySectionOverrides,
 } from './counts';
-import { SECTION_RENDERERS, SELF_CONTAINED_SECTION_RENDERERS } from './sections';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { RevealTargetContext } from '@/contexts/RevealTargetContext';
 import { FieldRenderer, SingleFieldRenderer } from './renderer';
@@ -17,7 +23,7 @@ import { deriveFieldValue, isSectionDisabled } from '@/utils';
 import { ReadOnlySection } from './ReadOnlySection';
 import { UnknownSettings } from './UnknownSettings';
 import { ConfigSection } from './ConfigSection';
-import { isPathInSection } from './configMeta';
+import { SECTION_META, isPathInSection } from './configMeta';
 import { CodeField } from './fields/CodeField';
 import { InfoBanner } from './InfoBanner';
 import { ScopeGate } from './ScopeGate';
@@ -238,18 +244,17 @@ export function ConfigTabContent({
     );
   }
 
-  const renderSectionContent = (section: t.ConfigSectionConfig) => {
+  const isSectionReadOnly = (section: t.ConfigSectionConfig): boolean =>
+    section.scopeGate != null ||
+    section.readOnlyReason != null ||
+    isSectionDisabled(!!fieldsDisabled, sectionPermissions, section.schemaKey ?? section.id);
+
+  const buildFieldRendererProps = (section: t.ConfigSectionConfig): t.FieldRendererProps => {
     const dataKey = section.schemaKey ?? section.id;
-    const sectionValue = configValues?.[dataKey];
-    const sectionDisabled =
-      section.scopeGate != null ||
-      section.readOnlyReason != null ||
-      isSectionDisabled(!!fieldsDisabled, sectionPermissions, dataKey);
-    const CustomSectionRenderer =
-      section.fields.length > 0 ? SECTION_RENDERERS[section.id] : undefined;
-    const fieldRendererProps: t.FieldRendererProps = {
+    const sectionDisabled = isSectionReadOnly(section);
+    return {
       fields: section.fields,
-      parentValue: sectionValue,
+      parentValue: configValues?.[dataKey],
       parentPath: dataKey,
       getValue,
       onChange: onFieldChange,
@@ -277,6 +282,15 @@ export function ConfigTabContent({
       onUnhideField: sectionDisabled ? undefined : onUnhideField,
       onRenameEntry,
     };
+  };
+
+  const renderSectionContent = (section: t.ConfigSectionConfig) => {
+    const dataKey = section.schemaKey ?? section.id;
+    const sectionValue = configValues?.[dataKey];
+    const sectionDisabled = isSectionReadOnly(section);
+    const CustomSectionRenderer =
+      section.fields.length > 0 ? SECTION_RENDERERS[section.id] : undefined;
+    const fieldRendererProps = buildFieldRendererProps(section);
     const content = (
       <>
         {section.bannerText && !section.readOnlyReason && !section.scopeGate && (
@@ -346,12 +360,18 @@ export function ConfigTabContent({
       );
     }
     if (!section.readOnlyReason) return content;
-    const isEmpty = countsById[section.id]?.configured === 0;
+    /** A single-field section is its row: nothing to fold. */
+    const isEmpty =
+      countsById[section.id]?.configured === 0 &&
+      !UNFOLDED_READ_ONLY_SECTIONS.has(section.id) &&
+      !isInlineSection(section);
+    const detailKey = READ_ONLY_DETAIL_KEYS[section.id];
     const reveal =
       revealTarget != null && (revealTarget === dataKey || revealTarget.startsWith(`${dataKey}.`));
     return (
       <ReadOnlySection
         reason={section.readOnlyReason}
+        detail={detailKey ? localize(detailKey) : undefined}
         isEmpty={isEmpty && !filterPaths}
         reveal={reveal}
       >
@@ -369,9 +389,21 @@ export function ConfigTabContent({
   type SectionGroup =
     | { kind: 'inline'; section: t.ConfigSectionConfig }
     | { kind: 'accordion'; sections: t.ConfigSectionConfig[] }
-    | { kind: 'flat'; section: t.ConfigSectionConfig };
+    | { kind: 'flat'; section: t.ConfigSectionConfig }
+    | { kind: 'group'; key: string; sections: t.ConfigSectionConfig[] };
 
   const groups = visibleSections.reduce<SectionGroup[]>((acc, section) => {
+    /** Sections sharing a `SectionMeta.group` with a group renderer render as one card (e.g. Storage). */
+    const groupKey = SECTION_META[section.id]?.group;
+    if (groupKey && SECTION_GROUP_RENDERERS[groupKey]) {
+      const existing = acc.find(
+        (g): g is Extract<SectionGroup, { kind: 'group' }> =>
+          g.kind === 'group' && g.key === groupKey,
+      );
+      if (existing) existing.sections.push(section);
+      else acc.push({ kind: 'group', key: groupKey, sections: [section] });
+      return acc;
+    }
     if (SELF_CONTAINED_SECTION_RENDERERS.has(section.id)) {
       acc.push({ kind: 'flat', section });
       return acc;
@@ -400,6 +432,20 @@ export function ConfigTabContent({
         >
           <button type="submit" disabled hidden aria-hidden="true" tabIndex={-1} />
           {groups.map((group) => {
+            if (group.kind === 'group') {
+              const GroupRenderer = SECTION_GROUP_RENDERERS[group.key];
+              if (!GroupRenderer) return null;
+              return (
+                <GroupRenderer
+                  key={group.key}
+                  sections={group.sections}
+                  propsFor={buildFieldRendererProps}
+                  renderSection={renderSectionContent}
+                  counts={countsById}
+                  showConfiguredOnly={showConfiguredOnly}
+                />
+              );
+            }
             if (group.kind === 'flat') {
               return (
                 <div key={group.section.id} id={`section-${group.section.id}`}>

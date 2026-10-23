@@ -279,6 +279,7 @@ export function canRoundTrip(
     case 'array':
     case 'multi-enum':
     case 'domain-list':
+    case 'mime-list':
       return isStringList(value);
     case 'model-list':
       return Array.isArray(value) && value.every(isModelItem);
@@ -365,6 +366,7 @@ export function fallbackControl(
       return 'select';
     case 'multi-enum':
     case 'domain-list':
+    case 'mime-list':
       return 'array';
     case 'model-list':
       return value == null || isStringList(value) ? 'array' : 'code';
