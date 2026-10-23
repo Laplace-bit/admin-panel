@@ -87,6 +87,36 @@ describe('readConfigContract', () => {
     expect(contract.rules.arrayMergeKeys).toEqual(BUNDLED_CONFIG_RULES.arrayMergeKeys);
   });
 
+  it('reads deployment-only paths, an unknown reason as an operator boundary', async () => {
+    apiFetchMock.mockResolvedValue(
+      reply(200, {
+        features: { writeReport: true, issueParams: true },
+        rules: {
+          deploymentOnlyPaths: {
+            rateLimits: 'operator',
+            'endpoints.agents.eventDriven': 'startup',
+            cache: 'unused',
+            futurePath: 'scheduled',
+          },
+        },
+      }),
+    );
+    const contract = await readConfigContract();
+    expect(contract.features).toMatchObject({ writeReport: true, issueParams: true });
+    expect(contract.rules.deploymentOnlyPaths).toEqual({
+      rateLimits: 'operator',
+      'endpoints.agents.eventDriven': 'startup',
+      cache: 'unused',
+      futurePath: 'operator',
+    });
+  });
+
+  it('keeps the bundled deployment-only paths for a server that does not list them', async () => {
+    apiFetchMock.mockResolvedValue(reply(200, META));
+    const contract = await readConfigContract();
+    expect(contract.rules.deploymentOnlyPaths).toBe(BUNDLED_CONFIG_RULES.deploymentOnlyPaths);
+  });
+
   it('treats a reply that is not an object as no contract', async () => {
     apiFetchMock.mockResolvedValue(new Response('"ok"', { status: 200 }));
     await expect(readConfigContract()).resolves.toBe(BUNDLED_CONFIG_CONTRACT);

@@ -164,6 +164,15 @@ describe('buildEndpointOptions', () => {
     expect(options[0].value).toBe('ollama');
   });
 
+  it('offers it as written on a server that folds endpoint references', () => {
+    const status: t.EndpointStatusMap = {
+      ollama: { name: 'ollama', custom: true, userProvide: false },
+    };
+    const root = { endpoints: { custom: [{ name: 'Ollama' }] } };
+    const options = buildEndpointOptions(status, root, (key) => key, false, true);
+    expect(options[0]).toEqual({ value: 'ollama', label: 'Ollama' });
+  });
+
   it('keeps endpoints whose names differ only in letter case apart (LibreChat serves both)', () => {
     const status: t.EndpointStatusMap = {
       Perplexity: { name: 'Perplexity', custom: true, userProvide: false },

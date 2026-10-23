@@ -70,8 +70,13 @@ export type ScopeGateReason = 'baseOnly' | 'yamlOnly' | 'tenantWide' | 'preAuth'
 /** Another profile with the same priority that can apply to the same user. */
 export interface ScopePriorityTie {
   scope: ConfigScope;
-  /** Paths both profiles set; when non-empty, users in both get an undefined value. */
+  /**
+   * Paths both profiles set. Where they overlap, users in both get the value
+   * of the profile that applies last: undefined before `deterministicPrecedence`.
+   */
   sharedPaths: string[];
+  /** Whether this profile applies after the one it ties with, so its values win (`deterministicPrecedence`). */
+  appliesAfter: boolean;
 }
 
 /** Profile lookups shared by the selector, the context bar and the field cascade. */
@@ -113,6 +118,13 @@ export interface ScopeBarProps extends Pick<
   scope: ConfigScope;
   /** Switches to Base through the page's unsaved-changes guard. */
   onBackToBase: () => void;
+  onError?: (message: string) => void;
+  /** Whether the admin may change profile priorities (broad `manage:configs`). */
+  canEditPriority?: boolean;
+}
+
+export interface ScopePriorityEditorProps {
+  scope: ConfigScope;
   onError?: (message: string) => void;
 }
 
@@ -156,6 +168,10 @@ export interface ScopeCandidate {
   email?: string;
   description?: string;
 }
+
+/** What `createScopeFn` creates a profile for: the principal, its name and, optionally, a priority. */
+export type CreateScopeInput = Pick<ConfigScope, 'principalType' | 'name' | 'email'> &
+  Partial<Pick<ConfigScope, 'principalId' | 'priority'>>;
 
 /** The "Overridden by …" link on a settings row in Base, opening the field's cascade. */
 export interface ScopeCascadeProps {

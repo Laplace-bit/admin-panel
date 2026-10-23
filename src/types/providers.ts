@@ -1,6 +1,7 @@
 import type { ReactNode, RefObject } from 'react';
 import type { ConfigValue, ConfigRecord, FlatConfigMap, SchemaField, SelectOption } from './config';
 import type { FieldRendererProps } from './config-ui';
+import type { ConfigRules } from './contract';
 import type { ShadowedBy } from './values';
 
 /** One endpoint LibreChat serves to the signed-in admin (`GET /api/endpoints`). */
@@ -222,9 +223,10 @@ export interface SummaryReader {
   /**
    * How Global overrides shadow the value (D11): `wins` when Global sets the
    * key, `ignored` when its title block exists without it (LibreChat's
-   * default applies), else null.
+   * default applies), `paired` when it sets the other half of the title
+   * endpoint and model (`titleResolution: 'field'`), else null.
    */
-  shadowOf?: (path: string) => 'wins' | 'ignored' | null;
+  shadowOf?: (path: string) => 'wins' | 'ignored' | 'paired' | null;
 }
 
 export interface SummaryReaderInput {
@@ -234,6 +236,8 @@ export interface SummaryReaderInput {
   configuredPaths?: ReadonlySet<string>;
   editedValues?: FlatConfigMap;
   root: ConfigValue;
+  /** How the server applies `endpoints.all` title settings (`block` when absent). */
+  titleResolution?: ConfigRules['titleResolution'];
 }
 
 export interface StaleOverrideProps {

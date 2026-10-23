@@ -25,7 +25,7 @@ import { applyConfigChangesFn, resetBaseConfigFn } from '@/server';
 import { describeIssues } from '@/components/configuration/issues';
 import { hasPathOverlap } from '@/components/configuration/counts';
 import { labelForPath } from '@/components/configuration/meta';
-import { useConfigFeatures } from './contract';
+import { useConfigFeatures, useConfigWriteRules } from './contract';
 import { useLocalize } from '../useLocalize';
 
 function toTargetRef(target: t.WriteTarget): t.WriteTargetRef {
@@ -82,6 +82,7 @@ export function useConfigSave({
   const localize = useLocalize();
   const queryClient = useQueryClient();
   const features = useConfigFeatures();
+  const writeRules = useConfigWriteRules();
   const {
     configValues,
     dbOverrides,
@@ -228,6 +229,7 @@ export function useConfigSave({
       root: baseActiveConfigValues,
       collections: collectionEdits,
       visibility: visibilityEdits,
+      writeRules,
     }),
     [
       schemaTree,
@@ -236,6 +238,7 @@ export function useConfigSave({
       isEditingScope,
       collectionEdits,
       visibilityEdits,
+      writeRules,
     ],
   );
 
@@ -263,8 +266,8 @@ export function useConfigSave({
   }, [isEditingScope, valueLayers, configValues, dbOverrides, yamlConfig]);
 
   const plan = useMemo(
-    () => planConfigChanges(changeSet.ops, snapshot, features),
-    [changeSet, snapshot, features],
+    () => planConfigChanges(changeSet.ops, snapshot, features, writeRules),
+    [changeSet, snapshot, features, writeRules],
   );
 
   const clientIssues = useMemo(

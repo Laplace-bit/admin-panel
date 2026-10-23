@@ -24,7 +24,7 @@ import {
   isCurrentSelection,
   countScopeOverrides,
 } from '@/utils';
-import { useLocalize, useDebouncedFilter } from '@/hooks';
+import { useLocalize, useConfigFeatures, useDebouncedFilter } from '@/hooks';
 import { DecorativeIcon } from '@/components/shared';
 import { getScopeTypeConfig } from '@/constants';
 
@@ -58,6 +58,10 @@ export function ScopeSelector({
 }: t.ScopeSelectorProps) {
   const localize = useLocalize();
   const queryClient = useQueryClient();
+  const { deterministicPrecedence } = useConfigFeatures();
+  const precedenceKey = deterministicPrecedence
+    ? 'com_scope_precedence_ordered'
+    : 'com_scope_precedence';
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [creatingKey, setCreatingKey] = useState<string | null>(null);
@@ -433,7 +437,7 @@ export function ScopeSelector({
     <Command.Dialog {...dialogProps} label={localize('com_scope_select')}>
       <VisuallyHidden>
         <DialogTitle>{localize('com_scope_select')}</DialogTitle>
-        <DialogDescription>{localize('com_scope_precedence')}</DialogDescription>
+        <DialogDescription>{localize(precedenceKey)}</DialogDescription>
       </VisuallyHidden>
       <div className="flex items-center gap-2 border-b border-(--cui-color-stroke-default) px-4">
         <Command.Input
@@ -526,7 +530,7 @@ export function ScopeSelector({
         )}
       </Command.List>
       <p className="border-t border-(--cui-color-stroke-default) px-4 py-2 text-xs text-(--cui-color-text-muted)">
-        {localize('com_scope_precedence')}
+        {localize(precedenceKey)}
       </p>
     </Command.Dialog>
   );
@@ -543,12 +547,14 @@ function ScopeRow({
   toggling,
 }: t.ScopeRowProps) {
   const localize = useLocalize();
+  const { deterministicPrecedence } = useConfigFeatures();
   const config = getScopeTypeConfig(scope.principalType);
   const name = formatScopeName(scope);
   const overrideCount = countScopeOverrides(scope);
   const conflicts = ties.filter((tie) => tie.sharedPaths.length > 0);
+  /** With a fixed order, a tie decides which profile wins rather than leaving it undefined. */
   const tieText =
-    conflicts.length > 0
+    !deterministicPrecedence && conflicts.length > 0
       ? localize('com_scope_tie_short', {
           names: conflicts.map((tie) => formatScopeName(tie.scope)).join(', '),
         })

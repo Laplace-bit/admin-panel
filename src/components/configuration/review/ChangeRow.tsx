@@ -67,6 +67,7 @@ const WARNING_KEYS: Partial<Record<t.ChangeWarning, string>> = {
   emptySpecs: 'com_config_review_warning_empty_specs',
   shadowed: 'com_config_review_warning_shadowed',
   shadowedBlock: 'com_config_review_warning_shadowed_block',
+  shadowedPair: 'com_config_review_warning_shadowed_pair',
 };
 
 function ActionButton({

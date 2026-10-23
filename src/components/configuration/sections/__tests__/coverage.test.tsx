@@ -1,5 +1,6 @@
 import '@/locales/i18n';
 import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, screen } from '@testing-library/react';
 import type { HiddenFields } from '@/test/coverage';
 import type * as t from '@/types';
 import {
@@ -23,6 +24,7 @@ import {
 import { READ_ONLY_CONFIG_SECTIONS, YAML_MANAGED_FIELDS } from '@/constants';
 import { SECTION_META } from '@/components/configuration/configMeta';
 import { renderTab, PAGE_TREE, RAW_TREE } from '@/test/page';
+import { createServerContract } from '@/test/fixtures';
 import { setValueAtPath } from '@/utils';
 
 vi.setConfig({ testTimeout: COVERAGE_TEST_TIMEOUT_MS });
@@ -57,6 +59,30 @@ function isReadOnly(path: string): boolean {
 
 const HIDDEN: HiddenFields = {};
 
+/** A server that applies Base overrides before sign-in: the social sign-in buttons are edited in Base. */
+const PRE_AUTH_SERVER = createServerContract({ preAuthBaseOverrides: true });
+
+describe('social sign-in buttons, by the server', () => {
+  const yaml = { registration: { socialLogins: ['openid', 'google'] } };
+  const addOption = () => screen.queryByRole('combobox', { name: /Add sign-in option/ });
+
+  it('are read-only on a server without pre-auth Base overrides', () => {
+    renderTab({ tab: 'system', expandAll: true, yaml });
+    expect(controlAt('registration.socialLogins')).toHaveTextContent(/OpenID Connect.*Google/);
+    expect(addOption()).toBeNull();
+  });
+
+  it('are edited in Base, and saved, on a server with pre-auth Base overrides', () => {
+    const view = renderTab({ tab: 'system', expandAll: true, yaml, contract: PRE_AUTH_SERVER });
+    fireEvent.change(addOption()!, { target: { value: 'github' } });
+    const plan = view.plan();
+    expect(plan.sets).toEqual([
+      { fieldPath: 'registration.socialLogins', value: ['openid', 'google', 'github'] },
+    ]);
+    expect(plan.skipped).toEqual([]);
+  });
+});
+
 describe.each(TABS)('%s tab', (tab) => {
   const roots = rootsOf(tab);
   const sample = sampleOf(roots);
@@ -79,6 +105,12 @@ describe.each(TABS)('%s tab', (tab) => {
 
   it('names no hidden field the schema no longer has', () => {
     expect(staleHidden(roots, HIDDEN)).toEqual([]);
+  });
+
+  it("renders every leaf of its sections under a server's write rules (pre-auth Base overrides)", () => {
+    renderIt({ yaml: sample, contract: PRE_AUTH_SERVER });
+    const shown = roots.flatMap((root) => renderedLeaves(root, sample));
+    expect(roots.flatMap((root) => missingLeaves(root, shown, HIDDEN))).toEqual([]);
   });
 
   it.each(editable.map((field) => [field.path, field] as const))(

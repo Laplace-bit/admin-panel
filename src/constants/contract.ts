@@ -6,7 +6,13 @@ import {
   RUNTIME_CONFIG_INTERFACE_FIELDS,
 } from 'librechat-data-provider';
 import type * as t from '@/types';
-import { APP_SERVICE_KEY_ALIASES, READ_ONLY_CONFIG_SECTIONS } from './config';
+import {
+  resolveWriteRules,
+  BUNDLED_WRITE_RULES,
+  APP_SERVICE_KEY_ALIASES,
+  READ_ONLY_CONFIG_SECTIONS,
+  BUNDLED_DEPLOYMENT_ONLY_PATHS,
+} from './config';
 import { KEYED_COLLECTIONS } from './collections';
 
 /** Every flag of the admin config contract the panel reads. */
@@ -30,6 +36,8 @@ export const CONFIG_FEATURE_FLAGS: readonly t.ConfigFeatureFlag[] = [
   'yamlSecretPreview',
   'envAllowlist',
   'secretRebinding',
+  'writeReport',
+  'issueParams',
 ];
 
 /** A server without the meta route (or one that leaves a flag out) has none of these behaviours. */
@@ -81,6 +89,7 @@ export const BUNDLED_CONFIG_RULES: t.ConfigRules = {
     .map(([section]) => section),
   basePrincipalSections: [...BASE_PRINCIPAL_CONFIG_SECTIONS],
   baseOnlyPaths: [],
+  deploymentOnlyPaths: BUNDLED_DEPLOYMENT_ONLY_PATHS,
   arrayMergeKeys: Object.fromEntries(
     keyedCollections
       .filter((collection) => collection.merge === 'byKey')
@@ -125,3 +134,18 @@ export const BUNDLED_CONFIG_CONTRACT: t.ConfigContract = {
   limits: BUNDLED_CONFIG_LIMITS,
   rules: BUNDLED_CONFIG_RULES,
 };
+
+const WRITE_RULES_CACHE = new WeakMap<t.ConfigContract, t.ConfigWriteRules>();
+
+/**
+ * Where the panel may write on the contract's server (`resolveWriteRules`),
+ * built once per contract. The bundled contract keeps the panel's own lists.
+ */
+export function getWriteRules(contract: t.ConfigContract): t.ConfigWriteRules {
+  if (contract === BUNDLED_CONFIG_CONTRACT) return BUNDLED_WRITE_RULES;
+  const cached = WRITE_RULES_CACHE.get(contract);
+  if (cached) return cached;
+  const rules = resolveWriteRules(contract.rules, contract.features.preAuthBaseOverrides);
+  WRITE_RULES_CACHE.set(contract, rules);
+  return rules;
+}

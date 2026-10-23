@@ -531,6 +531,7 @@ export function ConfigPage({
                 scope={editingScope}
                 onBackToBase={backToBase}
                 onError={notifyError}
+                canEditPriority={canManageConfig}
                 values={layers.scopeOverrideValues}
                 pendingResets={edits.pendingResets}
                 onRevert={

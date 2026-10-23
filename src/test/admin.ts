@@ -19,6 +19,9 @@ interface FakeDoc {
   tombstones: string[];
 }
 
+/** What a write's reply adds to the stored document (a write report, ignored credentials). */
+export type FakeWriteReport = (request: FakeAdminRequest) => Partial<t.PatchFieldsResponse>;
+
 /** Replies the test wants instead of the default behaviour (return undefined to fall through). */
 export type FakeAdminOverride = (
   request: FakeAdminRequest,
@@ -57,6 +60,7 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
   const requests: FakeAdminRequest[] = [];
   const strippedSections = new Set<string>();
   let override: FakeAdminOverride | undefined;
+  let report: FakeWriteReport | undefined;
   let meta: t.AdminConfigMetaBody | undefined;
 
   const docKey = (principalType: string, principalId: string) =>
@@ -64,6 +68,10 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
 
   const reply = (status: number, body: unknown) =>
     ({ ok: status >= 200 && status < 300, status, json: async () => body }) as Response;
+
+  /** A successful write's reply, with what the test's write report adds. */
+  const written = (request: FakeAdminRequest, body: object) =>
+    reply(200, { ...body, ...report?.(request) });
 
   function encryptSecrets(value: t.ConfigValue, existing: t.ConfigValue): t.ConfigValue {
     if (Array.isArray(value)) {
@@ -135,7 +143,7 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
         overrides: removeValueAtPath(current.overrides, fieldPath),
         tombstones: [...new Set([...current.tombstones, fieldPath])],
       });
-      return reply(200, { config: docs.get(key) });
+      return written(request, { config: docs.get(key) });
     }
     if (method === 'DELETE') {
       if (!doc) return reply(404, { error: 'Config not found' });
@@ -144,24 +152,25 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
         overrides: removeValueAtPath(doc.overrides, fieldPath),
         tombstones: doc.tombstones.filter((p) => p !== fieldPath && !p.startsWith(`${fieldPath}.`)),
       });
-      return reply(200, { config: redact(docs.get(key)!.overrides) });
+      return written(request, { config: redact(docs.get(key)!.overrides) });
     }
     let overrides = current.overrides;
     const entries = (body?.entries ?? []).filter(
       (entry: t.SaveEntry) => !strippedSections.has(entry.fieldPath.split('.')[0]),
     );
-    if (entries.length === 0)
-      return reply(200, { message: 'No actionable field entries provided' });
+    if (entries.length === 0) {
+      return written(request, { message: 'No actionable field entries provided' });
+    }
     for (const entry of entries) {
       const existing = getValueAtPath(current.overrides, entry.fieldPath);
       overrides = setValueAtPath(overrides, entry.fieldPath, encryptSecrets(entry.value, existing));
     }
-    const written = (body?.entries ?? []).map((e: t.SaveEntry) => e.fieldPath);
+    const paths = (body?.entries ?? []).map((e: t.SaveEntry) => e.fieldPath);
     docs.set(key, {
       overrides,
-      tombstones: current.tombstones.filter((p) => !written.includes(p)),
+      tombstones: current.tombstones.filter((p) => !paths.includes(p)),
     });
-    return reply(200, { config: { overrides: redact(overrides) } });
+    return written(request, { config: { overrides: redact(overrides) } });
   }
 
   return {
@@ -176,6 +185,10 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
     stripSection: (section: string) => strippedSections.add(section),
     setOverride: (next?: FakeAdminOverride) => {
       override = next;
+    },
+    /** Adds a write report (`applied`, `skipped`, `ignored`) to each successful write's reply. */
+    reportWrites: (next?: FakeWriteReport) => {
+      report = next;
     },
     /** Serves `GET /api/admin/config/meta` (a server with the contract); unset, it answers 404 like an older server. */
     reportMeta: (body?: t.AdminConfigMetaBody) => {

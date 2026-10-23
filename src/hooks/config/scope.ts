@@ -11,6 +11,7 @@ import {
 } from '@/utils';
 import { ScopeActionsContext } from '@/contexts/ScopeContext';
 import { availableScopesOptions } from '@/server';
+import { useConfigWriteRules } from './contract';
 
 const EMPTY_SCOPES: t.ConfigScope[] = [];
 
@@ -132,5 +133,9 @@ export function useScopeGatedSections(
   sections: t.ConfigSectionConfig[],
   isEditingScope: boolean,
 ): t.ConfigSectionConfig[] {
-  return useMemo(() => applyScopeGates(sections, isEditingScope), [sections, isEditingScope]);
+  const writeRules = useConfigWriteRules();
+  return useMemo(
+    () => applyScopeGates(sections, isEditingScope, writeRules),
+    [sections, isEditingScope, writeRules],
+  );
 }

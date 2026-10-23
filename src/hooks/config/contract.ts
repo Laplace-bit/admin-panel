@@ -2,6 +2,7 @@ import { useContext, useCallback } from 'react';
 import type * as t from '@/types';
 import { ConfigContractContext } from '@/contexts/ContractContext';
 import { useLocalize } from '../useLocalize';
+import { getWriteRules } from '@/constants';
 import { isUnsafeConfigKey } from '@/utils';
 
 /** The connected server's admin config contract (the bundled one until it loads, or without one). */
@@ -12,6 +13,11 @@ export function useConfigContract(): t.ConfigContract {
 /** Which admin config behaviours the connected server has (all off for an older server). */
 export function useConfigFeatures(): t.ConfigFeatures {
   return useContext(ConfigContractContext).features;
+}
+
+/** Where the panel may write on the connected server: read-only sections and librechat.yaml-only fields. */
+export function useConfigWriteRules(): t.ConfigWriteRules {
+  return getWriteRules(useContext(ConfigContractContext));
 }
 
 /**

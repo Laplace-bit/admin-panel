@@ -12,6 +12,28 @@ const GATE_SKIP_REASONS: Readonly<Record<t.ScopeGateReason, t.SkipReason>> = {
   preAuth: 'baseScope',
 };
 
+/** Order of profile kinds on equal priority under `deterministicPrecedence`: roles, then groups, then users. */
+const TYPE_RANK: Readonly<Record<string, number>> = {
+  [PrincipalType.ROLE]: 0,
+  [PrincipalType.GROUP]: 1,
+  [PrincipalType.USER]: 2,
+};
+
+/**
+ * The order LibreChat applies profiles in with `deterministicPrecedence`,
+ * the last winning: ascending priority, then roles before groups before
+ * users, then the older profile first (document id, roughly creation order).
+ * Base always applies before every profile.
+ */
+export function compareScopePrecedence(a: t.ConfigScope, b: t.ConfigScope): number {
+  if (a.priority !== b.priority) return a.priority - b.priority;
+  const rank = (TYPE_RANK[a.principalType] ?? 0) - (TYPE_RANK[b.principalType] ?? 0);
+  if (rank !== 0) return rank;
+  const [idA, idB] = [a._id ?? '', b._id ?? ''];
+  if (idA === idB) return 0;
+  return idA < idB ? -1 : 1;
+}
+
 /** Profile kinds a user can only belong to once, so two of them never apply together. */
 const SINGLE_MEMBERSHIP_TYPES: ReadonlySet<PrincipalType> = new Set([
   PrincipalType.ROLE,
@@ -122,8 +144,10 @@ function canCoApply(a: t.ConfigScope, b: t.ConfigScope): boolean {
 
 /**
  * Active profiles with the same priority as `scope` that can apply to the same
- * user. LibreChat orders profiles by priority only, so for a user both apply
- * to, which value of a setting they both change wins is undefined.
+ * user, with whether `scope` applies after each (`compareScopePrecedence`).
+ * Before `deterministicPrecedence` LibreChat orders profiles by priority
+ * only, so for a user both apply to, which value of a setting they both
+ * change wins is undefined; with it, the one that applies last wins.
  */
 export function findPriorityTies(
   scope: t.ConfigScope,
@@ -142,7 +166,11 @@ export function findPriorityTies(
     .map((other) => {
       const otherPaths = scopePaths(other);
       const shared = own.filter((path) => otherPaths.some((p) => pathsOverlap(path, p)));
-      return { scope: other, sharedPaths: shared };
+      return {
+        scope: other,
+        sharedPaths: shared,
+        appliesAfter: compareScopePrecedence(scope, other) > 0,
+      };
     });
 }
 
@@ -155,10 +183,11 @@ function pathPrefixes(path: string): string[] {
 /**
  * Indexes profiles by every path they override or hide and each ancestor of
  * it, so a settings row finds the profiles that change it (or something inside
- * it) with one lookup. Profiles are listed in priority order, lowest first.
+ * it) with one lookup. Profiles are listed in the order they apply, lowest
+ * priority first (`compareScopePrecedence`).
  */
 export function buildScopeIndex(scopes: t.ConfigScope[]): t.ScopeIndex {
-  const ordered = [...scopes].sort((a, b) => a.priority - b.priority);
+  const ordered = [...scopes].sort(compareScopePrecedence);
   const byPath = new Map<string, t.ConfigScope[]>();
   for (const scope of ordered) {
     const seen = new Set<string>();
@@ -194,16 +223,20 @@ export function getScopeIndex(scopes: t.ConfigScope[]): t.ScopeIndex {
 export function applyScopeGates(
   sections: t.ConfigSectionConfig[],
   isEditingScope: boolean,
+  rules?: t.ConfigWriteRules,
 ): t.ConfigSectionConfig[] {
   if (!isEditingScope) return sections;
   return sections.map((section) => {
-    const scopeGate = getScopeGateReason(section.schemaKey ?? section.id);
+    const scopeGate = getScopeGateReason(section.schemaKey ?? section.id, rules);
     return scopeGate ? { ...section, scopeGate, tocItems: [] } : section;
   });
 }
 
 /** Why a change to `path` is not sent to a profile: its section applies to everyone (PR-7). */
-export function scopeGateSkipReason(path: string): t.SkipReason | undefined {
-  const gate = getScopeGateReason(path);
+export function scopeGateSkipReason(
+  path: string,
+  rules?: t.ConfigWriteRules,
+): t.SkipReason | undefined {
+  const gate = getScopeGateReason(path, rules);
   return gate ? GATE_SKIP_REASONS[gate] : undefined;
 }

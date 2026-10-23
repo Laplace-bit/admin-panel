@@ -15,7 +15,8 @@ import { extractSchemaTree, extractSchemaDefaults, getSchemaPathSet } from '@/se
 import { SECTION_META } from '@/components/configuration/configMeta';
 import { ConfigTabContent } from '@/components/configuration';
 import { runtimeDefaultAt } from '@/hooks/config/layers';
-import { READ_ONLY_CONFIG_SECTIONS } from '@/constants';
+import { ConfigContractContext } from '@/contexts/ContractContext';
+import { BUNDLED_CONFIG_CONTRACT, getWriteRules } from '@/constants';
 
 const TREE = extractSchemaTree(configSchema as t.ZodSchemaLike);
 const SCHEMA_DEFAULTS = flattenObject(
@@ -27,13 +28,15 @@ const SCHEMA_PATHS = getSchemaPathSet();
 export function tabSections(
   keys: string[],
   extraFields: Readonly<Record<string, t.SchemaField[]>> = {},
+  contract: t.ConfigContract = BUNDLED_CONFIG_CONTRACT,
 ): t.ConfigSectionConfig[] {
+  const { readOnlySections } = getWriteRules(contract);
   return keys.flatMap((key) => {
     const field = TREE.find((section) => section.key === key);
     if (!field) return [];
     const children = [...(field.children ?? []), ...(extraFields[key] ?? [])];
     const structured = (field.isObject || field.type === 'record') && children.length > 0;
-    const readOnlyReason = READ_ONLY_CONFIG_SECTIONS.get(key);
+    const readOnlyReason = readOnlySections.get(key);
     return [
       {
         id: key,
@@ -63,6 +66,8 @@ export interface SectionsHarnessOptions {
   showConfiguredOnly?: boolean;
   /** Fields a newer schema adds to a section, by section key. */
   extraFields?: Readonly<Record<string, t.SchemaField[]>>;
+  /** The server's admin config contract (the bundled one: an older server). */
+  contract?: t.ConfigContract;
 }
 
 /** Profile-mode (USER role) value layers over Base, built by the page's own code. */
@@ -108,6 +113,7 @@ export function SectionsHarness({
   profile,
   showConfiguredOnly,
   extraFields,
+  contract = BUNDLED_CONFIG_CONTRACT,
 }: SectionsHarnessOptions) {
   const base = baseLayers(yaml, overrides);
   const layers = profile ? profileLayers(base, profile) : base;
@@ -137,28 +143,30 @@ export function SectionsHarness({
     sections.map((key) => [key, { canView: true, canEdit: true }]),
   );
   return (
-    <ConfigTabContent
-      sections={tabSections(sections, extraFields)}
-      configValues={values}
-      editedValues={edited}
-      onFieldChange={stage}
-      onResetField={(path) => {
-        onReset?.(path);
-        stage(path, undefined);
-      }}
-      onDiscardField={discard}
-      readOnly={readOnly}
-      permissions={{ canView: true, canEdit: !readOnly }}
-      sectionPermissions={permissions}
-      configuredPaths={configured}
-      dbOverridePaths={new Set(collectLeafPaths(overrides))}
-      touchedPaths={new Set(Object.keys(edited))}
-      pendingResets={new Set()}
-      schemaDefaults={SCHEMA_DEFAULTS}
-      valueLayers={layers}
-      isEditingScope={profile != null}
-      showConfiguredOnly={showConfiguredOnly}
-    />
+    <ConfigContractContext.Provider value={contract}>
+      <ConfigTabContent
+        sections={tabSections(sections, extraFields, contract)}
+        configValues={values}
+        editedValues={edited}
+        onFieldChange={stage}
+        onResetField={(path) => {
+          onReset?.(path);
+          stage(path, undefined);
+        }}
+        onDiscardField={discard}
+        readOnly={readOnly}
+        permissions={{ canView: true, canEdit: !readOnly }}
+        sectionPermissions={permissions}
+        configuredPaths={configured}
+        dbOverridePaths={new Set(collectLeafPaths(overrides))}
+        touchedPaths={new Set(Object.keys(edited))}
+        pendingResets={new Set()}
+        schemaDefaults={SCHEMA_DEFAULTS}
+        valueLayers={layers}
+        isEditingScope={profile != null}
+        showConfiguredOnly={showConfiguredOnly}
+      />
+    </ConfigContractContext.Provider>
   );
 }
 

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { ReadOnlyReason } from './config';
 
 /**
  * A behaviour of the admin config API that a LibreChat server reports in
@@ -24,7 +25,9 @@ export type ConfigFeatureFlag =
   | 'azureGroupSecrets'
   | 'yamlSecretPreview'
   | 'envAllowlist'
-  | 'secretRebinding';
+  | 'secretRebinding'
+  | 'writeReport'
+  | 'issueParams';
 
 /** Which admin config behaviours the server has; a flag it does not report is `false`. */
 export type ConfigFeatures = Readonly<Record<ConfigFeatureFlag, boolean>>;
@@ -71,6 +74,13 @@ export interface ConfigInterfaceRules {
   permissionSubKeys: string[];
 }
 
+/**
+ * Why only librechat.yaml sets a path: LibreChat reads it once at startup
+ * (`startup`), it is a boundary only the operator sets (`operator`), or
+ * nothing reads it (`unused`).
+ */
+export type DeploymentOnlyReason = 'startup' | 'operator' | 'unused';
+
 /** The write rules a server enforces, in `librechat.yaml` key names. */
 export interface ConfigRules {
   /** Top-level sections the server's config schema defines. */
@@ -81,6 +91,8 @@ export interface ConfigRules {
   basePrincipalSections: string[];
   /** Fields inside overridable sections that only `librechat.yaml` sets. */
   baseOnlyPaths: string[];
+  /** Sections and fields only `librechat.yaml` sets, with why; writes to them are skipped. */
+  deploymentOnlyPaths: Readonly<Record<string, DeploymentOnlyReason>>;
   /** Arrays merged item by item on a key field instead of replaced. */
   arrayMergeKeys: Readonly<Record<string, string>>;
   /** Objects an override replaces whole instead of merging into. */
@@ -117,6 +129,19 @@ export interface ConfigContract {
   features: ConfigFeatures;
   limits: ConfigLimits;
   rules: ConfigRules;
+}
+
+/**
+ * Where the panel may write, from a contract's rules and features: what it
+ * renders read-only and leaves out of saves (see `getWriteRules`).
+ */
+export interface ConfigWriteRules {
+  /** Top-level sections the panel never writes, with why. */
+  readOnlySections: ReadonlyMap<string, ReadOnlyReason>;
+  /** Fields inside writable sections that only librechat.yaml sets. */
+  yamlManagedFields: ReadonlySet<string>;
+  /** Of `yamlManagedFields`, those LibreChat reads only once, at startup. */
+  startupOnlyFields: ReadonlySet<string>;
 }
 
 /** `GET /api/admin/config/meta` as parsed: every part optional, since forks and older servers differ. */

@@ -53,7 +53,12 @@ export function shadowedSourceLabel(
 function shadowReason(shadowedBy: t.ShadowedBy, source: string, localize: t.LocalizeFn): string {
   const field = labelForPath(shadowedBy.path, localize);
   if (shadowedBy.value === undefined) {
-    return localize('com_config_providers_shadow_block_unset', { field, source });
+    return localize(
+      shadowedBy.precedence === 'pair'
+        ? 'com_config_providers_shadow_pair'
+        : 'com_config_providers_shadow_block_unset',
+      { field, source },
+    );
   }
   const value = formatConfigValue(shadowedBy.value, localize, shadowedBy.path);
   return localize(

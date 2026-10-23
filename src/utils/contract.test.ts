@@ -1,11 +1,22 @@
 import { describe, it, expect } from 'vitest';
+import type * as t from '@/types';
 import {
+  getWriteRules,
+  resolveWriteRules,
+  getReadOnlyReason,
+  isYamlManagedPath,
+  isStartupOnlyPath,
+  BUNDLED_WRITE_RULES,
+  YAML_MANAGED_FIELDS,
+  STARTUP_ONLY_FIELDS,
   CONFIG_FEATURE_FLAGS,
   BUNDLED_CONFIG_RULES,
   BUNDLED_CONFIG_LIMITS,
   BUNDLED_CONFIG_CONTRACT,
+  READ_ONLY_CONFIG_SECTIONS,
 } from '@/constants';
-import { resolveConfigContract } from './contract';
+import { createServerContract } from '@/test/fixtures';
+import { resolveConfigContract, foldsEndpointReferences } from './contract';
 
 describe('resolveConfigContract', () => {
   it('is the bundled contract, every feature off, for a server without the meta route', () => {
@@ -76,5 +87,88 @@ describe('BUNDLED_CONFIG_RULES', () => {
       previewPath: 'langfuse.secretKeyPreview',
       allowEnvPlaceholder: false,
     });
+  });
+});
+
+/** `rules.deploymentOnlyPaths` as LibreChat with the write report publishes it (abridged). */
+const DEPLOYMENT_ONLY: t.ConfigRules['deploymentOnlyPaths'] = {
+  rateLimits: 'operator',
+  cloudfront: 'operator',
+  includedTools: 'operator',
+  skillDeletion: 'startup',
+  cache: 'unused',
+  'registration.oauthStateTtlMs': 'startup',
+  'endpoints.agents.eventDriven': 'startup',
+  'endpoints.agents.toolApproval.hooks': 'operator',
+};
+
+describe('write rules', () => {
+  it('keeps the read-only sections and fields the panel knew for a server without rules', () => {
+    expect(getWriteRules(BUNDLED_CONFIG_CONTRACT)).toBe(BUNDLED_WRITE_RULES);
+    expect([...BUNDLED_WRITE_RULES.readOnlySections].sort()).toEqual(
+      [...READ_ONLY_CONFIG_SECTIONS].sort(),
+    );
+    expect(Object.fromEntries(READ_ONLY_CONFIG_SECTIONS)).toEqual({
+      filters: 'baseOnly',
+      mcpAppSandbox: 'baseOnly',
+      cloudfront: 'yamlOnly',
+      rateLimits: 'yamlOnly',
+      turnstile: 'yamlOnly',
+      permissions: 'yamlOnly',
+      openapi: 'yamlOnly',
+      cache: 'yamlOnly',
+    });
+    expect(YAML_MANAGED_FIELDS).toEqual(BUNDLED_WRITE_RULES.yamlManagedFields);
+    expect(isYamlManagedPath('registration.socialLogins')).toBe(true);
+    expect(isYamlManagedPath('endpoints.azureOpenAI.groups.0.apiKey')).toBe(true);
+    expect(isStartupOnlyPath('mcpSettings.catalogRecovery.maxStateEntries')).toBe(true);
+    expect(STARTUP_ONLY_FIELDS.has('mcpSettings.catalogRecovery.authorizationFenceTimeoutMs')).toBe(
+      false,
+    );
+  });
+
+  it("reads sections and fields from a server's base-only and deployment-only lists", () => {
+    const rules = resolveWriteRules(
+      {
+        baseOnlySections: ['filters', 'mcpAppSandbox', 'turnstile'],
+        baseOnlyPaths: ['endpoints.agents.pullRequests.provider'],
+        deploymentOnlyPaths: DEPLOYMENT_ONLY,
+      },
+      false,
+    );
+    expect(getReadOnlyReason('includedTools', rules)).toBe('yamlOnly');
+    expect(getReadOnlyReason('skillDeletion.intervalMs', rules)).toBe('yamlOnly');
+    expect(getReadOnlyReason('filters.pii', rules)).toBe('baseOnly');
+    expect(getReadOnlyReason('turnstile.siteKey', rules)).toBe('yamlOnly');
+    expect(getReadOnlyReason('permissions', rules)).toBeUndefined();
+    expect(isYamlManagedPath('endpoints.agents.pullRequests.provider', rules)).toBe(true);
+    expect(isYamlManagedPath('endpoints.agents.pullRequests.host', rules)).toBe(false);
+    expect(isYamlManagedPath('endpoints.agents.toolApproval.hooks.0', rules)).toBe(true);
+    expect(isStartupOnlyPath('endpoints.agents.eventDriven', rules)).toBe(true);
+    expect(isStartupOnlyPath('endpoints.agents.toolApproval.hooks', rules)).toBe(false);
+    expect(isStartupOnlyPath('mcpSettings.catalogRecovery.maxStateEntries', rules)).toBe(false);
+  });
+
+  it('lets Base set the social sign-in buttons once Base overrides apply before sign-in', () => {
+    const before = getWriteRules(createServerContract());
+    const after = getWriteRules(createServerContract({ preAuthBaseOverrides: true }));
+    expect(isYamlManagedPath('registration.socialLogins', before)).toBe(true);
+    expect(isYamlManagedPath('registration.socialLogins', after)).toBe(false);
+    expect(isYamlManagedPath('registration.oauthStateTtlMs', after)).toBe(true);
+    expect(isYamlManagedPath('endpoints.anthropic.vertex.region', after)).toBe(true);
+  });
+
+  it('builds the rules once per contract', () => {
+    const contract = createServerContract({ preAuthBaseOverrides: true });
+    expect(getWriteRules(contract)).toBe(getWriteRules(contract));
+  });
+});
+
+describe('foldsEndpointReferences', () => {
+  it('is reported by per-field title resolution, which shipped with it', () => {
+    expect(foldsEndpointReferences(BUNDLED_CONFIG_CONTRACT)).toBe(false);
+    expect(foldsEndpointReferences(createServerContract({}, { titleResolution: 'field' }))).toBe(
+      true,
+    );
   });
 });

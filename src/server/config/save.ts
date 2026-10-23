@@ -6,16 +6,21 @@ import type * as t from '@/types';
 import {
   verifyWrite,
   getEntryKey,
+  reportedPath,
   isConfigRecord,
   getValueAtPath,
+  readWriteReport,
+  createPathIndex,
+  describeApiError,
   planConfigChanges,
+  describeIssueCode,
   getKeyedCollection,
   getWriteSkipReason,
-  describeIssueCode,
-  paramlessIssueCode,
+  classifyReportedIssue,
   stripSecretPreviewValues,
 } from '@/utils';
 import {
+  getWriteRules,
   getConfigSection,
   MERGED_BACK_REASONS,
   TERMS_NOT_ACCEPTED_CODE,
@@ -110,7 +115,11 @@ async function readWriteSnapshot(target: t.WriteTargetRef): Promise<t.WriteSnaps
   return { ...own, lower, lowerKind: isBase ? 'yaml' : 'inherited' };
 }
 
-async function authorizeWrite(target: t.WriteTargetRef, ops: t.ConfigChange[]): Promise<void> {
+async function authorizeWrite(
+  target: t.WriteTargetRef,
+  ops: t.ConfigChange[],
+  rules: t.ConfigWriteRules,
+): Promise<void> {
   if (target.type === 'scope') {
     await requireAnyCapability([
       SystemCapabilities.ASSIGN_CONFIGS,
@@ -121,7 +130,7 @@ async function authorizeWrite(target: t.WriteTargetRef, ops: t.ConfigChange[]): 
   const sections = [
     ...new Set(
       ops
-        .filter((op) => !getWriteSkipReason(op.path, op.op === 'reset'))
+        .filter((op) => !getWriteSkipReason(op.path, op.op === 'reset', rules))
         .map((op) => getConfigSection(op.path)),
     ),
   ];
@@ -147,35 +156,59 @@ function sanitizeOps(ops: t.ConfigChange[]): t.ConfigChange[] {
   });
 }
 
+/** Whether `segments` start with `prefix`. */
+function startsWith(segments: readonly string[], prefix: readonly string[]): boolean {
+  return prefix.length <= segments.length && prefix.every((segment, i) => segments[i] === segment);
+}
+
 /**
- * A rejected value the admin API reported by path. Paths index into the
- * array that was sent, so an index inside a keyed collection is mapped to the
- * identity of that sent entry. The admin API reports codes without their
- * parameters, so a code whose message needs one (`too_small`'s minimum) is
- * worded without it.
+ * A rejected value the admin API reported. Its location is read key by key
+ * where the server reports `segments` (`dottedKeys`), so a record key that
+ * holds a dot stays one key; the issue shows on that key's record. An index
+ * inside a keyed collection is mapped to the identity of that sent entry,
+ * since it indexes the array that was sent. With `issueParams` the issue's
+ * bounds and options word it ("must be at least 1"); without them a code
+ * whose message needs one (`too_small`'s minimum) is worded without it.
  */
-function attributeBackendIssue(path: string, code: string, batch: t.SaveEntry[]): t.ConfigIssue {
-  const message = describeIssueCode(paramlessIssueCode(code), undefined, 'is not a valid value');
-  const sent = batch.find(
-    ({ fieldPath }) => path === fieldPath || path.startsWith(`${fieldPath}.`),
-  );
+function attributeBackendIssue(
+  issue: t.ReportedIssue,
+  batch: t.SaveEntry[],
+  features: t.ConfigFeatures,
+): t.ConfigIssue {
+  const segments =
+    features.dottedKeys && Array.isArray(issue.segments)
+      ? issue.segments
+      : (issue.path ?? '').split('.');
+  const path = reportedPath({ path: issue.path, segments });
+  const params = features.issueParams ? issue.params : undefined;
+  const described = classifyReportedIssue(issue.code, params);
+  const message = describeIssueCode(described.code, described.params, 'is not a valid value');
+  const reported: t.ConfigIssue = {
+    path,
+    code: params ? described.code : issue.code,
+    message,
+    ...(described.params && { params: described.params }),
+  };
+  const sent = batch.find(({ fieldPath }) => startsWith(segments, fieldPath.split('.')));
   const collection = sent ? getKeyedCollection(sent.fieldPath) : undefined;
-  if (!sent || !collection || !Array.isArray(sent.value) || path === sent.fieldPath) {
-    return { path, code, message };
+  const depth = sent ? sent.fieldPath.split('.').length : 0;
+  if (!sent || !collection || !Array.isArray(sent.value) || segments.length === depth) {
+    return reported;
   }
-  const [index, ...rest] = path.slice(sent.fieldPath.length + 1).split('.');
+  const [index, ...rest] = segments.slice(depth);
   const identity = getEntryKey(sent.value[Number(index)], collection.key);
-  return { path, code, message, entryIdentity: identity, entryPath: rest.join('.') };
+  return { ...reported, entryIdentity: identity, entryPath: reportedPath({ segments: rest }) };
 }
 
 async function failureIssues(
   response: Response,
   path: string,
+  features: t.ConfigFeatures,
   batch: t.SaveEntry[] = [],
 ): Promise<t.ConfigIssue[]> {
-  const body = await readJson<t.PatchFieldsResponse>(response);
+  const body = await readJson<t.PatchFieldsResponse & { section?: string }>(response);
   if (Array.isArray(body.issues) && body.issues.length > 0) {
-    return body.issues.map((issue) => attributeBackendIssue(issue.path, issue.code, batch));
+    return body.issues.map((issue) => attributeBackendIssue(issue, batch, features));
   }
   if (body.code === TERMS_NOT_ACCEPTED_CODE) {
     return [
@@ -188,14 +221,39 @@ async function failureIssues(
     ];
   }
   const message =
-    body.error ?? body.message ?? `The admin API rejected the change (${response.status})`;
+    describeApiError(body) ??
+    body.error ??
+    body.message ??
+    `The admin API rejected the change (${response.status})`;
   return [{ path, code: 'WRITE_FAILED', message }];
 }
 
 interface WriteOutcome {
   writes: t.AppliedWrite[];
+  /** Writes that did not take effect: they are not counted as applied. */
   dropped: t.SkippedChange[];
+  /** Parts of an applied write the server reported it did not store, or stores without effect. */
+  reported: t.SkippedChange[];
   failure?: t.ConfigIssue[];
+}
+
+/**
+ * Files what a write's reply reports (`readWriteReport`, for the locations
+ * the save changes): a location the write addressed as a whole is `dropped`,
+ * a part of it only `reported`. Before `writeReport`, a PATCH's dropped
+ * entries are read from the stored sections (`findDroppedEntries`).
+ */
+function fileWriteReport(
+  outcome: WriteOutcome,
+  body: t.PatchFieldsResponse,
+  written: readonly string[],
+  features: t.ConfigFeatures,
+  changed: t.PathIndex,
+): void {
+  const whole = new Set(written);
+  for (const item of readWriteReport(body, features, changed)) {
+    (whole.has(item.fieldPath) ? outcome.dropped : outcome.reported).push(item);
+  }
 }
 
 /** Sets in PATCHes of at most the server's `maxPatchEntries` entries each. */
@@ -203,8 +261,11 @@ async function patchFields(
   target: t.WriteTargetRef,
   entries: t.SaveEntry[],
   outcome: WriteOutcome,
-  maxEntries: number,
+  contract: t.ConfigContract,
+  changed: t.PathIndex,
 ): Promise<boolean> {
+  const { features } = contract;
+  const maxEntries = contract.limits.maxPatchEntries;
   const priority = target.type === 'base' ? { priority: 0 } : {};
   for (let i = 0; i < entries.length; i += maxEntries) {
     const batch = entries.slice(i, i + maxEntries);
@@ -213,19 +274,21 @@ async function patchFields(
       body: JSON.stringify({ entries: batch, ...priority }),
     });
     if (!response.ok) {
-      outcome.failure = await failureIssues(response, batch[0].fieldPath, batch);
+      outcome.failure = await failureIssues(response, batch[0].fieldPath, features, batch);
       return false;
     }
     const body = await readJson<t.PatchFieldsResponse>(response);
-    outcome.writes.push(
-      ...batch.map(({ fieldPath }) => ({ kind: 'set' as const, path: fieldPath })),
-    );
-    outcome.dropped.push(
-      ...findDroppedEntries(batch, body).map((fieldPath) => ({
-        fieldPath,
-        reason: 'notStored' as const,
-      })),
-    );
+    const paths = batch.map(({ fieldPath }) => fieldPath);
+    outcome.writes.push(...paths.map((path) => ({ kind: 'set' as const, path })));
+    if (!features.writeReport) {
+      outcome.dropped.push(
+        ...findDroppedEntries(batch, body).map((fieldPath) => ({
+          fieldPath,
+          reason: 'notStored' as const,
+        })),
+      );
+    }
+    fileWriteReport(outcome, body, paths, features, changed);
   }
   return true;
 }
@@ -251,14 +314,20 @@ async function writeFieldOps(
   kind: Exclude<t.AppliedWrite['kind'], 'set'>,
   paths: string[],
   outcome: WriteOutcome,
+  features: t.ConfigFeatures,
+  changed: t.PathIndex,
 ): Promise<boolean> {
   for (const path of paths) {
     const response = await fieldRequest(target, kind, path);
     if (!response.ok && !(response.status === 404 && kind !== 'tombstone')) {
-      outcome.failure = await failureIssues(response, path);
+      outcome.failure = await failureIssues(response, path, features);
       return false;
     }
     outcome.writes.push({ kind, path });
+    if (response.ok) {
+      const body = await readJson<t.PatchFieldsResponse>(response);
+      fileWriteReport(outcome, body, [path], features, changed);
+    }
   }
   return true;
 }
@@ -277,12 +346,14 @@ async function executePlan(
   plan: t.WritePlan,
   contract: t.ConfigContract,
 ): Promise<WriteOutcome> {
-  const outcome: WriteOutcome = { writes: [], dropped: [] };
+  const outcome: WriteOutcome = { writes: [], dropped: [], reported: [] };
+  const { features } = contract;
+  const changed = createPathIndex(plan.changed);
   const steps = [
-    () => writeFieldOps(target, 'tombstone', plan.tombstones, outcome),
-    () => patchFields(target, plan.sets, outcome, contract.limits.maxPatchEntries),
-    () => writeFieldOps(target, 'reset', plan.resets, outcome),
-    () => writeFieldOps(target, 'untombstone', plan.untombstones, outcome),
+    () => writeFieldOps(target, 'tombstone', plan.tombstones, outcome, features, changed),
+    () => patchFields(target, plan.sets, outcome, contract, changed),
+    () => writeFieldOps(target, 'reset', plan.resets, outcome, features, changed),
+    () => writeFieldOps(target, 'untombstone', plan.untombstones, outcome, features, changed),
   ];
   try {
     for (const step of steps) {
@@ -392,9 +463,11 @@ export async function applyConfigChanges(
   target: t.WriteTargetRef,
   ops: t.ConfigChange[],
 ): Promise<t.ApplyConfigChangesResult> {
-  await authorizeWrite(target, ops);
-  const [snapshot, contract] = await Promise.all([readWriteSnapshot(target), readConfigContract()]);
-  const plan = planConfigChanges(sanitizeOps(ops), snapshot, contract.features);
+  const contract = await readConfigContract();
+  const rules = getWriteRules(contract);
+  await authorizeWrite(target, ops, rules);
+  const snapshot = await readWriteSnapshot(target);
+  const plan = planConfigChanges(sanitizeOps(ops), snapshot, contract.features, rules);
   const result: t.ApplyConfigChangesResult = {
     applied: 0,
     failed: [],
@@ -408,7 +481,14 @@ export async function applyConfigChanges(
     const compensated = await compensate(target, outcome.writes, snapshot.stored);
     return { ...result, failed: outcome.failure, compensated };
   }
-  const notEffective = [...outcome.dropped, ...(await verifyTarget(target, plan, snapshot))];
+  const reportedPaths = new Set(
+    [...outcome.dropped, ...outcome.reported].map((item) => item.fieldPath),
+  );
+  /** What the server reported is worded by its reasons; a read-back finding at the same path is the same change. */
+  const verified = (await verifyTarget(target, plan, snapshot)).filter(
+    (item) => !reportedPaths.has(item.fieldPath),
+  );
+  const notEffective = [...outcome.dropped, ...verified];
   const lost = new Set(
     notEffective
       .filter((item) => !MERGED_BACK_REASONS.has(item.reason))
@@ -417,7 +497,7 @@ export async function applyConfigChanges(
   return {
     ...result,
     applied: Math.max(0, plan.effective - lost.size),
-    skipped: [...plan.skipped, ...notEffective],
+    skipped: [...plan.skipped, ...notEffective, ...outcome.reported],
   };
 }
 

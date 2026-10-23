@@ -54,12 +54,15 @@ const STATUS: t.EndpointStatusMap = {
   agents: { name: 'agents', custom: false, userProvide: false },
 };
 
-function renderProviders(overrides: Partial<t.FieldRendererProps> = {}) {
+function renderProviders(
+  overrides: Partial<t.FieldRendererProps> = {},
+  titleResolution?: t.ConfigRules['titleResolution'],
+) {
   const client = new QueryClient();
   client.setQueryData(['endpointStatus', 0], STATUS);
   client.setQueryData(['endpointModels', 0], { openAI: ['gpt-5-mini', 'gpt-5'] });
   const onChange = vi.fn();
-  const values: t.ConfigValuesData = { configValues: CONFIG, editedValues: {} };
+  const values: t.ConfigValuesData = { configValues: CONFIG, editedValues: {}, titleResolution };
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
       <ConfigValuesProvider value={values}>{children}</ConfigValuesProvider>
@@ -131,6 +134,18 @@ describe('ProvidersRenderer', () => {
     const titles = document.getElementById('section-endpoints.openAI-titles') as HTMLElement;
     expect(within(titles).getByText(/com_config_providers_global_titles_banner/)).toBeTruthy();
     expect(within(titles).getByText('com_config_providers_summary_ignored')).toBeTruthy();
+  });
+
+  it('leaves title settings to each provider on a server that resolves them per field', () => {
+    renderProviders({}, 'field');
+    const summary = card('openAI').querySelector('.settings-help') as HTMLElement;
+    expect(summary.textContent).toContain('gpt-5-mini');
+    expect(summary.textContent).not.toContain('com_config_providers_summary_shadowed_ignored');
+    expect(card('all').textContent).toContain('com_config_providers_global_desc_field');
+    fireEvent.click(trigger('openAI'));
+    const titles = document.getElementById('section-endpoints.openAI-titles') as HTMLElement;
+    expect(within(titles).queryByText(/com_config_providers_global_titles_banner/)).toBeNull();
+    expect(within(titles).queryByText('com_config_providers_summary_ignored')).toBeNull();
   });
 
   it('opens Agent features first, with capability descriptions and paired limits', () => {

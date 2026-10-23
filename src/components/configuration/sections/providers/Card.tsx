@@ -79,6 +79,7 @@ export function ProviderCard({ field, parentPath, parentValue, ...rest }: t.Prov
             configuredPaths,
             editedValues,
             root: values?.configValues ?? null,
+            titleResolution: values?.titleResolution,
           }),
           localize,
         ),
@@ -87,7 +88,11 @@ export function ProviderCard({ field, parentPath, parentValue, ...rest }: t.Prov
 
   const description: ReactNode = isGlobal ? (
     <>
-      {localize('com_config_providers_global_desc')}
+      {localize(
+        values?.titleResolution === 'field'
+          ? 'com_config_providers_global_desc_field'
+          : 'com_config_providers_global_desc',
+      )}
       {summary && (
         <span className="provider-card-summary">
           {localize('com_config_providers_summary_set', { summary })}
@@ -109,7 +114,7 @@ export function ProviderCard({ field, parentPath, parentValue, ...rest }: t.Prov
     const groupSet = group.fields.some((child) =>
       isPathSet(`${path}.${child.key}`, configuredPaths, editedValues),
     );
-    if (key === 'titles' && isGlobal && !groupSet) {
+    if (key === 'titles' && isGlobal && !groupSet && values?.titleResolution !== 'field') {
       return { summaryOverride: localize('com_config_providers_summary_global_titles') };
     }
     if (key === 'groups' && field.key === 'azureOpenAI') {

@@ -47,6 +47,50 @@ export interface ConfigIssue {
   params?: Record<string, string | number>;
 }
 
+/** A location in a config document as the admin API reports it. */
+export interface ReportedLocation {
+  /** Absent where the report names the location by `segments` only (a `/changes` op). */
+  path?: string;
+  /** The same location key by key: unambiguous where a record key holds a dot (`dottedKeys`). */
+  segments?: string[];
+}
+
+/** Bounds and options of an issue the admin API reports (`issueParams`); never a submitted value. */
+export interface ReportedIssueParams {
+  expected?: string | number | boolean | null;
+  received?: string;
+  options?: Array<string | number | boolean | null>;
+  minimum?: number;
+  maximum?: number;
+  inclusive?: boolean;
+  exact?: boolean;
+  type?: string;
+  validation?: string;
+  multipleOf?: number;
+  /** A refinement's stable reason (`missing_port`). */
+  reason?: string;
+}
+
+/** A rejected value the admin API reports: where, a stable code, and (`issueParams`) its bounds. */
+export interface ReportedIssue extends ReportedLocation {
+  code: string;
+  params?: ReportedIssueParams;
+}
+
+/** A location a write did not store (`skipped`) or stores without effect (`ignored`), and why. */
+export interface ReportedSkip extends ReportedLocation {
+  reason: string;
+}
+
+/** An admin API error reply: its text, and the stable `code` (and route details) newer servers add. */
+export interface ApiErrorBody {
+  error?: string;
+  message?: string;
+  code?: string;
+  /** `FORBIDDEN_SECTION`: the section the caller may not manage. */
+  section?: string;
+}
+
 /** Input of `applyConfigChangesFn` (WS1). */
 export interface ApplyConfigChangesRequest {
   target: WriteTarget;
@@ -72,6 +116,8 @@ export type ChangeWarning =
   | 'shadowed'
   /** Sets a provider title setting while Global exists, so LibreChat ignores it (D11). */
   | 'shadowedBlock'
+  /** Global sets the other half of the title endpoint and model, chosen together (`titleResolution: 'field'`). */
+  | 'shadowedPair'
   /** Turns on required acceptance of the terms, which also gates this admin's own changes (FX-5). */
   | 'requireTerms'
   /** Empties the model spec list: no specs, and Specs only has no effect (MS-1). */
@@ -197,6 +243,12 @@ export interface WritePlan {
   storedAfter: ConfigRecord;
   /** Input changes that produce at least one write. */
   effective: number;
+  /**
+   * Where the writes change the target: their paths, a keyed collection's by
+   * the entries the changes touch (`endpoints.custom.Moonshot`, `entryLocation`)
+   * rather than the whole list a write sends.
+   */
+  changed: string[];
 }
 
 /** The parts of a zod (v3) issue the save pipeline reads (WS1). */

@@ -35,6 +35,16 @@ export function resolveConfigContract(body: t.AdminConfigMetaBody | null): t.Con
   };
 }
 
+/**
+ * Whether LibreChat folds endpoint references to the names it serves
+ * (`Ollama` and `ollama` are one endpoint in `addedEndpoints`, a spec's
+ * endpoint and `allowedProviders`). It shipped with per-field title
+ * resolution and has no flag of its own, so `titleResolution: 'field'` reports it.
+ */
+export function foldsEndpointReferences(contract: t.ConfigContract): boolean {
+  return contract.rules.titleResolution === 'field';
+}
+
 /** A copy without the keys whose value is `undefined`, so they don't hide the fallback's. */
 function definedOnly<T extends object>(value: T | undefined): Partial<T> {
   if (!value) return {};

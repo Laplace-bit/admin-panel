@@ -157,9 +157,14 @@ export function useRecordEntryOverrides(
   }, [layers, recordPath]);
 }
 
-/** Whether `endpoints.all` exists, so LibreChat reads title settings only from it (D11). */
+/**
+ * Whether `endpoints.all` exists on a server that reads title settings from
+ * it as one block (D11), so it is the only place they apply. A server that
+ * resolves them per field (`titleResolution: 'field'`) has no such block.
+ */
 export function useGlobalTitleBlock(): boolean {
   const data = useContext(ConfigValuesContext);
+  if (data?.titleResolution === 'field') return false;
   const root = data?.configValues ?? data?.layers?.effective ?? null;
   return isConfigRecord(getValueAtPath(root, 'endpoints.all'));
 }

@@ -518,3 +518,252 @@ describe('applyConfigChanges — the server contract (GET /api/admin/config/meta
     expect(api.current!.writes().map((request) => request.body?.entries?.length)).toEqual([2, 1]);
   });
 });
+
+describe('applyConfigChanges — write reports, structured issues and codes', () => {
+  const skippedPart = {
+    path: 'interface.prompts',
+    segments: ['interface', 'prompts'],
+    reason: 'interface_permission',
+  };
+  const skippedWhole = {
+    path: 'balance.refillAmount',
+    segments: ['balance', 'refillAmount'],
+    reason: 'deployment_only_path',
+  };
+
+  it('reports what the server did not store, counting only whole changes as not applied', async () => {
+    api.current!.reportMeta({ features: { writeReport: true } });
+    api.current!.reportWrites(() => ({ applied: [], skipped: [skippedWhole, skippedPart] }));
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.startBalance', value: 5 },
+      { op: 'set', path: 'balance.refillAmount', value: 6 },
+    ]);
+    expect(result).toMatchObject({ issues: [], failed: [], applied: 1 });
+    expect(result.skipped).toEqual([
+      { fieldPath: 'balance.refillAmount', reason: 'yamlOnly' },
+      { fieldPath: 'interface.prompts', reason: 'permission' },
+    ]);
+  });
+
+  it('leaves the report alone on a server without writeReport', async () => {
+    api.current!.reportWrites(() => ({ skipped: [skippedWhole] }));
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.refillAmount', value: 6 },
+    ]);
+    expect(result).toMatchObject({ applied: 1, skipped: [] });
+  });
+
+  it('reports a whole PATCH the server skipped, without a second not-stored finding', async () => {
+    api.current!.reportMeta({ features: { writeReport: true } });
+    api.current!.stripSection('balance');
+    api.current!.reportWrites((request) =>
+      request.method === 'PATCH' ? { applied: [], skipped: [skippedWhole] } : {},
+    );
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.refillAmount', value: 6 },
+    ]);
+    expect(result).toMatchObject({ applied: 0 });
+    expect(result.skipped).toEqual([{ fieldPath: 'balance.refillAmount', reason: 'yamlOnly' }]);
+  });
+
+  it('reports a tombstone the server skipped', async () => {
+    api.current!.reportMeta({ features: { writeReport: true } });
+    api.current!.reportWrites((request) =>
+      request.path.endsWith('/tombstone')
+        ? { skipped: [{ path: 'balance.refillAmount', reason: 'deployment_only_path' }] }
+        : {},
+    );
+    const result = await applyConfigChanges(base, [
+      { op: 'tombstone', path: 'balance.refillAmount' },
+    ]);
+    expect(result.skipped).toEqual([{ fieldPath: 'balance.refillAmount', reason: 'yamlOnly' }]);
+    expect(result.applied).toBe(0);
+  });
+
+  it('reports a credential the merge leaves out once the server rebinds credentials', async () => {
+    const ignored = [
+      {
+        path: 'endpoints.custom.Moonshot.apiKey',
+        segments: ['endpoints', 'custom', 'Moonshot', 'apiKey'],
+        reason: 'secret_rebinding',
+      },
+    ];
+    api.current!.reportWrites(() => ({ ignored }));
+    const moonshot = customEntries[0];
+    const change = upsert(
+      'Moonshot',
+      'Moonshot',
+      { ...moonshot, baseURL: 'https://proxy.example.com/v1' },
+      moonshot,
+    );
+    expect((await applyConfigChanges(base, [change])).skipped).toEqual([]);
+    api.current = createFakeAdminApi(yaml);
+    api.current.reportMeta({ features: { secretRebinding: true } });
+    api.current.reportWrites(() => ({ ignored }));
+    const result = await applyConfigChanges(base, [change]);
+    expect(result).toMatchObject({ applied: 1, failed: [] });
+    expect(result.skipped).toEqual([
+      { fieldPath: 'endpoints.custom.Moonshot.apiKey', reason: 'secretRebinding' },
+    ]);
+    const unrelated = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.startBalance', value: 5 },
+    ]);
+    expect(unrelated).toMatchObject({ applied: 1, skipped: [] });
+  });
+
+  it("does not repeat a dropped credential on a later save of another endpoint's settings", async () => {
+    api.current!.reportMeta({ features: { secretRebinding: true } });
+    api.current!.reportWrites(() => ({
+      ignored: [
+        {
+          path: 'endpoints.custom.Moonshot.apiKey',
+          segments: ['endpoints', 'custom', 'Moonshot', 'apiKey'],
+          reason: 'secret_rebinding',
+        },
+      ],
+    }));
+    const [moonshot, gpt] = customEntries;
+    const title = await applyConfigChanges(base, [
+      { op: 'set', path: 'endpoints.openAI.titleModel', value: 'gpt-5-nano' },
+    ]);
+    expect(title).toMatchObject({ applied: 1, failed: [], skipped: [] });
+    const other = await applyConfigChanges(base, [
+      upsert('GPT', 'GPT', { ...gpt, titleModel: 'gpt-4o-mini' }, gpt),
+    ]);
+    expect(other).toMatchObject({ applied: 1, failed: [], skipped: [] });
+    expect(api.current!.writes().at(-1)).toMatchObject({
+      body: { entries: [{ fieldPath: 'endpoints.custom' }] },
+    });
+    const same = await applyConfigChanges(base, [
+      upsert('Moonshot', 'Moonshot', { ...moonshot, titleModel: 'kimi-k2' }, moonshot),
+    ]);
+    expect(same.skipped).toEqual([
+      { fieldPath: 'endpoints.custom.Moonshot.apiKey', reason: 'secretRebinding' },
+    ]);
+  });
+
+  it('words a backend issue by its params on a server with issueParams', async () => {
+    const issue = {
+      path: 'balance.startBalance',
+      segments: ['balance', 'startBalance'],
+      code: 'too_small',
+      params: { minimum: 1, inclusive: true, exact: false, type: 'number' },
+    };
+    const refuse = (request: { method: string }) =>
+      request.method === 'PATCH'
+        ? { status: 400, body: { code: 'CONFIG_OVERRIDE_INVALID', issues: [issue] } }
+        : undefined;
+    api.current!.setOverride(refuse);
+    const before = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.startBalance', value: 0 },
+    ]);
+    expect(before.failed).toEqual([
+      { path: 'balance.startBalance', code: 'too_small', message: 'is too small' },
+    ]);
+    api.current!.reportMeta({ features: { issueParams: true } });
+    const after = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.startBalance', value: 0 },
+    ]);
+    expect(after.failed).toEqual([
+      {
+        path: 'balance.startBalance',
+        code: 'too_small',
+        message: 'must be at least 1',
+        params: { minimum: 1 },
+      },
+    ]);
+  });
+
+  it('locates an issue by its segments: a dotted record key stays one key', async () => {
+    const profiles = { 'us.anthropic.claude-sonnet-4-6': 'arn' };
+    api.current!.reportMeta({ features: { dottedKeys: true, issueParams: true } });
+    api.current!.setOverride((request) =>
+      request.method === 'PATCH'
+        ? {
+            status: 400,
+            body: {
+              code: 'CONFIG_OVERRIDE_INVALID',
+              issues: [
+                {
+                  path: 'endpoints.bedrock.inferenceProfiles.us.anthropic.claude-sonnet-4-6',
+                  segments: [
+                    'endpoints',
+                    'bedrock',
+                    'inferenceProfiles',
+                    'us.anthropic.claude-sonnet-4-6',
+                  ],
+                  code: 'too_small',
+                  params: { minimum: 20, inclusive: true, exact: false, type: 'string' },
+                },
+              ],
+            },
+          }
+        : undefined,
+    );
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'endpoints.bedrock.inferenceProfiles', value: profiles },
+    ]);
+    expect(result.issues).toEqual([]);
+    expect(result.failed).toEqual([
+      {
+        path: 'endpoints.bedrock.inferenceProfiles',
+        code: 'too_small_length',
+        message: 'must be at least 20 characters',
+        params: { minimum: 20 },
+      },
+    ]);
+  });
+
+  it('maps an entry issue by segments to the entry name', async () => {
+    api.current!.reportMeta({ features: { dottedKeys: true } });
+    api.current!.setOverride((request) =>
+      request.method === 'PATCH'
+        ? {
+            status: 400,
+            body: {
+              code: 'CONFIG_OVERRIDE_INVALID',
+              issues: [
+                {
+                  path: 'endpoints.custom.0.headers.x-portkey.config',
+                  segments: ['endpoints', 'custom', '0', 'headers', 'x-portkey.config'],
+                  code: 'invalid_type',
+                },
+              ],
+            },
+          }
+        : undefined,
+    );
+    const gpt = customEntries[1];
+    const result = await applyConfigChanges(base, [
+      upsert('GPT', 'GPT', { ...gpt, headers: { 'x-portkey.config': 'x' } }, gpt),
+    ]);
+    expect(result.failed).toEqual([
+      expect.objectContaining({ entryIdentity: 'GPT', entryPath: 'headers' }),
+    ]);
+  });
+
+  it("words a refused write by the admin API's code", async () => {
+    api.current!.setOverride((request) =>
+      request.method === 'PATCH'
+        ? {
+            status: 400,
+            body: {
+              error: 'Process-backed MCP servers are configured in librechat.yaml',
+              code: 'PROCESS_MCP_SERVER_OVERRIDE',
+            },
+          }
+        : undefined,
+    );
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'mcpServers.cloudflare.title', value: 'Cloudflare' },
+    ]);
+    expect(result.failed).toEqual([
+      {
+        path: 'mcpServers.cloudflare.title',
+        code: 'WRITE_FAILED',
+        message:
+          'This MCP server runs a local process defined in librechat.yaml, so LibreChat applies no overrides to it.',
+      },
+    ]);
+  });
+});

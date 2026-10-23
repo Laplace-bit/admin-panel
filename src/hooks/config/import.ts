@@ -40,7 +40,7 @@ import { findSchemaField } from '@/components/configuration/controls';
 import { describeIssues } from '@/components/configuration/issues';
 import { resolvedConfigOptions, runtimeDefaultAt } from './layers';
 import { MERGED_BACK_REASONS } from '@/constants';
-import { useConfigFeatures } from './contract';
+import { useConfigFeatures, useConfigWriteRules } from './contract';
 import { useLocalize } from '../useLocalize';
 
 /** Lists LibreChat merges with librechat.yaml by name; an import upserts their entries by name. */
@@ -229,6 +229,7 @@ export function useImportPreview({
 }: t.ImportPreviewOptions): t.ImportPreviewState {
   const localize = useLocalize();
   const features = useConfigFeatures();
+  const writeRules = useConfigWriteRules();
   const { data: base, isLoading: baseLoading } = useQuery(baseConfigOptions);
   const existingScope = target?.type === 'scope' && target.exists ? target.scope : undefined;
   const { data: scopeData, isLoading: scopeLoading } = useQuery(
@@ -241,9 +242,9 @@ export function useImportPreview({
   const plan = useMemo(
     () =>
       appConfig
-        ? planImport(appConfig, schemaTree, schemaPathSet, isScopeTarget, features)
+        ? planImport(appConfig, schemaTree, schemaPathSet, isScopeTarget, features, writeRules)
         : undefined,
-    [appConfig, schemaTree, schemaPathSet, isScopeTarget, features],
+    [appConfig, schemaTree, schemaPathSet, isScopeTarget, features, writeRules],
   );
 
   /** librechat.yaml and the base overrides as layers, so a value is labelled by the layer that sets it. */
@@ -437,10 +438,10 @@ export function useImportPreview({
         ({ fieldPath, value }): t.ConfigChange => ({ op: 'set', path: fieldPath, value }),
       );
       if (ops.length === 0) return [];
-      const { issues } = planConfigChanges(ops, snapshot, features);
+      const { issues } = planConfigChanges(ops, snapshot, features, writeRules);
       return describeIssues(issues, [], localize).summaries;
     },
-    [snapshot, entriesFor, features, localize],
+    [snapshot, entriesFor, features, writeRules, localize],
   );
 
   return {

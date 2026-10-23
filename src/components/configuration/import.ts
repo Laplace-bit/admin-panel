@@ -11,7 +11,7 @@ import {
   secretPathForPreviewPath,
   stripSecretPreviewValues,
 } from '@/utils';
-import { SKIP_REASON_KEYS, BUNDLED_CONFIG_FEATURES } from '@/constants';
+import { SKIP_REASON_KEYS, BUNDLED_WRITE_RULES, BUNDLED_CONFIG_FEATURES } from '@/constants';
 import { findSchemaField } from './controls';
 import { normalizeForSave } from './edits';
 
@@ -98,10 +98,12 @@ function skipReasonOf(
   value: t.ConfigValue,
   isScope: boolean,
   features: t.ConfigFeatures,
+  rules: t.ConfigWriteRules,
 ): t.ImportSkipReason | null {
-  const reason = getWriteSkipReason(path, false) ?? (isScope ? scopeGateSkipReason(path) : null);
+  const reason =
+    getWriteSkipReason(path, false, rules) ?? (isScope ? scopeGateSkipReason(path, rules) : null);
   if (reason) return reason;
-  if (findYamlManagedValues(path, value).length > 0) return 'yamlOnly';
+  if (findYamlManagedValues(path, value, rules).length > 0) return 'yamlOnly';
   if (findUnsafeKeys(value, path, features.dottedKeys).length > 0) {
     return unsafeKeyReason(features);
   }
@@ -122,6 +124,7 @@ export function planImport(
   schemaPathSet: ReadonlySet<string>,
   isScope = false,
   features: t.ConfigFeatures = BUNDLED_CONFIG_FEATURES,
+  rules: t.ConfigWriteRules = BUNDLED_WRITE_RULES,
 ): t.ImportPlan {
   const collected = collectImportEntries(appConfig, fields, schemaPathSet, features);
   const entries: t.SaveEntry[] = [];
@@ -136,7 +139,7 @@ export function planImport(
       processServers.add(server);
       continue;
     }
-    const reason = skipReasonOf(entry.fieldPath, entry.value, isScope, features);
+    const reason = skipReasonOf(entry.fieldPath, entry.value, isScope, features, rules);
     if (reason) {
       skipped.push({ fieldPath: entry.fieldPath, reason });
       continue;
@@ -152,7 +155,7 @@ export function planImport(
     if (server && processServers.has(server)) continue;
     const holderReason =
       KEY_SKIP_REASONS.has(skip.reason) && skip.fieldPath
-        ? getWriteSkipReason(skip.fieldPath, false)
+        ? getWriteSkipReason(skip.fieldPath, false, rules)
         : null;
     skipped.push(holderReason ? { fieldPath: skip.fieldPath, reason: holderReason } : skip);
   }

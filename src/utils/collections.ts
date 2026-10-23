@@ -14,6 +14,16 @@ export function getKeyedCollection(path: string): t.KeyedCollection | undefined 
 }
 
 /**
+ * The location of a named entry (`mcpServers.github`, `endpoints.custom.Moonshot`),
+ * by the name LibreChat serves a keyed collection's entry under, so two
+ * spellings of one entry are one location (`endpoints.custom.ollama` for `Ollama`).
+ */
+export function entryLocation(path: string, name: string): string {
+  const servedName = KEYED_COLLECTIONS.get(path)?.servedName;
+  return `${path}.${servedName ? servedName(name) : name}`;
+}
+
+/**
  * The keyed collection `path` is an entry of, or a field inside an entry of
  * (`endpoints.custom.3.baseURL` → `endpoints.custom`, index 3, rest `baseURL`).
  */

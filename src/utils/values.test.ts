@@ -318,6 +318,56 @@ describe('resolveShadowedBy (endpoints.all precedence)', () => {
       'gpt-5.6-luna',
     );
   });
+
+  describe("on a server that resolves titles per field (titleResolution: 'field')", () => {
+    const withTitles = (all: t.ConfigRecord): t.ConfigRecord => ({
+      endpoints: { all, openAI: { titleModel: 'gpt-5-mini', titleMethod: 'structured' } },
+    });
+
+    it('shadows a title setting only where `all` sets it', () => {
+      const tree = withTitles({ activityLabel: true, titleMethod: 'completion' });
+      expect(resolveShadowedBy('endpoints.openAI.titleModel', tree, {}, 'field')).toBeUndefined();
+      expect(resolveShadowedBy('endpoints.openAI.titleMethod', tree, {}, 'field')).toEqual({
+        path: 'endpoints.all.titleMethod',
+        value: 'completion',
+        precedence: 'field',
+      });
+      expect(resolveShadowedBy('endpoints.openAI.titleMethod', tree)?.precedence).toBe('block');
+    });
+
+    it('treats the title endpoint and model as one choice', () => {
+      const tree = withTitles({ titleEndpoint: 'anthropic' });
+      expect(resolveShadowedBy('endpoints.openAI.titleModel', tree, {}, 'field')).toEqual({
+        path: 'endpoints.all.titleModel',
+        value: undefined,
+        precedence: 'pair',
+      });
+      expect(
+        resolveShadowedBy(
+          'endpoints.custom.0.titleEndpoint',
+          withTitles({ titleModel: 'm' }),
+          {},
+          'field',
+        ),
+      ).toEqual({ path: 'endpoints.all.titleEndpoint', value: undefined, precedence: 'pair' });
+      expect(
+        resolveShadowedBy(
+          'endpoints.openAI.titleModel',
+          tree,
+          { 'endpoints.all.titleEndpoint': undefined },
+          'field',
+        ),
+      ).toBeUndefined();
+    });
+
+    it('is reported on the field state with the contract of the values', () => {
+      const data = valuesDataFixture(baseLayersFixture());
+      const state = (titleResolution?: t.ConfigRules['titleResolution']) =>
+        deriveFieldState('endpoints.openAI.titleModel', { ...data, titleResolution }).shadowedBy;
+      expect(state()?.precedence).toBe('block');
+      expect(state('field')).toBeUndefined();
+    });
+  });
 });
 
 describe('deriveFieldValue', () => {

@@ -108,6 +108,20 @@ describe('WebSearchRenderer', () => {
     expect(screen.queryByText(/environment variable references/)).not.toBeInTheDocument();
   });
 
+  it('stores a Keenable key encrypted once the server keeps it in its secret registry', () => {
+    renderSection(WebSearchRenderer, {
+      section: 'webSearch',
+      yaml: { webSearch: { searchProvider: 'keenable' } },
+      features: { webSearchStoredKeys: true },
+    });
+    const key = screen.getByLabelText('Keenable API key');
+    fireEvent.change(key, { target: { value: 'kn-secret-1234567890' } });
+    fireEvent.blur(key);
+    expect(key).toHaveAttribute('type', 'password');
+    expect(screen.getByText('Will be stored encrypted when you save.')).toBeInTheDocument();
+    expect(screen.queryByText(/stored as typed|plain text/i)).not.toBeInTheDocument();
+  });
+
   it('shows a stored key only as its masked preview, with Replace', () => {
     renderSection(WebSearchRenderer, {
       section: 'webSearch',

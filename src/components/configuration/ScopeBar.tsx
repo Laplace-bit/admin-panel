@@ -4,9 +4,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type * as t from '@/types';
 import { formatScopeName, isSameScope, findPriorityTies, countScopeOverrides } from '@/utils';
 import { availableScopesOptions, toggleScopeActiveFn } from '@/server';
+import { useLocalize, useConfigFeatures } from '@/hooks';
 import { ScopeOverridesDialog } from './ScopeOverridesDialog';
+import { ScopePriorityEditor } from './ScopePriority';
 import { getScopeTypeConfig } from '@/constants';
-import { useLocalize } from '@/hooks';
 
 const TYPE_LABEL_KEYS: Readonly<Record<string, string>> = {
   role: 'com_scope_type_role',
@@ -16,13 +17,17 @@ const TYPE_LABEL_KEYS: Readonly<Record<string, string>> = {
 
 /**
  * Persistent context bar shown under the tabs while a profile is open: which
- * profile is being edited, its priority (with ties), members, override count,
- * whether it is active, and the way back to Base (WS8: PR-1, PR-2).
+ * profile is being edited, its priority (with ties, and Change where the
+ * server has a priority route, D6), members, override count, whether it is
+ * active, and the way back to Base (WS8: PR-1, PR-2). Ties with profiles
+ * that change the same settings are a warning while LibreChat leaves their
+ * order undefined; with `deterministicPrecedence` the bar says which wins.
  */
 export function ScopeBar({
   scope,
   onBackToBase,
   onError,
+  canEditPriority = false,
   values,
   pendingResets,
   onRevert,
@@ -35,6 +40,7 @@ export function ScopeBar({
 }: t.ScopeBarProps) {
   const localize = useLocalize();
   const queryClient = useQueryClient();
+  const { deterministicPrecedence, priorityRoute } = useConfigFeatures();
   const [toggling, setToggling] = useState(false);
   const [overridesOpen, setOverridesOpen] = useState(false);
   const { data: scopes, isSuccess, isFetching } = useQuery(availableScopesOptions);
@@ -44,6 +50,8 @@ export function ScopeBar({
   const isDeleted = isSuccess && !isFetching && !live;
   const ties = useMemo(() => findPriorityTies(current, scopes ?? []), [current, scopes]);
   const conflicts = ties.filter((tie) => tie.sharedPaths.length > 0);
+  const winsOver = conflicts.filter((tie) => tie.appliesAfter);
+  const losesTo = conflicts.filter((tie) => !tie.appliesAfter);
   const config = getScopeTypeConfig(current.principalType);
   const typeLabel = localize(TYPE_LABEL_KEYS[current.principalType] ?? config.labelKey);
   const overrideCount = countScopeOverrides(current);
@@ -70,8 +78,8 @@ export function ScopeBar({
     }
   };
 
+  const priorityEditable = canEditPriority && priorityRoute && !isDeleted;
   const details = [
-    localize('com_scope_priority', { priority: current.priority }),
     current.memberCount != null &&
       localize('com_scope_member_count', { count: current.memberCount }),
     overrideCount > 0
@@ -102,18 +110,47 @@ export function ScopeBar({
               {localize('com_scope_bar_name', { type: typeLabel, name: formatScopeName(current) })}
             </strong>
           </p>
-          <p
-            className="flex flex-wrap items-center gap-x-1.5 text-xs text-(--cui-color-text-muted)"
-            title={localize('com_scope_priority_help')}
+          <div
+            className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-(--cui-color-text-muted)"
+            title={localize(
+              deterministicPrecedence
+                ? 'com_scope_priority_help_ordered'
+                : 'com_scope_priority_help',
+            )}
           >
-            {details.map((item, i) => (
+            {priorityEditable ? (
+              <ScopePriorityEditor scope={current} onError={onError} />
+            ) : (
+              <span>{localize('com_scope_priority', { priority: current.priority })}</span>
+            )}
+            {details.map((item) => (
               <span key={item} className="flex items-center gap-1.5">
-                {i > 0 && <span aria-hidden="true">·</span>}
+                <span aria-hidden="true">·</span>
                 {item}
               </span>
             ))}
-          </p>
-          {conflicts.length > 0 && (
+          </div>
+          {deterministicPrecedence &&
+            [
+              { list: winsOver, key: 'com_scope_tie_order_wins' },
+              { list: losesTo, key: 'com_scope_tie_order_loses' },
+            ].map(
+              ({ list, key }) =>
+                list.length > 0 && (
+                  <p
+                    key={key}
+                    role="status"
+                    className="text-xs text-(--cui-color-text-muted)"
+                    title={localize('com_scope_tie_order_rule')}
+                  >
+                    {localize(key, {
+                      names: tieNames(list),
+                      count: new Set(list.flatMap((tie) => tie.sharedPaths)).size,
+                    })}
+                  </p>
+                ),
+            )}
+          {!deterministicPrecedence && conflicts.length > 0 && (
             <p
               role="status"
               className="flex items-start gap-1 text-xs text-(--cui-color-text-default)"
@@ -129,7 +166,7 @@ export function ScopeBar({
               </span>
             </p>
           )}
-          {conflicts.length === 0 && ties.length > 0 && (
+          {!deterministicPrecedence && conflicts.length === 0 && ties.length > 0 && (
             <p className="text-xs text-(--cui-color-text-muted)">
               {localize('com_scope_tie_note', { names: tieNames(ties) })}
             </p>

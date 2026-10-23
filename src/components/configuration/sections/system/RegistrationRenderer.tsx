@@ -1,14 +1,15 @@
 import { useContext, useState } from 'react';
 import type * as t from '@/types';
 import { getValueAtPath, isConfigValueEqual, stringItems } from '@/utils';
-import { useLocalize, useOwnedField, useYamlConfig } from '@/hooks';
+import { useLocalize, useOwnedField, useYamlConfig, useConfigFeatures } from '@/hooks';
 import { ConfirmChoiceDialog } from '../../fields/ConfirmChoice';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { EmailDomainListField } from './EmailDomainListField';
 import { UnknownSettings } from '../../UnknownSettings';
 import { ReadOnlySection } from '../../ReadOnlySection';
 import { FieldRenderer, toFieldId } from '../../renderer';
-import { SOCIAL_LOGIN_PROVIDERS } from '@/constants';
+import { SOCIAL_LOGIN_PROVIDERS, SOCIAL_LOGINS_PATH } from '@/constants';
+import { ChipPicker } from '../specs/ChipPicker';
 import { isRowShown } from '../files/FieldRow';
 import { SettingsRow } from '../../SettingsRow';
 import { hasPathOverlap } from '../../counts';
@@ -18,15 +19,91 @@ import { YamlRows } from './Yaml';
 
 const SECTION = 'registration';
 const NO_PATHS: ReadonlySet<string> = new Set();
-const SOCIAL = 'registration.socialLogins';
+const SOCIAL = SOCIAL_LOGINS_PATH;
 const DOMAINS = 'registration.allowedDomains';
 const CUSTOM_ROWS: ReadonlySet<string> = new Set(['socialLogins', 'allowedDomains']);
 /** Set up once at startup from librechat.yaml (`configureSocialLogins`): shown read-only. */
 const STARTUP_KEYS: ReadonlySet<string> = new Set(['oauthStateTtlMs', 'openidDiscovery']);
 
+/** A sign-in option's name ("Google"), or the stored value marked as not an option. */
+function providerLabel(provider: string, localize: t.LocalizeFn): string {
+  const labelKey = SOCIAL_LOGIN_PROVIDERS[provider];
+  return labelKey
+    ? localize(labelKey)
+    : localize('com_config_registration_provider_unknown', { name: provider });
+}
+
 /**
- * Social sign-in buttons (FX-9, FX-10): the sign-in page reads them from
- * librechat.yaml only (else LibreChat's default list), so they are shown
+ * Social sign-in buttons on a server that applies Base overrides before
+ * sign-in (`preAuthBaseOverrides`): picked from the sign-in options as chips,
+ * in the order the sign-in page shows them. The list beneath is librechat.yaml's
+ * (else LibreChat's default list); choosing it again removes the override.
+ */
+function EditableSocialLoginsRow({ fieldProps }: { fieldProps: t.FieldRendererProps }) {
+  const localize = useLocalize();
+  const rowFilter = useContext(RowFilterContext);
+  const social = useOwnedField(SOCIAL, fieldProps);
+  if (!isRowShown(rowFilter, SOCIAL, fieldProps)) return null;
+  const id = toFieldId(SOCIAL);
+  const providers = stringItems(social.state.value ?? fieldProps.schemaDefaults?.[SOCIAL]);
+  const lower = stringItems(social.fallback ?? fieldProps.schemaDefaults?.[SOCIAL]);
+  const change = (next: string[]) => {
+    if (isConfigValueEqual(next, lower) && social.own !== undefined) {
+      social.set(undefined);
+      return;
+    }
+    social.set(next);
+  };
+  const label = labelForPath(SOCIAL, localize);
+  return (
+    <ConfigRow
+      title={label}
+      description={localize('com_config_registration_social_desc')}
+      fieldId={`${id}-add`}
+      fieldPath={SOCIAL}
+      disabled={fieldProps.disabled}
+      permissions={fieldProps.permissions}
+      previewScope={fieldProps.previewScope}
+      previewChangedPaths={fieldProps.previewChangedPaths}
+      onResetField={fieldProps.onResetField}
+      onDiscardField={fieldProps.onDiscardField}
+      isConfigured={fieldProps.configuredPaths?.has(SOCIAL) ?? false}
+      isDbOverride={fieldProps.dbOverridePaths?.has(SOCIAL) ?? false}
+      isPendingReset={fieldProps.pendingResets?.has(SOCIAL) ?? false}
+      controlWidth="L"
+    >
+      <div className="flex w-full flex-col gap-2">
+        <ChipPicker
+          id={id}
+          values={providers}
+          groups={[
+            {
+              label: localize('com_config_registration_social_options'),
+              options: Object.keys(SOCIAL_LOGIN_PROVIDERS).map((provider) => ({
+                value: provider,
+                label: providerLabel(provider, localize),
+              })),
+            },
+          ]}
+          disabled={fieldProps.disabled}
+          onChange={change}
+          addLabel={localize('com_config_registration_social_add')}
+          unknownLabel={(provider) => providerLabel(provider, localize)}
+          aria-label={label}
+        />
+        {providers.length === 0 && !fieldProps.disabled && (
+          <span className="text-xs text-(--cui-color-text-muted)">
+            {localize('com_config_registration_social_none')}
+          </span>
+        )}
+      </div>
+    </ConfigRow>
+  );
+}
+
+/**
+ * Social sign-in buttons (FX-9, FX-10) on a server that reads them before
+ * sign-in from librechat.yaml only (else LibreChat's default list): shown
  * read-only by provider name from there, never from an override (in a
  * profile, Base's), with a way to remove an override saved before (it never
  * took effect).
@@ -56,16 +133,11 @@ function SocialLoginsRow({ fieldProps }: { fieldProps: t.FieldRendererProps }) {
         <div className="flex flex-col gap-2">
           {providers.length > 0 ? (
             <ul id={id} className="static-value-list">
-              {providers.map((provider) => {
-                const labelKey = SOCIAL_LOGIN_PROVIDERS[provider];
-                return (
-                  <li key={provider} className="static-value-chip">
-                    {labelKey
-                      ? localize(labelKey)
-                      : localize('com_config_registration_provider_unknown', { name: provider })}
-                  </li>
-                );
-              })}
+              {providers.map((provider) => (
+                <li key={provider} className="static-value-chip">
+                  {providerLabel(provider, localize)}
+                </li>
+              ))}
             </ul>
           ) : (
             <span id={id} className="static-value">
@@ -101,10 +173,13 @@ function SocialLoginsRow({ fieldProps }: { fieldProps: t.FieldRendererProps }) {
 
 /**
  * Allowed sign-up domains as validated chips (FX-9). An empty list lets
- * anyone sign up, so emptying a restricted list asks first.
+ * anyone sign up, so emptying a restricted list asks first. Before
+ * `preAuthBaseOverrides`, social and SSO sign-ins and password resets check
+ * librechat.yaml's list instead; after it, they check this one.
  */
 function AllowedDomainsRow({ fieldProps }: { fieldProps: t.FieldRendererProps }) {
   const localize = useLocalize();
+  const { preAuthBaseOverrides } = useConfigFeatures();
   const rowFilter = useContext(RowFilterContext);
   const yaml = useYamlConfig();
   const field = useOwnedField(DOMAINS, fieldProps);
@@ -177,7 +252,12 @@ function AllowedDomainsRow({ fieldProps }: { fieldProps: t.FieldRendererProps })
             aria-label={label}
             aria-describedby={fieldProps.disabled ? undefined : `${id}-status`}
           />
-          {differsFromYaml && (
+          {preAuthBaseOverrides && (
+            <span className="text-xs text-(--cui-color-text-muted)">
+              {localize('com_config_registration_domains_all_note')}
+            </span>
+          )}
+          {!preAuthBaseOverrides && differsFromYaml && (
             <span className="text-xs text-(--cui-color-text-muted)">
               {localize('com_config_registration_domains_yaml_note')}
             </span>
@@ -250,12 +330,14 @@ function StartupSettings({
 }
 
 /**
- * Registration (FX-9, FX-10): social sign-in providers (read only from
+ * Registration (FX-9, FX-10): social sign-in providers (editable in Base once
+ * LibreChat applies Base overrides before sign-in, else read only from
  * librechat.yaml), allowed sign-up domains as chips, any other setting as a
  * generic row, and the startup-only sign-in settings read-only.
  */
 export function RegistrationRenderer(props: t.FieldRendererProps) {
   const rowFilter = useContext(RowFilterContext);
+  const { preAuthBaseOverrides } = useConfigFeatures();
   const keys = new Set(props.fields.map((field) => field.key));
   const startup = props.fields.filter((field) => STARTUP_KEYS.has(field.key));
   const others = props.fields.filter(
@@ -263,7 +345,12 @@ export function RegistrationRenderer(props: t.FieldRendererProps) {
   );
   return (
     <>
-      {keys.has('socialLogins') && <SocialLoginsRow fieldProps={props} />}
+      {keys.has('socialLogins') &&
+        (preAuthBaseOverrides ? (
+          <EditableSocialLoginsRow fieldProps={props} />
+        ) : (
+          <SocialLoginsRow fieldProps={props} />
+        ))}
       {keys.has('allowedDomains') && <AllowedDomainsRow fieldProps={props} />}
       {others.length > 0 && <FieldRenderer {...props} fields={others} />}
       <StartupSettings fields={startup} fieldProps={props} />

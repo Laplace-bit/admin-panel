@@ -8,6 +8,9 @@ import { extractSchemaTree, getSchemaPathSet } from '@/server/config';
 import { useChangeReview } from './review';
 import { useConfigEdits } from './edits';
 import { flattenObject } from '@/utils';
+import { ConfigContractContext } from '@/contexts/ContractContext';
+import { createServerContract } from '@/test/fixtures';
+import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
 import { useConfigSave } from './save';
 import '@/locales/i18n';
 
@@ -33,10 +36,13 @@ function renderPage(
   config: t.ConfigRecord = yaml,
   dbOverrides: t.ConfigRecord = {},
   yamlConfig: t.ConfigRecord = config,
+  contract: t.ConfigContract = BUNDLED_CONFIG_CONTRACT,
 ) {
   const client = new QueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    <QueryClientProvider client={client}>
+      <ConfigContractContext.Provider value={contract}>{children}</ConfigContractContext.Provider>
+    </QueryClientProvider>
   );
   return renderHook(
     () => {
@@ -123,6 +129,30 @@ describe('the change review over the save pipeline (WS1 × WS7)', () => {
     );
     expect(rows.map((row) => [row.item.path, row.item.warnings])).toEqual([
       ['endpoints.openAI.titleModel', ['shadowedBlock']],
+    ]);
+  });
+
+  it('warns per field on a server that resolves titles per field, the endpoint and model together', () => {
+    const config = {
+      ...yaml,
+      endpoints: { ...(yaml.endpoints as t.ConfigRecord), all: { titleEndpoint: 'anthropic' } },
+    };
+    const { result } = renderPage(
+      config,
+      {},
+      config,
+      createServerContract({}, { titleResolution: 'field' }),
+    );
+    act(() => {
+      result.current.edits.handleFieldChange('endpoints.openAI.titleModel', 'gpt-x');
+      result.current.edits.handleFieldChange('endpoints.openAI.titleMethod', 'completion');
+    });
+    const rows = result.current.review.model.tabs.flatMap((tab) =>
+      tab.sections.flatMap((section) => section.rows),
+    );
+    expect(rows.map((row) => [row.item.path, row.item.warnings])).toEqual([
+      ['endpoints.openAI.titleModel', ['shadowedPair']],
+      ['endpoints.openAI.titleMethod', undefined],
     ]);
   });
 

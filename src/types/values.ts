@@ -3,6 +3,7 @@ import type { PrincipalType } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import type { ConfigValue, ConfigRecord, FlatConfigMap } from './config';
 import type { VisibilityEdit } from './changes';
+import type { ConfigRules, ConfigWriteRules } from './contract';
 
 /**
  * Where a field's value comes from (WS4):
@@ -39,8 +40,13 @@ export interface FieldLayer {
 export interface ShadowedBy {
   path: string;
   value: ConfigValue;
-  /** `block`: the whole other block wins, even where it leaves this field unset (titles); `field`: only a value it sets wins. */
-  precedence?: 'block' | 'field';
+  /**
+   * `block`: the whole other block wins, even where it leaves this field unset
+   * (titles, `titleResolution: 'block'`); `field`: only a value it sets wins;
+   * `pair`: it sets the other half of a choice made together (the title
+   * endpoint and model, `titleResolution: 'field'`), so it wins here too.
+   */
+  precedence?: 'block' | 'field' | 'pair';
 }
 
 /** Everything a field row needs to render its value and state (WS4; `error` from WS1). */
@@ -132,6 +138,10 @@ export interface ConfigValuesData {
   layers?: ValueLayers | null;
   /** Pending profile Hide/Unhide by path: a row shows what Save will do. */
   visibilityEdits?: Readonly<Record<string, VisibilityEdit>>;
+  /** The server's write rules: which sections it reads only from librechat.yaml. */
+  writeRules?: ConfigWriteRules;
+  /** How the server applies `endpoints.all` title settings (`block` when absent). */
+  titleResolution?: ConfigRules['titleResolution'];
 }
 
 /** Props of `ConfigValuesProvider` (WS4). */

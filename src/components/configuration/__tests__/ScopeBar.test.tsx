@@ -4,7 +4,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
-import { availableScopesOptions, toggleScopeActiveFn } from '@/server';
+import { setScopePriorityFn, toggleScopeActiveFn, availableScopesOptions } from '@/server';
+import { ConfigContractContext } from '@/contexts/ContractContext';
+import { createServerContract } from '@/test/fixtures';
 import { ScopeActionsProvider } from '@/contexts/ScopeContext';
 import { ScopeGate } from '../ScopeGate';
 import { ScopeBar } from '../ScopeBar';
@@ -22,10 +24,13 @@ vi.mock('@/hooks', async () => {
     await vi.importActual<typeof import('@/hooks/config/scope')>('@/hooks/config/scope');
   const { useReturnFocus } =
     await vi.importActual<typeof import('@/hooks/dialogs')>('@/hooks/dialogs');
+  const { useConfigFeatures } =
+    await vi.importActual<typeof import('@/hooks/config/contract')>('@/hooks/config/contract');
   return {
     useLocalize: () => localize,
     useScopeActions,
     useReturnFocus,
+    useConfigFeatures,
     useExpandSignal: () => undefined,
   };
 });
@@ -33,6 +38,7 @@ vi.mock('@/hooks', async () => {
 vi.mock('@/server', () => ({
   availableScopesOptions: { queryKey: ['availableScopes'], queryFn: vi.fn() },
   toggleScopeActiveFn: vi.fn(),
+  setScopePriorityFn: vi.fn(),
 }));
 
 const engineering: t.ConfigScope = {
@@ -109,6 +115,83 @@ describe('ScopeBar', () => {
     expect(await screen.findByText('com_scope_deleted')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'com_scope_back_to_base' }));
     expect(onBackToBase).toHaveBeenCalled();
+  });
+});
+
+describe('ScopeBar on a server with deterministic precedence and a priority route', () => {
+  const contract = createServerContract({ deterministicPrecedence: true, priorityRoute: true });
+  const ordered = (children: ReactNode) =>
+    wrap(
+      <ConfigContractContext.Provider value={contract}>{children}</ConfigContractContext.Provider>,
+    );
+  const older = { ...engineering, _id: '6a00' };
+  const newer = { ...design, _id: '6a01' };
+
+  it('says which of two same-priority profiles wins instead of warning', async () => {
+    vi.mocked(availableScopesOptions.queryFn!).mockResolvedValue([older, newer]);
+    ordered(<ScopeBar scope={older} onBackToBase={vi.fn()} />);
+    expect(
+      await screen.findByText(
+        'com_scope_tie_order_loses(names=Design (com_scope_type_group),count=1)',
+      ),
+    ).toHaveAttribute('title', 'com_scope_tie_order_rule');
+    expect(screen.queryByText(/com_scope_tie_conflict/)).not.toBeInTheDocument();
+  });
+
+  it('says this profile wins over one that applies before it', async () => {
+    vi.mocked(availableScopesOptions.queryFn!).mockResolvedValue([older, newer]);
+    ordered(<ScopeBar scope={newer} onBackToBase={vi.fn()} />);
+    expect(
+      await screen.findByText(
+        'com_scope_tie_order_wins(names=Engineering (com_scope_type_group),count=1)',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('offers Change only to an admin who may set priorities', async () => {
+    vi.mocked(availableScopesOptions.queryFn!).mockResolvedValue([engineering]);
+    const { unmount } = ordered(<ScopeBar scope={engineering} onBackToBase={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'com_scope_priority_change_label' })).toBeNull();
+    unmount();
+    wrap(<ScopeBar scope={engineering} onBackToBase={vi.fn()} canEditPriority />);
+    expect(screen.queryByRole('button', { name: 'com_scope_priority_change_label' })).toBeNull();
+  });
+
+  it('changes the priority, refusing one that is not a whole number of 0 or more', async () => {
+    vi.mocked(availableScopesOptions.queryFn!).mockResolvedValue([engineering]);
+    vi.mocked(setScopePriorityFn).mockResolvedValue({ priority: 5 });
+    ordered(<ScopeBar scope={engineering} onBackToBase={vi.fn()} canEditPriority />);
+    fireEvent.click(screen.getByRole('button', { name: 'com_scope_priority_change_label' }));
+    const input = screen.getByRole('spinbutton');
+    expect(input).toHaveValue(20);
+    fireEvent.change(input, { target: { value: '2.5' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByRole('alert')).toHaveTextContent('com_scope_priority_invalid');
+    expect(setScopePriorityFn).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_save' }));
+    await waitFor(() =>
+      expect(setScopePriorityFn).toHaveBeenCalledWith({
+        data: { principalType: PrincipalType.GROUP, principalId: 'g-eng', priority: 5 },
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole('spinbutton')).toBeNull());
+  });
+
+  it('reports a refused change and keeps the field open', async () => {
+    vi.mocked(availableScopesOptions.queryFn!).mockResolvedValue([engineering]);
+    vi.mocked(setScopePriorityFn).mockRejectedValue(new Error('Config not found'));
+    const onError = vi.fn();
+    ordered(
+      <ScopeBar scope={engineering} onBackToBase={vi.fn()} onError={onError} canEditPriority />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'com_scope_priority_change_label' }));
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '30' } });
+    fireEvent.keyDown(screen.getByRole('spinbutton'), { key: 'Enter' });
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('Config not found'));
+    expect(screen.getByRole('spinbutton')).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('spinbutton'), { key: 'Escape' });
+    expect(screen.queryByRole('spinbutton')).toBeNull();
   });
 });
 

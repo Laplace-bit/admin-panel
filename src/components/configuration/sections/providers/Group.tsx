@@ -103,6 +103,7 @@ export function ProviderGroup({
             configuredPaths,
             editedValues,
             root: values?.configValues ?? null,
+            titleResolution: values?.titleResolution,
           }),
           localize,
         ),

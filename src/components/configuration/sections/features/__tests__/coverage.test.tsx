@@ -6,6 +6,7 @@ import type * as t from '@/types';
 import {
   COVERAGE_TEST_TIMEOUT_MS,
   turnOn,
+  controlAt,
   typeInto,
   planWrites,
   staleHidden,
@@ -25,6 +26,8 @@ import {
 import { setValueAtPath, isInterfacePermissionPath } from '@/utils';
 import { renderTab, PAGE_TREE, RAW_TREE } from '@/test/page';
 import { labelForPath } from '@/components/configuration';
+import { createServerContract } from '@/test/fixtures';
+import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
 
 vi.setConfig({ testTimeout: COVERAGE_TEST_TIMEOUT_MS });
 
@@ -92,6 +95,23 @@ function roots(tree: t.SchemaField[]): t.SchemaField[] {
   });
 }
 
+/** A server that reports its write rules, as LibreChat lists them: the tool filters are deployment-only. */
+const SERVER_RULES = createServerContract(
+  {},
+  {
+    deploymentOnlyPaths: {
+      ...BUNDLED_CONFIG_CONTRACT.rules.deploymentOnlyPaths,
+      includedTools: 'operator',
+      filteredTools: 'operator',
+    },
+  },
+);
+
+const TOOL_FILTERS: CoverageFixture = {
+  name: 'tool filters librechat.yaml sets',
+  yaml: { filteredTools: ['dalle'], includedTools: ['calculator'] },
+};
+
 describe('Features tab: every schema field is reachable', () => {
   it('renders every leaf of its sections, or names why not', () => {
     const shown = renderedAcross(roots(RAW_TREE), FIXTURES, (fixture) =>
@@ -103,6 +123,32 @@ describe('Features tab: every schema field is reachable', () => {
 
   it('names no hidden field the schema no longer has', () => {
     expect(staleHidden(roots(RAW_TREE), HIDDEN)).toEqual([]);
+  });
+});
+
+describe("Features tab under a server's write rules", () => {
+  const renderWithRules = (fixture: CoverageFixture) =>
+    renderTab({ tab: 'features', tree: TREE, expandAll: true, contract: SERVER_RULES, ...fixture });
+
+  it('renders every leaf of its sections, or names why not', () => {
+    const shown = renderedAcross(roots(RAW_TREE), [...FIXTURES, TOOL_FILTERS], renderWithRules);
+    const missing = roots(RAW_TREE).flatMap((root) => missingLeaves(root, shown, HIDDEN));
+    expect(missing).toEqual([]);
+  });
+
+  it.each([
+    ['filteredTools', 'dalle'],
+    ['includedTools', 'calculator'],
+  ])('shows %s read-only, with the value librechat.yaml sets', (path, tool) => {
+    renderWithRules(TOOL_FILTERS);
+    const control = controlAt(path);
+    expect(control).toHaveTextContent(tool);
+    expect(control.querySelector('input')).toBeNull();
+  });
+
+  it('keeps the tool filters editable on a server that does not list them', () => {
+    renderTab({ tab: 'features', tree: TREE, expandAll: true, ...TOOL_FILTERS });
+    expect(controlAt('filteredTools').querySelector('input')).toHaveValue('dalle');
   });
 });
 

@@ -12,7 +12,7 @@ import { SingleFieldRenderer } from './SingleField';
 import { ManagedNotice } from '../ManagedNotice';
 import { NestedGroup } from './NestedGroup';
 import { labelForPath } from '../meta';
-import { useLocalize } from '@/hooks';
+import { useLocalize, useConfigWriteRules } from '@/hooks';
 
 const NO_PATHS: ReadonlySet<string> = new Set();
 
@@ -27,9 +27,13 @@ function asEnabled(value: t.ConfigValue): boolean | undefined {
 }
 
 /** The notice a field managed only in librechat.yaml shows at its root, or null below the root or for any other field. */
-function managedNoticeKind(path: string, parentPath: string): t.ManagedNoticeKind | null {
-  if (!isYamlManagedPath(path) || isYamlManagedPath(parentPath)) return null;
-  return isStartupOnlyPath(path) ? 'startup' : 'yaml';
+function managedNoticeKind(
+  path: string,
+  parentPath: string,
+  rules: t.ConfigWriteRules,
+): t.ManagedNoticeKind | null {
+  if (!isYamlManagedPath(path, rules) || isYamlManagedPath(parentPath, rules)) return null;
+  return isStartupOnlyPath(path, rules) ? 'startup' : 'yaml';
 }
 
 /**
@@ -40,12 +44,13 @@ function managedNoticeKind(path: string, parentPath: string): t.ManagedNoticeKin
 function managedNoticeRuns(
   groups: ReadonlyArray<{ type: string; path: string }>,
   parentPath: string,
+  rules: t.ConfigWriteRules,
 ): Map<number, string[]> {
   const runs = new Map<number, string[]>();
   let start = -1;
   let kind: t.ManagedNoticeKind | null = null;
   groups.forEach((group, index) => {
-    const next = group.type === 'nested' ? null : managedNoticeKind(group.path, parentPath);
+    const next = group.type === 'nested' ? null : managedNoticeKind(group.path, parentPath, rules);
     if (next === 'startup' && next === kind) {
       runs.get(start)?.push(group.path);
       return;
@@ -87,6 +92,7 @@ export function FieldRenderer({
   editSessionId,
 }: t.FieldRendererProps) {
   const localize = useLocalize();
+  const writeRules = useConfigWriteRules();
   const values =
     typeof parentValue === 'object' && parentValue !== null
       ? (parentValue as Record<string, t.ConfigValue>)
@@ -132,14 +138,14 @@ export function FieldRenderer({
     }
   }
 
-  const noticeRuns = managedNoticeRuns(groups, parentPath);
+  const noticeRuns = managedNoticeRuns(groups, parentPath, writeRules);
 
   /** The notice of managed fields (`settings`: how many it covers), offering to remove their stale overrides. */
   const managedNotice = (paths: string[], settings = paths.length): ReactNode => {
     const overridden = paths.filter((path) => hasPathOverlap(path, dbOverridePaths ?? NO_PATHS));
     return (
       <ManagedNotice
-        kind={isStartupOnlyPath(paths[0]) ? 'startup' : 'yaml'}
+        kind={isStartupOnlyPath(paths[0], writeRules) ? 'startup' : 'yaml'}
         count={settings}
         hasOverride={overridden.length > 0}
         pendingRemoval={
@@ -157,8 +163,8 @@ export function FieldRenderer({
   return (
     <ConfiguredOnlyContext.Provider value={Boolean(showConfiguredOnly && !previewMode)}>
       {groups.map((group, index) => {
-        const managed = isYamlManagedPath(group.path);
-        const managedRoot = managed && !isYamlManagedPath(parentPath);
+        const managed = isYamlManagedPath(group.path, writeRules);
+        const managedRoot = managed && !isYamlManagedPath(parentPath, writeRules);
         const noticeRun = noticeRuns.get(index);
         const groupDisabled = disabled || managed;
         if (group.type === 'nested') {

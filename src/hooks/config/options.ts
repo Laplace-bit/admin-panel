@@ -10,7 +10,8 @@ import {
 } from '@/server';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
 import { MODEL_PROVIDERS, BUILT_IN_PROVIDERS } from '@/constants';
-import { getValueAtPath, isConfigRecord } from '@/utils';
+import { getValueAtPath, isConfigRecord, foldsEndpointReferences } from '@/utils';
+import { useConfigContract } from './contract';
 import { useLocalize } from '../useLocalize';
 import { useFieldState } from './field';
 
@@ -105,8 +106,10 @@ export function useCustomEndpointNames(): string[] {
  * saved yet), so a reference to any of them is recognized. Each value is the
  * name LibreChat serves the endpoint under, since `addedEndpoints` and
  * `allowedProviders` are matched against it exactly: a custom endpoint
- * written "Ollama" is offered as "Ollama (ollama)". Names that differ only
- * in letter case are distinct endpoints and are both offered. With
+ * written "Ollama" is offered as "Ollama (ollama)". A server that folds
+ * references to the served name (`foldsNames`) matches either spelling, so
+ * the endpoint is offered as written ("Ollama"). Names that differ only in
+ * letter case are distinct endpoints and are both offered. With
  * `providersOnly`, endpoints that delegate to a provider (agents, Assistants)
  * are left out.
  */
@@ -115,6 +118,7 @@ export function buildEndpointOptions(
   root: t.ConfigValue,
   localize: t.LocalizeFn,
   providersOnly = false,
+  foldsNames = false,
 ): t.SelectOption[] {
   const configured = customEndpointNames(getValueAtPath(root, 'endpoints.custom'));
   const spelling = new Map<string, string>();
@@ -131,7 +135,8 @@ export function buildEndpointOptions(
     const label = BUILT_IN_SET.has(served)
       ? localize(`com_config_field_${served}`)
       : (spelling.get(served) ?? served);
-    options.push({ value: served, label: label === served ? served : `${label} (${served})` });
+    const shownLabel = label === served || foldsNames ? label : `${label} (${served})`;
+    options.push({ value: served, label: shownLabel });
   };
   for (const name of Object.keys(status ?? {})) add(name);
   for (const name of BUILT_IN_PROVIDERS) add(name);
@@ -181,6 +186,7 @@ function toOptions(values: string[]): t.SelectOption[] {
  */
 export function useOptionSources(source?: t.OptionSource): t.OptionSourceResult {
   const localize = useLocalize();
+  const foldsNames = foldsEndpointReferences(useConfigContract());
   const root = useShownConfig();
   const { client, live } = useClient();
   const version = useConfigVersion(client, live);
@@ -208,14 +214,14 @@ export function useOptionSources(source?: t.OptionSource): t.OptionSourceResult 
   const options = useMemo((): t.SelectOption[] => {
     if (!source) return NO_OPTIONS;
     if (source === 'endpoints' || source === 'providers') {
-      return buildEndpointOptions(status.data, root, localize, source === 'providers');
+      return buildEndpointOptions(status.data, root, localize, source === 'providers', foldsNames);
     }
     if (source === 'mcpServers') return toOptions(recordKeys(root, 'mcpServers'));
     if (source === 'specGroups') return toOptions(specGroups(root));
     if (source === 'tools') return tools.data ?? NO_OPTIONS;
     const endpoint = source.slice(MODELS_PREFIX.length);
     return toOptions(modelsOf(models.data, endpoint) ?? []);
-  }, [source, status.data, models.data, tools.data, root, localize]);
+  }, [source, status.data, models.data, tools.data, root, localize, foldsNames]);
 
   const isLoading =
     live &&
