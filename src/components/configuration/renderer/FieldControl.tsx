@@ -21,6 +21,7 @@ import { ScalarUnionField } from '../fields/ScalarUnionField';
 import { BoolOrListField } from '../fields/BoolOrListField';
 import { TextRecordField } from '../fields/TextRecordField';
 import { ListRecordField } from '../fields/ListRecordField';
+import { DomainListField } from '../fields/DomainListField';
 import { ModelListField } from '../fields/ModelListField';
 import { MultiEnumField } from '../fields/MultiEnumField';
 import { RefSelectField } from '../fields/RefSelectField';
@@ -441,6 +442,19 @@ export function FieldControl({
         />
       );
     }
+    case 'domain-list':
+      return (
+        <DomainListField
+          {...common}
+          path={path}
+          values={isStringArray(value) ? value : []}
+          lowerValues={isStringArray(fieldDefault.value) ? fieldDefault.value : undefined}
+          hasOwnValue={fieldDefault.hasOwnValue}
+          lowerSource={fieldDefault.source}
+          onChange={onChange}
+          onClear={onClear}
+        />
+      );
     case 'record':
       return (
         <KeyValueField

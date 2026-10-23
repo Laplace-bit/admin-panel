@@ -271,7 +271,7 @@ describe('constraints helpers', () => {
 describe('formatFieldValue / getDefaultHint', () => {
   it('shows option labels, units and grouped numbers', () => {
     const retention = schemaField('interface.retentionMode');
-    expect(getDefaultHint(retention, 'temporary', localize)).toBe('Temporary');
+    expect(getDefaultHint(retention, 'temporary', localize)).toBe('Temporary chats only');
     expect(getDefaultHint(schemaField('balance.startBalance'), 20000, localize)).toBe(
       '20,000 credits',
     );

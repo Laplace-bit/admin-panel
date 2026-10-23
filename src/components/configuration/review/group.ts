@@ -5,8 +5,8 @@ import { flattenObject, getValueAtPath, isConfigRecord, findKeyedCollectionEntry
 import { identityKeyFor, isSecretPath, findEntry } from './diff';
 import { SKIP_REASON_KEYS, getConfigSection } from '@/constants';
 import { findSchemaField, getFieldOptions } from '../controls';
+import { getFieldMeta, labelForPath } from '../meta';
 import { fieldVariants } from '../renderer/kinds';
-import { labelForPath } from '../meta';
 
 /** Locale keys for what an entry of a known collection is called. */
 const NOUN_KEYS: Readonly<Record<string, string>> = {
@@ -201,6 +201,12 @@ function valueLabelsAt(
   const discriminated = discriminatorLabelsAt(path, ctx);
   if (discriminated) return discriminated;
   const field = findSchemaField(ctx.fields, path);
+  const metaLabels = field?.type === 'boolean' ? getFieldMeta(path)?.enumLabels : undefined;
+  if (metaLabels) {
+    return Object.fromEntries(
+      Object.entries(metaLabels).map(([value, key]) => [value, ctx.localize(key)]),
+    );
+  }
   if (!field || !(field.type.startsWith('enum') || field.type.startsWith('union(literal'))) {
     return undefined;
   }

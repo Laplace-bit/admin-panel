@@ -11,6 +11,13 @@
 
 import type React from 'react';
 import type * as t from '@/types';
+import {
+  MemoryRenderer,
+  InterfaceRenderer,
+  WebSearchRenderer,
+  SummarizationRenderer,
+  ContentFiltersRenderer,
+} from './features';
 import { CustomEndpointsRenderer } from './endpoints';
 import { McpServersRenderer } from './mcp';
 import { LangfuseRenderer } from './LangfuseRenderer';
@@ -24,6 +31,11 @@ export const SECTION_RENDERERS: Partial<Record<string, React.ComponentType<t.Fie
     mcpServers: McpServersRenderer,
     langfuse: LangfuseRenderer,
     modelSpecs: ModelSpecsRenderer,
+    filters: ContentFiltersRenderer,
+    interface: InterfaceRenderer,
+    memory: MemoryRenderer,
+    webSearch: WebSearchRenderer,
+    summarization: SummarizationRenderer,
   };
 
 /** Sections whose custom renderer handles its own accordion — they are rendered

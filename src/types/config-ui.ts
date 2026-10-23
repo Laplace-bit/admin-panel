@@ -13,6 +13,7 @@ import type { ConfigScope, ScopeGateReason, ScopeSelection, ScopePermissions } f
 import type { TocEntry, JumpTarget, ConfigSearchHit, ConfigSearchItem } from './shell';
 import type { BaseOverridesState, ImportSkippedKey, ImportRequest } from './review';
 import type { TabBadge, PathIndex, ValueLayers } from './values';
+import type { FieldControlProps } from './controls';
 import type { VisibilityEdit } from './changes';
 
 export interface ConfigTab {
@@ -335,6 +336,13 @@ export interface SingleFieldRendererProps {
    * edit session that started it.
    */
   editSessionId?: number;
+  /**
+   * Replaces the control the schema would get (WS13 purpose-built editors).
+   * The row keeps its label, help, chips, Reset and "Default" semantics; the
+   * props are the ones `FieldControl` would receive. The control shows the
+   * default itself, so the row drops its "Default: …" hint.
+   */
+  renderControl?: (props: FieldControlProps) => ReactNode;
 }
 
 export interface FieldRendererProps {
@@ -366,7 +374,12 @@ export interface FieldRendererProps {
   onValidationError?: (message: string) => void;
   /** See `SingleFieldRendererProps.editSessionId`. */
   editSessionId?: number;
-  /** In a profile: hides what the profile inherits at a path (a tombstone; SV-9, MCP-10). */
+  /**
+   * Queues a hide (tombstone) of a value the layer beneath sets: in a profile,
+   * hides what the profile inherits (SV-9, MCP-10); in any target, lets a
+   * change that must drop a librechat.yaml (or Base) key take effect, e.g.
+   * switching the memory agent from an ID to an inline model (FX-3).
+   */
   onHideField?: (path: string) => void;
   /** In a profile: shows a hidden path again. */
   onUnhideField?: (path: string) => void;

@@ -552,9 +552,23 @@ function validateSections(state: PlanState, blocked: ReadonlySet<string>): void 
   );
   const reported = new Set(state.issues.map(issueKey));
   const { lower, stored } = state.snapshot;
+  /**
+   * LibreChat validates a field PATCH against the layer beneath without the
+   * target's tombstones (tombstones go first), so a section this batch sets
+   * values in is validated without the values it hides. A hide alone is not
+   * validated by LibreChat, and is not here either.
+   */
+  const setSections = new Set(
+    [...state.sets.keys()].filter((path) => !blocked.has(path)).map(getConfigSection),
+  );
+  const lowerAfter = state.tombstones.reduce<t.ConfigRecord>(
+    (current, path) =>
+      setSections.has(getConfigSection(path)) ? removeValueAtPath(current, path) : current,
+    lower,
+  );
   for (const section of sections) {
     const before = mergeConfigLayers(lower[section], stored[section], section);
-    const after = mergeConfigLayers(lower[section], storedAfter[section], section);
+    const after = mergeConfigLayers(lowerAfter[section], storedAfter[section], section);
     const existing = new Set(validateSection(section, before).map(issueKey));
     for (const issue of validateSection(section, after)) {
       if (isInCollection(issue.path) || reported.has(issueKey(issue))) continue;

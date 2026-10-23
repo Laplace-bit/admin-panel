@@ -350,3 +350,52 @@ describe('applyConfigChanges — profiles (SV-9)', () => {
     });
   });
 });
+
+describe('applyConfigChanges — switching a union away from a librechat.yaml key (WS13)', () => {
+  const memoryYaml: t.ConfigRecord = { ...yaml, memory: { agent: { id: 'agent_yaml' } } };
+
+  /** LibreChat validates a PATCH against librechat.yaml minus the stored tombstones (`union_dropped_key`). */
+  function rejectInlineAgentWhileIdShows() {
+    api.current!.setOverride((request) => {
+      const writesInline = request.body?.entries?.some((entry) =>
+        entry.fieldPath.startsWith('memory.agent.provider'),
+      );
+      if (request.method !== 'PATCH' || !writesInline) return undefined;
+      if (api.current!.tombstones().includes('memory.agent.id')) return undefined;
+      return {
+        status: 400,
+        body: {
+          code: 'CONFIG_OVERRIDE_INVALID',
+          issues: [{ path: 'memory.agent.provider', code: 'union_dropped_key' }],
+        },
+      };
+    });
+  }
+
+  it('writes the tombstone of the YAML agent ID before the inline provider and model', async () => {
+    api.current = createFakeAdminApi(memoryYaml);
+    rejectInlineAgentWhileIdShows();
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'memory.agent.provider', value: 'openAI' },
+      { op: 'set', path: 'memory.agent.model', value: 'gpt-4o-mini' },
+      { op: 'tombstone', path: 'memory.agent.id' },
+    ]);
+    expect(result).toMatchObject({ failed: [], issues: [] });
+    expect(api.current.writes().map((request) => request.method)).toEqual(['POST', 'PATCH']);
+    expect(api.current.stored()).toEqual({
+      memory: { agent: { provider: 'openAI', model: 'gpt-4o-mini' } },
+    });
+    expect(api.current.tombstones()).toEqual(['memory.agent.id']);
+  });
+
+  it('validates the result without the hidden key, so an incomplete inline agent is blocked', async () => {
+    api.current = createFakeAdminApi(memoryYaml);
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'memory.agent.provider', value: 'openAI' },
+      { op: 'tombstone', path: 'memory.agent.id' },
+    ]);
+    expect(result.issues.length).toBeGreaterThan(0);
+    expect(result.issues.every((issue) => issue.path.startsWith('memory.agent'))).toBe(true);
+    expect(api.current.writes()).toEqual([]);
+  });
+});

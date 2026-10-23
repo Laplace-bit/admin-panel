@@ -205,6 +205,9 @@ export function revealConfigPath(
     }
 
     let changed = false;
+    /** The target exists but sits in a collapsed group no path names (a purpose group around flat rows). */
+    const enclosing = el && !isShown(el) ? el.closest(CLOSED_GRID)?.parentElement : null;
+    if (enclosing instanceof HTMLElement) changed = expandContainer(enclosing, tried);
     if (target.sectionId) {
       const section = byId(container.ownerDocument, `section-${target.sectionId}`);
       if (section && container.contains(section)) changed = expandContainer(section, tried);

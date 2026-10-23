@@ -82,6 +82,7 @@ export function SingleFieldRenderer({
   isSoleField,
   secretPreviewValue,
   editSessionId,
+  renderControl,
 }: t.SingleFieldRendererProps) {
   const localize = useLocalize();
   const state = useFieldState(path);
@@ -114,10 +115,11 @@ export function SingleFieldRenderer({
     meta,
     schemaDefault,
   );
-  /** A control whose Default choice names the default needs no hint (and the row keeps its height when edited). */
-  const defaultHint = SHOWS_DEFAULT_CHOICE.has(kind)
-    ? null
-    : getDefaultHint(field, schemaDefault, localize);
+  /** A control whose Default choice names the default (or a custom control, which shows its own) needs no hint. */
+  const defaultHint =
+    renderControl || SHOWS_DEFAULT_CHOICE.has(kind)
+      ? null
+      : getDefaultHint(field, schemaDefault, localize);
 
   /**
    * A secret the target stores is redacted to its masked preview; whatever the
@@ -151,6 +153,12 @@ export function SingleFieldRenderer({
       onChange(path, undefined);
       return true;
     }
+    /** A domain allowlist is removed whole (D3): a pending own list is dropped, and the list beneath applies again. */
+    if (kind === 'domain-list' && hasPendingEdit) {
+      if (onDiscardField) onDiscardField(path);
+      else onChange(path, undefined);
+      return true;
+    }
     /** Emptying a list the layer beneath sets: it can't be emptied, and its earlier pending removals stay. */
     const keepsPendingList =
       isConfigured && !SHOWS_DEFAULT_CHOICE.has(kind) && Array.isArray(editedValues?.[path]);
@@ -177,6 +185,38 @@ export function SingleFieldRenderer({
     isPendingReset,
     defaultHint,
   };
+
+  const controlProps: t.FieldControlProps = {
+    field,
+    path,
+    id: fieldId,
+    label,
+    value: shownValue,
+    onChange: (next) => onChange(path, next),
+    onClear: clear,
+    fieldDefault,
+    disabled,
+    required: !field.isOptional,
+    secretPreview: showsStoredSecret ? secretPreviewValue : null,
+    hasPendingEdit,
+    onCancelSecret: () => onDiscardField?.(path),
+    editSessionId,
+  };
+
+  if (renderControl) {
+    return (
+      <ConfigRow
+        title={label}
+        description={description}
+        learnMoreUrl={meta?.docsUrl}
+        disabled={disabled}
+        fieldId={fieldId}
+        {...rowProps}
+      >
+        {renderControl(controlProps)}
+      </ConfigRow>
+    );
+  }
 
   if (kind === 'array-object') {
     const ownsList =
@@ -288,20 +328,7 @@ export function SingleFieldRenderer({
     control = (
       <FieldControl
         key={kind === 'secret' ? `${fieldId}-${editSessionId ?? 0}` : undefined}
-        field={field}
-        path={path}
-        id={fieldId}
-        label={label}
-        value={shownValue}
-        onChange={(next) => onChange(path, next)}
-        onClear={clear}
-        fieldDefault={fieldDefault}
-        disabled={disabled}
-        required={!field.isOptional}
-        secretPreview={showsStoredSecret ? secretPreviewValue : null}
-        hasPendingEdit={hasPendingEdit}
-        onCancelSecret={() => onDiscardField?.(path)}
-        editSessionId={editSessionId}
+        {...controlProps}
       />
     );
   }

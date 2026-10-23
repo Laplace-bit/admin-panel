@@ -225,7 +225,9 @@ export type ControlKind =
   | 'literal'
   | 'multi-enum'
   | 'ref-select'
-  | 'model-list';
+  | 'model-list'
+  /** A domain allowlist as validated chips (WS13 FX-16). */
+  | 'domain-list';
 
 /** Display unit for numeric fields (WS2). */
 export type FieldUnit = 'MB' | 'ms' | 's' | 'minutes' | 'px' | 'hours' | 'credits';

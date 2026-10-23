@@ -1,8 +1,13 @@
 import type * as t from '@/types';
 
-/** Single-line input look shared by native inputs and selects (matches the click-ui fields' 32px height). */
+/**
+ * Single-line input look shared by native inputs and selects: the click-ui
+ * fields' 32px height and their field tokens (background, stroke, text and
+ * placeholder), so a masked key or a select sits next to a click-ui text
+ * field without a different fill in either theme.
+ */
 export const INPUT_CLASSES =
-  'h-8 w-full min-w-0 rounded-(--cui-radii-sm) border border-solid border-(--cui-color-stroke-default) bg-(--cui-color-background-default) px-3 text-sm text-(--cui-color-text-default) outline-none placeholder:text-(--cui-color-text-muted) focus:border-(--cui-color-stroke-intense) disabled:cursor-default disabled:border-transparent disabled:bg-transparent aria-invalid:border-(--cui-color-text-danger)';
+  'h-8 w-full min-w-0 rounded-(--cui-radii-sm) border border-solid border-(--click-field-color-stroke-default) bg-(--click-field-color-background-default) px-3 text-sm text-(--click-field-color-text-default) outline-none placeholder:text-(--click-field-color-placeholder-default) hover:border-(--click-field-color-stroke-hover) focus:border-(--click-field-color-stroke-active) focus:bg-(--click-field-color-background-active) disabled:cursor-default disabled:border-transparent disabled:bg-transparent aria-invalid:border-(--cui-color-text-danger)';
 
 /** Width classes for a control (S: short numbers, M: identifiers, L: URLs and prompts). */
 export function widthClass(width?: t.ControlWidth): string {
