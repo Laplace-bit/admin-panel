@@ -9,6 +9,7 @@ export * from './import';
 export * from './keys';
 export * from './layers';
 export * from './options';
+export * from './accordion';
 export * from './reveal';
 export * from './review';
 export * from './save';

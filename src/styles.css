@@ -1802,6 +1802,317 @@ body > div:has(+ .modal-frost) {
   }
 }
 
+/* ── AI providers editor (WS9) ───────────────────────────────────
+   Provider status badges, collapsed summaries, side-by-side pairs, the
+   read-only Azure groups table, and shadowed (Global) rows. */
+
+.provider-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 1.375rem;
+  padding: 0 8px;
+  border: 1px solid var(--cui-color-stroke-default);
+  border-radius: 9999px;
+  font-size: var(--settings-fs-meta);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--cui-color-text-default);
+  vertical-align: middle;
+}
+
+.provider-status-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  background: var(--settings-muted-fg);
+}
+
+.provider-status[data-status='active'] .provider-status-dot,
+.provider-status[data-status='userProvided'] .provider-status-dot {
+  background: var(--cui-color-accent-success);
+}
+
+.provider-status[data-status='disabled'] {
+  border-style: dashed;
+  color: var(--settings-muted-fg);
+}
+
+.provider-status[data-status='disabled'] .provider-status-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--settings-muted-fg);
+}
+
+.provider-status-row .settings-row-control {
+  justify-content: flex-start;
+  padding-top: 5px;
+}
+
+/* A collapsed group's header names what it sets, on one line. */
+.provider-group-summary {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: var(--settings-fs-help);
+  font-weight: 400;
+  color: var(--cui-color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-card-summary {
+  display: block;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.provider-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Two related numbers side by side (recursion limits): each cell is its own
+   container, so its row stacks the label above the control. */
+.provider-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.provider-pair-cell {
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.settings-group-body > .provider-pair {
+  margin-inline: 0;
+  max-width: none;
+}
+
+@media (max-width: 639.98px) {
+  .provider-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Collapsed groups pack two per line on wide screens; an open group spans the card. */
+.provider-groups {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@container (min-width: 720px) {
+  .provider-groups {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .provider-groups > .settings-group:has(> .settings-group-header [aria-expanded='true']) {
+    grid-column: 1 / -1;
+  }
+}
+
+.settings-section-body > .provider-groups {
+  margin-inline: 0;
+  max-width: none;
+}
+
+/* Capability grids take the full row width, label above, three columns. */
+.settings-row:has(> .settings-row-control > fieldset[id$='-capabilities']) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'label trailing'
+    'control control';
+  row-gap: 8px;
+}
+
+.settings-row:has(> .settings-row-control > fieldset[id$='-capabilities']) .settings-row-label {
+  padding-top: 0;
+}
+
+.settings-row:has(> .settings-row-control > fieldset[id$='-capabilities']) .settings-row-control {
+  margin-left: var(--settings-indent, 0px);
+}
+
+.settings-row-control > fieldset[id$='-capabilities'] {
+  max-width: none;
+  row-gap: 10px;
+}
+
+@container (min-width: 720px) {
+  .settings-row-control > fieldset[id$='-capabilities'] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* A value Global overrides take precedence over (D11): the chip says why,
+   the label and control step back. */
+.settings-row:has(> .settings-row-trailing [data-state-chip='shadowed']) .settings-row-label,
+.settings-row:has(> .settings-row-trailing [data-state-chip='shadowed']) .settings-row-control {
+  opacity: 0.62;
+}
+
+.state-chip-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.state-chip-link:hover {
+  text-decoration: underline;
+}
+
+.azure-groups {
+  container-type: inline-size;
+  overflow-x: auto;
+  border: 1px solid var(--cui-color-stroke-default);
+  border-radius: 8px;
+}
+
+.azure-groups-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--settings-fs-help);
+  color: var(--cui-color-text-default);
+}
+
+.azure-groups-table th,
+.azure-groups-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--cui-color-stroke-default);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.azure-groups-table thead th {
+  font-size: var(--settings-fs-meta);
+  font-weight: 600;
+  color: var(--settings-muted-fg);
+  white-space: nowrap;
+  background: var(--cui-color-background-muted);
+}
+
+.azure-groups-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.azure-groups-table tbody th {
+  font-weight: 600;
+}
+
+.azure-group-name {
+  overflow-wrap: anywhere;
+}
+
+.azure-target {
+  display: block;
+  max-width: 22rem;
+  overflow: hidden;
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+  font-size: var(--settings-fs-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--settings-muted-fg);
+}
+
+.azure-col-version {
+  white-space: nowrap;
+}
+
+.azure-col-number {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.azure-col-action {
+  width: 1%;
+  text-align: right !important;
+}
+
+.azure-details-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--cui-color-stroke-default);
+  border-radius: 6px;
+  background: var(--cui-color-background-panel);
+  color: var(--cui-color-text-default);
+  font: inherit;
+  font-size: var(--settings-fs-meta);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.azure-details-btn:hover {
+  background: var(--cui-color-background-hover);
+}
+
+.azure-muted {
+  color: var(--settings-muted-fg);
+}
+
+@container (max-width: 639.98px) {
+  .azure-col-optional {
+    display: none;
+  }
+}
+
+@container (max-width: 419.98px) {
+  .azure-col-wide {
+    display: none;
+  }
+}
+
+.azure-models-table {
+  border: 1px solid var(--cui-color-stroke-default);
+  border-radius: 8px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.azure-drawer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+}
+
+.azure-drawer-item {
+  display: grid;
+  grid-template-columns: 10rem minmax(0, 1fr);
+  gap: 12px;
+  font-size: var(--settings-fs-help);
+}
+
+.azure-drawer-item dt {
+  color: var(--settings-muted-fg);
+}
+
+.azure-drawer-item dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--cui-color-text-default);
+}
+
+@media (max-width: 479.98px) {
+  .azure-drawer-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+}
+
 /* ── Reduced motion (VS-5) ─────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {

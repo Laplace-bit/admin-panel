@@ -1,6 +1,7 @@
 export * from './auth';
 export * from './capabilities';
 export * from './config';
+export * from './endpoints';
 export * from './groups';
 export * from './langfuse';
 export * from './roles';

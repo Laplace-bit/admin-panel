@@ -27,10 +27,10 @@ import { RefSelectField } from '../fields/RefSelectField';
 import { TriStateField } from '../fields/TriStateField';
 import { TextareaField } from '../fields/TextareaField';
 import { KeyValueField } from '../fields/KeyValueField';
+import { RefListField } from '../fields/RefListField';
 import { LiteralField } from '../fields/LiteralField';
-import { useLocalize, useFieldError } from '@/hooks';
-import { labelForPath } from '../meta';
 import { isWhitespaceSignificantPath } from '@/utils';
+import { useLocalize, useFieldError } from '@/hooks';
 import { NumberField } from '../fields/NumberField';
 import { SelectField } from '../fields/SelectField';
 import { ToggleField } from '../fields/ToggleField';
@@ -39,6 +39,7 @@ import { TextField } from '../fields/TextField';
 import { ListField } from '../fields/ListField';
 import { CodeField } from '../fields/CodeField';
 import { toKVPair } from '../fields/kv';
+import { labelForPath } from '../meta';
 
 /** "Global: …" for a value `endpoints.all` sets, "Inherited: …" for Base's in a profile, else "Default: …". */
 function placeholderKey(fieldDefault: t.FieldDefault): string {
@@ -123,6 +124,28 @@ function groupName(path: string, label: string, localize: t.LocalizeFn): string 
     parent: labelForPath(parentPath, localize),
     label,
   });
+}
+
+/**
+ * Options of a checkbox grid with their one-line descriptions
+ * (`FieldMeta.enumDescriptions`), in `FieldMeta.order` when it lists them.
+ */
+function describedOptions(
+  options: t.SelectOption[],
+  meta: t.FieldMeta | undefined,
+  localize: t.LocalizeFn,
+): t.MultiEnumOption[] {
+  const descriptionKeys = meta?.enumDescriptions;
+  const described = descriptionKeys
+    ? options.map((option) => {
+        const key = descriptionKeys[option.value];
+        return key ? { ...option, description: localize(key) } : option;
+      })
+    : options;
+  if (!meta?.order) return described;
+  const rank = new Map(meta.order.map((value, index) => [value, index]));
+  const last = meta.order.length;
+  return [...described].sort((a, b) => (rank.get(a.value) ?? last) - (rank.get(b.value) ?? last));
 }
 
 /**
@@ -308,6 +331,7 @@ export function FieldControl({
           {...common}
           value={value == null ? undefined : textValue(value)}
           source={optionSource}
+          path={path}
           onChange={onChange}
           onClear={clear ?? onClear}
           placeholder={placeholder}
@@ -367,7 +391,11 @@ export function FieldControl({
         <MultiEnumField
           {...common}
           value={isStringArray(value) ? value : undefined}
-          options={getFieldOptions(field, localize, undefined)}
+          options={describedOptions(
+            getFieldOptions(field, localize, undefined),
+            fieldMetaFor(field, path),
+            localize,
+          )}
           onChange={(next) => (next === undefined ? onClear() : onChange(next))}
           clearOnEmpty={false}
         />
@@ -377,6 +405,9 @@ export function FieldControl({
         <ModelListField
           {...common}
           value={value}
+          path={path}
+          source={optionSource}
+          namesOnly={getArrayItemType(field.type) === 'string'}
           onChange={onChange}
           onClear={onClear}
           required={mustFill}
@@ -384,6 +415,19 @@ export function FieldControl({
       );
     case 'array': {
       const itemType = getArrayItemType(field.type);
+      if (optionSource && !itemType.startsWith('enum(')) {
+        return (
+          <RefListField
+            {...common}
+            source={optionSource}
+            values={isStringArray(value) ? value : []}
+            onChange={onChange}
+            onClear={onClear}
+            itemLabel={localize(`com_config_field_${field.key}_item`)}
+            width={width ?? 'M'}
+          />
+        );
+      }
       return (
         <ListField
           {...common}

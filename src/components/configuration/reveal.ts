@@ -209,6 +209,14 @@ export function revealConfigPath(
       const section = byId(container.ownerDocument, `section-${target.sectionId}`);
       if (section && container.contains(section)) changed = expandContainer(section, tried);
     }
+    /** Rendered inside a collapsed group (eagerly rendered bodies): open the groups around it. */
+    if (el && !isShown(el)) {
+      for (let grid = el.closest<HTMLElement>(CLOSED_GRID); grid; ) {
+        const owner = grid.parentElement;
+        if (owner) changed = expandContainer(owner, tried) || changed;
+        grid = owner?.closest<HTMLElement>(CLOSED_GRID) ?? null;
+      }
+    }
     let deepest: HTMLElement | null = null;
     for (const prefix of prefixes) {
       const ancestor = findPathElement(container, prefix);

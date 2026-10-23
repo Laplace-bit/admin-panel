@@ -91,8 +91,10 @@ describe('ProvenanceChip', () => {
       'endpoints.anthropic.activityModel',
       valuesDataFixture(baseLayersFixture()),
     );
-    render(<ProvenanceChip state={shadowed} />);
-    expect(screen.getByText('com_config_values_shadowed')).toBeTruthy();
+    const { container } = render(<ProvenanceChip state={shadowed} />);
+    expect(screen.getByText(/com_config_providers_shadow_label/)).toBeTruthy();
+    expect(container.querySelectorAll('.state-chip')).toHaveLength(1);
+    expect(container.querySelector('[data-provenance]')).toBeNull();
   });
 
   it('renders nothing for a plain default when asked to', () => {

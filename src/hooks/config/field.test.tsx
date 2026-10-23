@@ -16,7 +16,6 @@ import {
   useRecordEntryOverrides,
 } from './field';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
-import { useOptionSources } from './options';
 
 const values: t.ConfigValuesData = {
   configValues: { interface: { parameters: true } },
@@ -44,13 +43,6 @@ describe('useFieldState', () => {
   it('returns the empty default state without a provider', () => {
     const { result } = renderHook(() => useFieldState('interface.parameters'));
     expect(result.current).toMatchObject({ value: undefined, source: 'default', isEdited: false });
-  });
-});
-
-describe('useOptionSources', () => {
-  it('returns no options until WS9 implements the sources', () => {
-    const { result } = renderHook(() => useOptionSources('endpoints'));
-    expect(result.current).toEqual({ options: [], isLoading: false });
   });
 });
 

@@ -159,6 +159,8 @@ export interface RefSelectFieldProps {
   id: string;
   value: string | undefined;
   source?: OptionSource;
+  /** Data path of the field: a model field suggests the models of the endpoint its sibling names (WS9). */
+  path?: string;
   /** Extra options merged before the source's (e.g. `current_model`). */
   extraOptions?: SelectOption[];
   onChange: (value: string) => void;
@@ -178,6 +180,12 @@ export interface ModelListFieldProps {
   value: ConfigValue;
   /** Models used while the list is unset (provider defaults), shown read-only. */
   defaults?: string[];
+  /** Data path of the list, for its saved state (whether `/api/models` shows its defaults). */
+  path?: string;
+  /** `models:<endpoint>`: defaults and suggestions from `/api/models` when `defaults` is not given (WS9). */
+  source?: OptionSource;
+  /** The list holds plain model names (`array<string>`): no descriptions. */
+  namesOnly?: boolean;
   onChange: (value: ConfigValue) => void;
   /** Return to "Use provider defaults"; called instead of saving `[]`. */
   onClear: ClearHandler;

@@ -1,92 +1,62 @@
 import { useContext } from 'react';
 import type * as t from '@/types';
+import { isPathSet, countConfigured, hasPendingValue } from '../../counts';
+import { GlobalRevealContext } from '@/contexts/GlobalRevealContext';
+import { CUSTOM_KEY, NETWORK_KEY, providerFields } from './layout';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { ProviderSection } from './ProviderSection';
+import { revealConfigPath } from '../../review/reveal';
+import { NetworkAccessCard } from './NetworkAccess';
 import { FieldRenderer } from '../../renderer';
-import { countConfigured } from '../../counts';
+import { ProviderCard } from './ProviderCard';
 import { isRowVisible } from '@/utils';
 
+/** "Overridden by Global" chips on this tab scroll to the Global value. */
+const revealGlobal = (path: string) => revealConfigPath(path);
+
+/**
+ * AI providers tab (WS9): Global overrides pinned first (AP-3), one card per
+ * built-in provider grouped by purpose (AP-4), then the Network access card
+ * (AP-7). Endpoint-wide settings the panel does not know yet render as plain
+ * rows below, so the tab stays schema-driven.
+ */
 export function ProvidersRenderer(props: t.FieldRendererProps) {
-  const {
-    fields,
-    parentPath,
-    parentValue,
-    getValue,
-    onChange,
-    onResetField,
-    onDiscardField,
-    editedValues,
-    disabled,
-    permissions,
-    configuredPaths,
-    dbOverridePaths,
-    touchedPaths,
-    pendingResets,
-    schemaDefaults,
-    showConfiguredOnly,
-    previewMode,
-    previewScope,
-    previewChangedPaths,
-    resolvedValues,
-    showChangedOnly,
-    editSessionId,
-  } = props;
+  const { fields, ...shared } = props;
+  const { parentPath, showConfiguredOnly, configuredPaths, editedValues } = shared;
   const rowFilter = useContext(RowFilterContext);
 
-  const providerFields = fields.filter(
-    (f) =>
-      f.key !== 'custom' &&
-      f.children &&
-      f.children.length > 0 &&
-      isRowVisible(rowFilter, `${parentPath}.${f.key}`),
+  const providers = providerFields(fields).filter((field) =>
+    isRowVisible(rowFilter, `${parentPath}.${field.key}`),
   );
-
-  const otherFields = fields.filter(
-    (f) => f.key !== 'custom' && (!f.children || f.children.length === 0),
-  );
-
-  const sharedProps: Omit<t.ProviderSectionProps, 'field'> = {
-    parentPath,
-    parentValue,
-    getValue,
-    onChange,
-    onResetField,
-    onDiscardField,
-    editedValues,
-    disabled,
-    permissions,
-    configuredPaths,
-    dbOverridePaths,
-    touchedPaths,
-    pendingResets,
-    schemaDefaults,
-    showConfiguredOnly,
-    previewMode,
-    previewScope,
-    previewChangedPaths,
-    resolvedValues,
-    showChangedOnly,
-    editSessionId,
-  };
 
   const visibleProviders = showConfiguredOnly
-    ? providerFields.filter((f) => {
-        const { configured } = countConfigured(
-          f.children ?? [],
-          `${parentPath}.${f.key}`,
-          configuredPaths,
+    ? providers.filter((field) => {
+        const path = `${parentPath}.${field.key}`;
+        return (
+          hasPendingValue(path, editedValues) ||
+          countConfigured(field.children ?? [], path, configuredPaths).configured > 0
         );
-        return configured > 0;
       })
-    : providerFields;
+    : providers;
+
+  const network = fields.find((field) => field.key === NETWORK_KEY);
+  const others = fields.filter(
+    (field) =>
+      field.key !== CUSTOM_KEY &&
+      field.key !== NETWORK_KEY &&
+      !field.children?.length &&
+      (!showConfiguredOnly ||
+        isPathSet(`${parentPath}.${field.key}`, configuredPaths, editedValues)),
+  );
 
   return (
-    <div className="flex flex-col gap-4">
-      {visibleProviders.map((field) => (
-        <ProviderSection key={field.key} field={field} {...sharedProps} />
-      ))}
-
-      {otherFields.length > 0 && <FieldRenderer fields={otherFields} {...sharedProps} />}
-    </div>
+    <GlobalRevealContext.Provider value={revealGlobal}>
+      <div className="flex flex-col gap-4">
+        {visibleProviders.map((field) => (
+          <ProviderCard key={field.key} field={field} {...shared} />
+        ))}
+        {network && <NetworkAccessCard field={network} {...shared} />}
+        {others.length > 0 && <FieldRenderer {...shared} fields={others} />}
+      </div>
+    </GlobalRevealContext.Provider>
   );
 }
