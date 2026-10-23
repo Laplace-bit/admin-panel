@@ -201,7 +201,9 @@ function valueLabelsAt(
   const discriminated = discriminatorLabelsAt(path, ctx);
   if (discriminated) return discriminated;
   const field = findSchemaField(ctx.fields, path);
-  if (!field || !field.type.startsWith('enum')) return undefined;
+  if (!field || !(field.type.startsWith('enum') || field.type.startsWith('union(literal'))) {
+    return undefined;
+  }
   const options = getFieldOptions(field, ctx.localize);
   return options.length > 0
     ? Object.fromEntries(options.map((option) => [option.value, option.label]))
@@ -234,6 +236,7 @@ function addedDetails(item: t.ChangeSummaryItem, key: string, ctx: t.ReviewLabel
           after: value,
           secret: isSecretPath(path) || undefined,
         },
+        valueLabels: valueLabelsAt(path, ctx),
       };
     });
 }

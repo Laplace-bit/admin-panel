@@ -176,6 +176,8 @@ export interface PendingEdits {
   baselines: FlatConfigMap;
   /** Pending hides/unhides of inherited values. */
   visibility: Record<string, VisibilityEdit>;
+  /** Record entries renamed this session: each new entry path → the saved entry path it was renamed from. */
+  renames: Readonly<Record<string, string>>;
 }
 
 /** Pending edits of the open target and the handlers that change them (WS1). */
@@ -194,12 +196,16 @@ export interface ConfigEditsState {
   editBaselines: FlatConfigMap;
   /** See `PendingEdits.visibility`. */
   visibilityEdits: Record<string, VisibilityEdit>;
+  /** See `PendingEdits.renames`. */
+  renameEdits: Readonly<Record<string, string>>;
   handleFieldChange: (path: string, value: ConfigValue) => void;
   handleResetField: (path: string) => void;
   /** Queues hiding an inherited value in the open profile (an explicit tombstone). */
   handleHideField: (path: string) => void;
   /** Queues unhiding a value the open profile hides. */
   handleUnhideField: (path: string) => void;
+  /** Records that the record entry at `from` was renamed to `to` (its edits are written separately). */
+  handleRenameEntry: (from: string, to: string | null) => void;
   /** See `SingleFieldRendererProps.onDiscardField`. */
   handleDiscardField: (path: string) => void;
   /** Drops every pending edit without starting a new edit session. */
@@ -254,6 +260,7 @@ export interface ConfigSaveOptions {
     | 'collectionEdits'
     | 'editBaselines'
     | 'visibilityEdits'
+    | 'renameEdits'
   >;
 }
 

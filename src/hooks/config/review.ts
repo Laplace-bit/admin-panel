@@ -110,6 +110,7 @@ export function useChangeReview({
       isScope,
       fields: schemaTree,
       schemaPaths: schemaPathSet,
+      renames: edits.renameEdits,
     }),
     [
       savePlan,
@@ -121,6 +122,7 @@ export function useChangeReview({
       yamlEntryKeys,
       schemaTree,
       schemaPathSet,
+      edits.renameEdits,
     ],
   );
 
@@ -229,6 +231,12 @@ export function useChangeReview({
     const action = planRevert(row.item, current.editedValues, tree);
     if (action.op === 'set') {
       current.handleFieldChange(action.path, action.value);
+      return;
+    }
+    if (action.op === 'unrename') {
+      for (const path of action.discard) current.handleDiscardField(path);
+      for (const { path, value } of action.writes) current.handleFieldChange(path, value);
+      current.handleRenameEntry(action.entryPath, null);
       return;
     }
     for (const path of action.paths) current.handleDiscardField(path);

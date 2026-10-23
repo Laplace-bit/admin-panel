@@ -1,9 +1,10 @@
 import type * as t from '@/types';
-import { getValueAtPath, isConfigRecord, deepSerializeKVPairs } from '@/utils';
+import { getValueAtPath, flattenObject, isConfigRecord, deepSerializeKVPairs } from '@/utils';
 import { isConfigValueEqual, normalizeForSave } from '../edits';
-import { identityKeyFor } from './diff';
+import { identityKeyFor, isSecretPath } from './diff';
 
 const INDEX_SEGMENT_RE = /^\d+$/;
+const PREVIEW_SUFFIX = 'Preview';
 
 function childOf(value: t.ConfigValue, segment: string): t.ConfigValue {
   if (Array.isArray(value))
@@ -159,6 +160,68 @@ function pendingUnder(editedValues: t.FlatConfigMap, path: string): string[] {
   return Object.keys(editedValues).filter((key) => key === path || key.startsWith(`${path}.`));
 }
 
+/** The masked preview the admin API returns for a stored secret (`oauth.client_secretPreview`). */
+function isSecretPreview(leaf: string): boolean {
+  return leaf.endsWith(PREVIEW_SUFFIX) && isSecretPath(leaf.slice(0, -PREVIEW_SUFFIX.length));
+}
+
+/** Whether a removed value is only what a rename never carries: stored secrets' previews. */
+function isPreviewOnly(value: t.ConfigValue, path: string): boolean {
+  if (!isConfigRecord(value)) return isSecretPreview(path);
+  return Object.keys(flattenObject(value, path)).every(isSecretPreview);
+}
+
+/**
+ * The writes that give an entry under its old key the changes it got under
+ * its new one: a setting it dropped is removed whole (an authentication
+ * method switched off goes with its stored secret), and within an object it
+ * kept, each leaf that changed is written (or removed). Stored secrets'
+ * previews are no change: a rename never carries them.
+ */
+function renamedChanges(
+  before: t.ConfigRecord,
+  after: t.ConfigRecord,
+  previousPath: string,
+): Array<{ path: string; value: t.ConfigValue }> {
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].flatMap((key) => {
+    const was = before[key];
+    const now = after[key];
+    if (isConfigValueEqual(was, now)) return [];
+    if (now === undefined)
+      return isPreviewOnly(was, key) ? [] : [{ path: `${previousPath}.${key}`, value: undefined }];
+    if (!isConfigRecord(was) || !isConfigRecord(now))
+      return [{ path: `${previousPath}.${key}`, value: now }];
+    const wasLeaves = flattenObject(was, key);
+    const nowLeaves = flattenObject(now, key);
+    return [...new Set([...Object.keys(wasLeaves), ...Object.keys(nowLeaves)])]
+      .filter((leaf) => !isConfigValueEqual(wasLeaves[leaf], nowLeaves[leaf]))
+      .filter((leaf) => nowLeaves[leaf] !== undefined || !isSecretPreview(leaf))
+      .map((leaf) => ({ path: `${previousPath}.${leaf}`, value: nowLeaves[leaf] }));
+  });
+}
+
+/**
+ * Undoes a record entry's rename (an MCP server is its new key's writes plus
+ * the old key's removal) and keeps the entry's other changes, which the
+ * review lists as rows of their own: they are written under the old key again.
+ */
+function revertRecordRename(
+  item: t.ChangeSummaryItem,
+  editedValues: t.FlatConfigMap,
+  entryPath: string,
+  previousPath: string,
+): t.ReviewRevertAction {
+  const discard = [
+    ...pendingUnder(editedValues, entryPath),
+    ...pendingUnder(editedValues, previousPath),
+  ];
+  if (!isConfigRecord(item.before) || !isConfigRecord(item.after)) {
+    return { op: 'discard', paths: discard };
+  }
+  const writes = renamedChanges(item.before, item.after, previousPath);
+  return { op: 'unrename', entryPath, discard, writes };
+}
+
 /**
  * The pending edit a row comes from. A keyed collection is reviewed as its
  * whole pending list, but its entries are edited at their own positions
@@ -193,13 +256,20 @@ export function planRevert(
   const isPart = isPending && item.path.startsWith(`${source}.`);
   const isOrder = isPending && item.path === source && item.collectionPath === source;
   const isRename = isPending && item.path === source && item.kind === 'renamed';
-  /** A renamed record entry (an MCP server) is its new key's writes plus the old key's removals. */
   if (!isPending && item.kind === 'renamed' && item.previousIdentity && item.collectionPath) {
     const previousPath = `${item.collectionPath}.${item.previousIdentity}`;
-    return {
-      op: 'discard',
-      paths: [...pendingUnder(editedValues, source), ...pendingUnder(editedValues, previousPath)],
-    };
+    return revertRecordRename(item, editedValues, source, previousPath);
+  }
+  /** A field a renamed record entry also changed: the new key goes back to the old key's value. */
+  const isRenamedField =
+    item.kind !== 'renamed' &&
+    item.previousIdentity != null &&
+    item.entryPath != null &&
+    !INDEX_SEGMENT_RE.test(item.entryPath.slice(item.entryPath.lastIndexOf('.') + 1));
+  if (isRenamedField && item.path in editedValues) {
+    return item.before === undefined
+      ? { op: 'discard', paths: [item.path] }
+      : { op: 'set', path: item.path, value: item.before };
   }
   if (!isPart && !isOrder && !isRename) {
     const paths = pendingUnder(editedValues, source);

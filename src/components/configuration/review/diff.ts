@@ -34,6 +34,8 @@ const ALLOWLIST_KEYS: ReadonlySet<string> = new Set([
 
 const INDEX_SEGMENT_RE = /^\d+$/;
 
+const NO_RENAMES: Readonly<Record<string, string>> = {};
+
 interface DiffContext {
   input: t.ChangeSummaryInput;
   sourcePath: string;
@@ -531,7 +533,7 @@ export function summarizeChanges(input: t.ChangeSummaryInput): t.ChangeSummaryIt
     items.push(entryItem('added', entry, undefined, unflattenObject(leaves), ctx));
   }
   for (const path of input.resets) items.push(resetItem(path, input));
-  return pairRecordRenames(items);
+  return pairRecordRenames(items, input.renames ?? NO_RENAMES);
 }
 
 /** An entry change of a whole entry (added or removed), not one of its fields. */
@@ -539,31 +541,78 @@ function isWholeEntry(item: t.ChangeSummaryItem, kind: t.ChangeKind): boolean {
   return item.kind === kind && item.entryPath === item.path && item.collectionPath != null;
 }
 
+/** The fields a renamed entry changes as well, as rows under its new name. */
+function renamedFieldChanges(
+  renamed: t.ChangeSummaryItem,
+  before: t.ConfigRecord,
+  after: t.ConfigRecord,
+): t.ChangeSummaryItem[] {
+  const beforeLeaves = flattenObject(before);
+  const afterLeaves = flattenObject(after);
+  const leaves = [...new Set([...Object.keys(beforeLeaves), ...Object.keys(afterLeaves)])];
+  return leaves
+    .filter((leaf) => !isConfigValueEqual(beforeLeaves[leaf], afterLeaves[leaf]))
+    .map((leaf) => {
+      const path = `${renamed.path}.${leaf}`;
+      return {
+        path,
+        kind: leafKind(beforeLeaves[leaf], afterLeaves[leaf]),
+        before: beforeLeaves[leaf],
+        after: afterLeaves[leaf],
+        sourcePath: renamed.sourcePath,
+        secret: isSecretPath(path) || undefined,
+        collectionPath: renamed.collectionPath,
+        entryPath: renamed.entryPath,
+        entryIdentity: renamed.entryIdentity,
+        previousIdentity: renamed.previousIdentity,
+      };
+    });
+}
+
 /**
- * A record entry removed and one added with the same value (an MCP server
+ * A record entry removed and one added in the same save (an MCP server
  * renamed: the old key's leaves are removed, the new key's written) read as
- * one rename.
+ * one rename: the entry the panel recorded as renamed from the removed one
+ * (`renames`), whose other changes are listed under it, else an added entry
+ * with the same value as a removed one. A shared URL or command alone is no
+ * proof: a server deleted and an unrelated one added for the same endpoint
+ * stay a removal and an addition.
  */
-function pairRecordRenames(items: t.ChangeSummaryItem[]): t.ChangeSummaryItem[] {
+function pairRecordRenames(
+  items: t.ChangeSummaryItem[],
+  renames: Readonly<Record<string, string>>,
+): t.ChangeSummaryItem[] {
   const removed = items.filter((item) => isWholeEntry(item, 'removed'));
   if (removed.length === 0) return items;
   const paired = new Set<t.ChangeSummaryItem>();
-  const result = items.map((item): t.ChangeSummaryItem => {
-    if (!isWholeEntry(item, 'added') || !isConfigRecord(item.after)) return item;
-    const match = removed.find(
+  const findMatch = (
+    item: t.ChangeSummaryItem,
+    matches: (candidate: t.ChangeSummaryItem) => boolean,
+  ) =>
+    removed.find(
       (candidate) =>
         !paired.has(candidate) &&
         candidate.collectionPath === item.collectionPath &&
-        isConfigValueEqual(candidate.before, item.after),
+        matches(candidate),
     );
-    if (!match) return item;
+  const result = items.flatMap((item): t.ChangeSummaryItem[] => {
+    if (!isWholeEntry(item, 'added') || !isConfigRecord(item.after)) return [item];
+    const renamedFrom = item.entryPath ? renames[item.entryPath] : undefined;
+    const match =
+      findMatch(item, (candidate) => candidate.entryPath === renamedFrom) ??
+      findMatch(item, (candidate) => isConfigValueEqual(candidate.before, item.after));
+    if (!match) return [item];
     paired.add(match);
-    return {
+    const renamed: t.ChangeSummaryItem = {
       ...item,
       kind: 'renamed',
       before: match.before,
       previousIdentity: match.entryIdentity,
     };
+    if (isConfigValueEqual(match.before, item.after) || !isConfigRecord(match.before)) {
+      return [renamed];
+    }
+    return [renamed, ...renamedFieldChanges(renamed, match.before, item.after)];
   });
   return result.filter((item) => !paired.has(item));
 }

@@ -9,6 +9,7 @@ export type * from './fields';
 export type * from './grant';
 export type * from './hooks';
 export type * from './layout';
+export type * from './mcp';
 export type * from './review';
 export type * from './providers';
 export type * from './role';

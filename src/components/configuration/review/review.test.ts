@@ -7,6 +7,7 @@ import translation from '@/locales/en/translation.json';
 import { extractSchemaTree } from '@/server/config';
 import { parseIssueMessages } from './issues';
 import { formatReviewValue } from './format';
+import { flattenObject } from '@/utils';
 import { planRevert } from './revert';
 
 const tree = extractSchemaTree(configSchema as t.ZodSchemaLike);
@@ -312,6 +313,124 @@ describe('summarizeChanges: MCP servers and secrets', () => {
     ]);
   });
 
+  it('reads a server renamed and edited in the same save as a rename plus its field change', () => {
+    const dbsrv = { type: 'streamable-http', url: 'https://db.example/mcp', title: 'DB' };
+    const renamed = { ...dbsrv, title: 'Docs' };
+    const items = summarizeChanges(
+      makeInput({
+        baseline: { mcpServers: { dbsrv } },
+        ownAt: (path) => (path === 'mcpServers.dbsrv' ? dbsrv : undefined),
+        saves: Object.entries(renamed).map(([key, value]) => ({
+          fieldPath: `mcpServers.dbsrv2.${key}`,
+          value,
+        })),
+        resets: ['mcpServers.dbsrv'],
+        renames: { 'mcpServers.dbsrv2': 'mcpServers.dbsrv' },
+      }),
+    );
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: 'renamed',
+        path: 'mcpServers.dbsrv2',
+        previousIdentity: 'dbsrv',
+      }),
+      expect.objectContaining({
+        kind: 'changed',
+        path: 'mcpServers.dbsrv2.title',
+        entryPath: 'mcpServers.dbsrv2',
+        before: 'DB',
+        after: 'Docs',
+      }),
+    ]);
+    const edited = {
+      'mcpServers.dbsrv': undefined,
+      ...Object.fromEntries(Object.entries(renamed).map(([k, v]) => [`mcpServers.dbsrv2.${k}`, v])),
+    };
+    expect(planRevert(items[1], edited, { mcpServers: { dbsrv } })).toEqual({
+      op: 'set',
+      path: 'mcpServers.dbsrv2.title',
+      value: 'DB',
+    });
+  });
+
+  it('undoes only the rename of a server, keeping its field changes under the old name', () => {
+    const dbsrv = {
+      type: 'streamable-http',
+      url: 'https://db.example/mcp',
+      title: 'DB',
+      description: 'Docs DB',
+      oauth: { client_id: 'id', client_secretPreview: 'sec...1234' },
+      apiKey: { source: 'admin', keyPreview: '...4321' },
+    };
+    const renamed = {
+      type: 'streamable-http',
+      url: 'https://db2.example/mcp',
+      title: 'DB',
+      oauth: { client_id: 'id' },
+    };
+    const leaves = Object.entries(flattenObject(renamed, 'mcpServers.dbsrv2'));
+    const items = summarizeChanges(
+      makeInput({
+        baseline: { mcpServers: { dbsrv } },
+        ownAt: (path) => (path === 'mcpServers.dbsrv' ? dbsrv : undefined),
+        saves: leaves.map(([fieldPath, value]) => ({ fieldPath, value })),
+        resets: ['mcpServers.dbsrv'],
+        renames: { 'mcpServers.dbsrv2': 'mcpServers.dbsrv' },
+      }),
+    );
+    const edited: t.FlatConfigMap = {
+      'mcpServers.dbsrv': undefined,
+      ...Object.fromEntries(leaves),
+    };
+    const row = items.find((item) => item.kind === 'renamed')!;
+    expect(planRevert(row, edited, { mcpServers: { dbsrv } })).toEqual({
+      op: 'unrename',
+      entryPath: 'mcpServers.dbsrv2',
+      discard: [...leaves.map(([path]) => path), 'mcpServers.dbsrv'],
+      writes: [
+        { path: 'mcpServers.dbsrv.url', value: 'https://db2.example/mcp' },
+        { path: 'mcpServers.dbsrv.description', value: undefined },
+        { path: 'mcpServers.dbsrv.apiKey', value: undefined },
+      ],
+    });
+  });
+
+  it('keeps a removed server and a new one for the same URL apart when nothing renamed it', () => {
+    const dbsrv = { type: 'streamable-http', url: 'https://db.example/mcp', title: 'DB' };
+    const items = summarizeChanges(
+      makeInput({
+        baseline: { mcpServers: { dbsrv } },
+        ownAt: (path) => (path === 'mcpServers.dbsrv' ? dbsrv : undefined),
+        saves: [
+          { fieldPath: 'mcpServers.dbsrv-oauth.type', value: 'streamable-http' },
+          { fieldPath: 'mcpServers.dbsrv-oauth.url', value: 'https://db.example/mcp' },
+          { fieldPath: 'mcpServers.dbsrv-oauth.requiresOAuth', value: true },
+        ],
+        resets: ['mcpServers.dbsrv'],
+      }),
+    );
+    expect(items.map((item) => [item.kind, item.path]).sort()).toEqual([
+      ['added', 'mcpServers.dbsrv-oauth'],
+      ['removed', 'mcpServers.dbsrv'],
+    ]);
+  });
+
+  it('keeps a removed server and an unrelated new one apart', () => {
+    const dbsrv = { type: 'sse', url: 'https://db.example/sse' };
+    const items = summarizeChanges(
+      makeInput({
+        baseline: { mcpServers: { dbsrv } },
+        ownAt: (path) => (path === 'mcpServers.dbsrv' ? dbsrv : undefined),
+        saves: [
+          { fieldPath: 'mcpServers.other.type', value: 'sse' },
+          { fieldPath: 'mcpServers.other.url', value: 'https://other.example/sse' },
+        ],
+        resets: ['mcpServers.dbsrv'],
+      }),
+    );
+    expect(items.map((item) => item.kind).sort()).toEqual(['added', 'removed']);
+  });
+
   it('keeps field changes of an existing server under that server', () => {
     const [item] = summarizeChanges(
       makeInput({ baseline, saves: [{ fieldPath: 'mcpServers.github.timeout', value: 45000 }] }),
@@ -415,7 +534,8 @@ describe('buildReviewModel', () => {
     const model = buildReviewModel(summarizeChanges(makeInput({ baseline, saves })), ctx(saves));
     const [row] = model.tabs[0].sections[0].rows;
     expect(row.label).toBe('acme');
-    expect(row.details?.map((d) => d.label)).toEqual(['Type', 'URL']);
+    expect(row.details?.map((d) => d.label)).toEqual(['Transport', 'Server URL']);
+    expect(row.details?.[0].valueLabels?.['streamable-http']).toBe('Streamable HTTP');
     expect(model.count).toBe(1);
   });
 
