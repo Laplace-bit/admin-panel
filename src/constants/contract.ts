@@ -52,6 +52,12 @@ export const BUNDLED_CONFIG_LIMITS: t.ConfigLimits = {
   overrideCacheTtlMs: 60_000,
 };
 
+/** `expectedRevision` that makes a write apply only when the principal has no document. */
+export const ABSENT_REVISION = 'absent';
+
+/** The admin API's code for a write whose `expectedRevision` no longer matches (409). */
+export const VERSION_CONFLICT_CODE = 'CONFIG_VERSION_CONFLICT';
+
 /** A stdio MCP server's process fields: only librechat.yaml sets them (D10). */
 export const PROCESS_MCP_FIELDS: readonly string[] = ['command', 'args', 'env', 'cwd', 'stderr'];
 

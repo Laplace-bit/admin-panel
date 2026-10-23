@@ -42,14 +42,22 @@ function readSchemaDefaults(): t.FlatConfigMap {
   }
 }
 
+/**
+ * The base admin override document. Its revision is `null` when there is
+ * none (a server that reports revisions answers 404 for no document too),
+ * and left out when the server reports none.
+ */
 async function readOverrideDoc(
   response: Response,
-): Promise<Pick<t.BaseConfigData, 'dbOverrides' | 'dbTombstones'>> {
+): Promise<Pick<t.BaseConfigData, 'dbOverrides' | 'dbTombstones' | 'dbRevision'>> {
+  if (response.status === 404)
+    return { dbOverrides: undefined, dbTombstones: [], dbRevision: null };
   if (!response.ok) return { dbOverrides: undefined, dbTombstones: [] };
   const { config } = (await response.json()) as t.AdminConfigDocResponse;
   return {
     dbOverrides: (config.overrides ?? {}) as t.ConfigRecord,
     dbTombstones: config.tombstones ?? [],
+    ...(typeof config.revision === 'string' && { dbRevision: config.revision }),
   };
 }
 
@@ -61,7 +69,7 @@ async function readOverrideDoc(
  * - `yamlPaths`: what the raw librechat.yaml itself sets. Values LibreChat
  *   synthesizes at startup appear in both trees above but not here, so they
  *   are not counted as configured (EV-2);
- * - `dbOverrides`/`dbTombstones`: the base admin override document;
+ * - `dbOverrides`/`dbTombstones`/`dbRevision`: the base admin override document;
  * - `schemaDefaults`: flattened schema defaults.
  */
 export const getBaseConfigFn = createServerFn({ method: 'GET' }).handler(

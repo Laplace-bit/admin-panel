@@ -11,12 +11,20 @@ import {
 export interface FakeAdminRequest {
   method: string;
   path: string;
-  body?: { entries?: t.SaveEntry[]; fieldPath?: string; priority?: number };
+  body?: {
+    entries?: t.SaveEntry[];
+    fieldPath?: string;
+    priority?: number;
+    ops?: t.ConfigBatchOp[];
+    expectedRevision?: string;
+  };
 }
 
 interface FakeDoc {
   overrides: t.ConfigRecord;
   tombstones: string[];
+  /** Bumped by every write, as `configVersion` is. */
+  version: number;
 }
 
 /** What a write's reply adds to the stored document (a write report, ignored credentials). */
@@ -28,6 +36,32 @@ export type FakeAdminOverride = (
 ) => { status: number; body: unknown } | undefined;
 
 const SECRET_KEYS = new Set(['apiKey']);
+
+/** Whether `path` is `ancestor` or lies inside it. */
+function isAtOrUnder(path: string, ancestor: string): boolean {
+  return path === ancestor || path.startsWith(`${ancestor}.`);
+}
+
+/**
+ * Whether a write at `path` clears `tombstone`, as LibreChat's writes do: one
+ * at the path or above it below the section, so a whole-section tombstone
+ * survives a nested write.
+ */
+function clearsTombstone(path: string, tombstone: string): boolean {
+  return tombstone === path || (tombstone.includes('.') && isAtOrUnder(path, tombstone));
+}
+
+/** Removes `path` and every object that leaves empty above it, stopping at arrays (`prunesEmptyParents`). */
+function removePruned(overrides: t.ConfigRecord, path: string): t.ConfigRecord {
+  let result = removeValueAtPath(overrides, path);
+  for (let dot = path.lastIndexOf('.'); dot > 0; dot = path.lastIndexOf('.', dot - 1)) {
+    const parent = path.slice(0, dot);
+    const value = getValueAtPath(result, parent);
+    if (!isConfigRecord(value) || Object.keys(value).length > 0) break;
+    result = removeValueAtPath(result, parent);
+  }
+  return result;
+}
 
 /** Secret values stored as plain references (`${ENV}`, `user_provided`). */
 function isPassthrough(value: string): boolean {
@@ -65,6 +99,13 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
 
   const docKey = (principalType: string, principalId: string) =>
     `${principalType}/${decodeURIComponent(principalId)}`;
+
+  /** Revisions are reported only by a server whose contract says so (`expectedRevision`). */
+  const reportsRevisions = () => meta?.features?.expectedRevision === true;
+  const revisionOf = (key: string, doc: FakeDoc | undefined) =>
+    doc ? `${key.replace('/', '-')}:${doc.version}` : null;
+  const store = (key: string, next: Omit<FakeDoc, 'version'>) =>
+    docs.set(key, { ...next, version: (docs.get(key)?.version ?? 0) + 1 });
 
   const reply = (status: number, body: unknown) =>
     ({ ok: status >= 200 && status < 300, status, json: async () => body }) as Response;
@@ -122,9 +163,10 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
       const config = url.searchParams.get('baseOnly') === 'true' ? yaml : baseMerged();
       return reply(200, { config: redact(config) });
     }
-    const match = /^\/api\/admin\/config\/([^/]+)\/([^/]+)(\/fields(\/tombstone)?)?$/.exec(
-      url.pathname,
-    );
+    const match =
+      /^\/api\/admin\/config\/([^/]+)\/([^/]+)(\/fields(\/tombstone)?|\/changes)?$/.exec(
+        url.pathname,
+      );
     if (!match) return reply(404, { error: 'Not found' });
     const [, principalType, principalId, fields, tombstone] = match;
     const key = docKey(principalType, principalId);
@@ -133,13 +175,18 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
     if (!fields) {
       if (!doc) return reply(404, { error: 'Config not found' });
       return reply(200, {
-        config: { overrides: redact(doc.overrides), tombstones: doc.tombstones },
+        config: {
+          overrides: redact(doc.overrides),
+          tombstones: doc.tombstones,
+          ...(reportsRevisions() && { revision: revisionOf(key, doc) }),
+        },
       });
     }
+    if (fields === '/changes') return applyBatch(request, key, doc);
     const current = doc ?? { overrides: {}, tombstones: [] };
     if (tombstone) {
       const fieldPath = String(body?.fieldPath);
-      docs.set(key, {
+      store(key, {
         overrides: removeValueAtPath(current.overrides, fieldPath),
         tombstones: [...new Set([...current.tombstones, fieldPath])],
       });
@@ -148,7 +195,7 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
     if (method === 'DELETE') {
       if (!doc) return reply(404, { error: 'Config not found' });
       const fieldPath = String(url.searchParams.get('fieldPath'));
-      docs.set(key, {
+      store(key, {
         overrides: removeValueAtPath(doc.overrides, fieldPath),
         tombstones: doc.tombstones.filter((p) => p !== fieldPath && !p.startsWith(`${fieldPath}.`)),
       });
@@ -165,12 +212,72 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
       const existing = getValueAtPath(current.overrides, entry.fieldPath);
       overrides = setValueAtPath(overrides, entry.fieldPath, encryptSecrets(entry.value, existing));
     }
-    const paths = (body?.entries ?? []).map((e: t.SaveEntry) => e.fieldPath);
-    docs.set(key, {
+    const paths: string[] = (body?.entries ?? []).map((e: t.SaveEntry) => e.fieldPath);
+    store(key, {
       overrides,
-      tombstones: current.tombstones.filter((p) => !paths.includes(p)),
+      tombstones: current.tombstones.filter((p) => !paths.some((path) => clearsTombstone(path, p))),
     });
     return written(request, { config: { overrides: redact(overrides) } });
+  }
+
+  /** One batch op applied to a document, as `POST …/changes` applies it. */
+  function applyOp(
+    current: Omit<FakeDoc, 'version'>,
+    op: t.ConfigBatchOp,
+  ): Omit<FakeDoc, 'version'> {
+    const { fieldPath } = op;
+    if (op.op === 'set') {
+      const existing = getValueAtPath(current.overrides, fieldPath);
+      return {
+        overrides: setValueAtPath(current.overrides, fieldPath, encryptSecrets(op.value, existing)),
+        tombstones: current.tombstones.filter((p) => !clearsTombstone(fieldPath, p)),
+      };
+    }
+    const overrides = removePruned(current.overrides, fieldPath);
+    const kept = current.tombstones.filter((p) => !isAtOrUnder(p, fieldPath));
+    return { overrides, tombstones: op.op === 'tombstone' ? [...kept, fieldPath] : kept };
+  }
+
+  /**
+   * `POST …/changes`: every op applied in order, written at once and named
+   * by `expectedRevision` (409 when the document is at another revision).
+   * Ops in a stripped section are reported as skipped.
+   */
+  function applyBatch(request: FakeAdminRequest, key: string, doc: FakeDoc | undefined): Response {
+    const { ops = [], expectedRevision } = request.body ?? {};
+    const currentRevision = revisionOf(key, doc);
+    if (expectedRevision !== undefined && expectedRevision !== (currentRevision ?? 'absent')) {
+      return reply(409, {
+        error: 'Config was modified by another request',
+        code: 'CONFIG_VERSION_CONFLICT',
+        currentRevision,
+      });
+    }
+    let next: Omit<FakeDoc, 'version'> = doc ?? { overrides: {}, tombstones: [] };
+    const applied: object[] = [];
+    const skipped: object[] = [];
+    ops.forEach((op, opIndex) => {
+      const ref = { opIndex, op: op.op, segments: op.fieldPath.split('.') };
+      if (strippedSections.has(ref.segments[0])) {
+        skipped.push({ ...ref, reason: 'base_only_section' });
+        return;
+      }
+      next = applyOp(next, op);
+      applied.push(ref);
+    });
+    store(key, next);
+    const stored = docs.get(key)!;
+    const revision = revisionOf(key, stored);
+    return written(request, {
+      config: { overrides: redact(stored.overrides), tombstones: stored.tombstones, revision },
+      revision,
+      written: true,
+      dryRun: false,
+      applied,
+      skipped,
+      ignored: [],
+      unchanged: [],
+    });
   }
 
   return {
@@ -180,7 +287,9 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
     stored: (principal = 'role/__base__') => docs.get(principal)?.overrides,
     tombstones: (principal = 'role/__base__') => docs.get(principal)?.tombstones ?? [],
     seed: (principal: string, overrides: t.ConfigRecord, tombstones: string[] = []) =>
-      docs.set(principal, { overrides, tombstones }),
+      store(principal, { overrides, tombstones }),
+    /** The revision a principal's document is at (`null`: none), as the server reports it. */
+    revision: (principal = 'role/__base__') => revisionOf(principal, docs.get(principal)),
     /** Silently drops writes to a section, as LibreChat does for base-only sections. */
     stripSection: (section: string) => strippedSections.add(section),
     setOverride: (next?: FakeAdminOverride) => {

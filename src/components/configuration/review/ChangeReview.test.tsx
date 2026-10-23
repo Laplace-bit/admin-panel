@@ -56,6 +56,9 @@ function reviewFor(
     saving: false,
     sessionExpired: false,
     termsUrl: null,
+    conflict: false,
+    reloadLatest: vi.fn(),
+    mergeLatest: vi.fn().mockResolvedValue(undefined),
     saveIssues: [],
     title: 'Review',
     blocked: issues.some((issue) => issue.blocking),
@@ -97,6 +100,47 @@ describe('ChangeReview', () => {
     const link = screen.getByRole('link', { name: /accept the terms/i });
     expect(link).toHaveAttribute('href', 'https://chat.example.com');
     expect(link).toHaveAttribute('target', '_blank');
+  });
+
+  it('offers to reload or merge when the target was saved elsewhere meanwhile', () => {
+    const review = reviewFor([{ fieldPath: 'registration.socialLogins', value: ['openid'] }], {
+      conflict: true,
+    });
+    render(<ChangeReview review={review} />);
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Changed elsewhere');
+    expect(alert).toHaveTextContent(/Base configuration was saved elsewhere/);
+    fireEvent.click(within(alert).getByRole('button', { name: 'Reload' }));
+    expect(review.reloadLatest).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(alert).getByRole('button', { name: 'Merge and save' }));
+    expect(review.mergeLatest).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the footer Save disabled while the conflict waits for Reload or Merge', () => {
+    const edit = [{ fieldPath: 'registration.socialLogins', value: ['openid'] }];
+    const { unmount } = render(<ChangeReview review={reviewFor(edit, { conflict: true })} />);
+    const footer = screen.getByRole('contentinfo');
+    expect(within(footer).getByRole('button', { name: 'Save' })).toBeDisabled();
+    unmount();
+    render(<ChangeReview review={reviewFor(edit)} />);
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  });
+
+  it('names the profile that was saved elsewhere', () => {
+    const scope = {
+      principalType: 'role',
+      principalId: 'USER',
+      name: 'USER',
+    } as t.ConfigScope;
+    render(
+      <ChangeReview
+        review={reviewFor([{ fieldPath: 'registration.socialLogins', value: ['openid'] }], {
+          conflict: true,
+          scope,
+        })}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent(/USER was saved elsewhere/);
   });
 
   it('shows list changes as added and removed items', () => {

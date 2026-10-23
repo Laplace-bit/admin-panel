@@ -291,6 +291,13 @@ export function useChangeReview({
     );
   }, [model.count, localize]);
 
+  const { reloadLatest: reloadTarget, cancelReview: closeAfterReload } = save;
+  const reloadLatest = useCallback(() => {
+    discardAll();
+    closeAfterReload();
+    void reloadTarget();
+  }, [discardAll, closeAfterReload, reloadTarget]);
+
   const blocked = issues.some((issue) => issue.blocking);
 
   return {
@@ -299,6 +306,9 @@ export function useChangeReview({
     saving: save.saving,
     sessionExpired: save.sessionExpired,
     termsUrl: save.termsUrl,
+    conflict: save.conflict,
+    reloadLatest,
+    mergeLatest: save.saveOverLatest,
     saveIssues,
     title,
     scope: editingScope,

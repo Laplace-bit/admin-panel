@@ -201,6 +201,9 @@ export interface ChangeReviewOptions {
     | 'openReview'
     | 'cancelReview'
     | 'handleConfirmSave'
+    | 'conflict'
+    | 'reloadLatest'
+    | 'saveOverLatest'
   >;
   /** Switches the page to a tab (the review's "Go to field"). */
   onTabChange: (tabId: string) => void;
@@ -215,6 +218,15 @@ export interface ChangeReviewState {
   sessionExpired: boolean;
   /** The last save was refused until the admin accepts LibreChat's terms: where to accept them, else `null`. */
   termsUrl: string | null;
+  /**
+   * The last save found the target saved elsewhere meanwhile, and wrote
+   * nothing: until Reload or Merge, or the review is closed, Save is refused.
+   */
+  conflict: boolean;
+  /** After a conflict: drops the edits (with Undo) and shows the target as it is stored now. */
+  reloadLatest: () => void;
+  /** After a conflict: saves the edits over the target as it is stored now. */
+  mergeLatest: () => Promise<void>;
   /** Error from the last failed save, as labelled issues. */
   saveIssues: ReviewIssue[];
   /** Title naming the target: "Save 2 changes to Role: USER?". */

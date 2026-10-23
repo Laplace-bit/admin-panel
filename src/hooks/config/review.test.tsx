@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { configSchema } from 'librechat-data-provider';
 import { act, renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -8,6 +8,7 @@ import { extractSchemaTree, getSchemaPathSet } from '@/server/config';
 import { useChangeReview } from './review';
 import { useConfigEdits } from './edits';
 import { flattenObject } from '@/utils';
+import { applyConfigChangesFn } from '@/server';
 import { ConfigContractContext } from '@/contexts/ContractContext';
 import { createServerContract } from '@/test/fixtures';
 import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
@@ -37,6 +38,7 @@ function renderPage(
   dbOverrides: t.ConfigRecord = {},
   yamlConfig: t.ConfigRecord = config,
   contract: t.ConfigContract = BUNDLED_CONFIG_CONTRACT,
+  initialRevision?: string | null,
 ) {
   const client = new QueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -45,7 +47,7 @@ function renderPage(
     </QueryClientProvider>
   );
   return renderHook(
-    () => {
+    ({ targetRevision }: { targetRevision?: string | null }) => {
       const edits = useConfigEdits({
         isEditingScope: false,
         flatBaseline: flattenObject(config),
@@ -64,6 +66,7 @@ function renderPage(
         overridePaths: new Set(Object.keys(flattenObject(dbOverrides))),
         valueLayers: null,
         baseActiveConfigValues: config,
+        targetRevision,
       };
       const save = useConfigSave({ schemaTree: tree, schemaPathSet, layers, edits });
       const review = useChangeReview({
@@ -75,7 +78,7 @@ function renderPage(
       });
       return { edits, save, review };
     },
-    { wrapper },
+    { wrapper, initialProps: { targetRevision: initialRevision } },
   );
 }
 
@@ -190,5 +193,130 @@ describe('the change review over the save pipeline (WS1 × WS7)', () => {
     act(() => result.current.review.revertRow(rows[0]));
     expect(result.current.edits.editedValues).toEqual({ 'mcpServers.dbsrv.title': 'Docs' });
     expect(result.current.edits.renameEdits).toEqual({});
+  });
+});
+
+describe('saving against the loaded revision (changesBatch)', () => {
+  const batch = createServerContract({ changesBatch: true, expectedRevision: true });
+  const applyMock = vi.mocked(applyConfigChangesFn);
+  const saved: t.ApplyConfigChangesResult = {
+    applied: 1,
+    failed: [],
+    warnings: [],
+    issues: [],
+    skipped: [],
+    reported: [],
+  };
+  const conflicted: t.ApplyConfigChangesResult = {
+    ...saved,
+    applied: 0,
+    conflict: true,
+    failed: [{ path: '', code: 'CONFIG_VERSION_CONFLICT', message: 'changed' }],
+  };
+  const sentRevisions = () =>
+    applyMock.mock.calls.map(
+      ([call]) => (call as { data: { expectedRevision?: string } }).data.expectedRevision,
+    );
+
+  beforeEach(() => {
+    applyMock.mockReset();
+  });
+
+  async function editAndSave(result: {
+    current: ReturnType<typeof renderPage>['result']['current'];
+  }) {
+    act(() => result.current.edits.handleFieldChange('balance.startBalance', 5));
+    act(() => result.current.save.openReview());
+    await act(() => result.current.review.confirm());
+  }
+
+  it('sends the revision the page loaded the target at', async () => {
+    applyMock.mockResolvedValue(saved);
+    const { result } = renderPage(yaml, {}, yaml, batch, 'base:4');
+    await editAndSave(result);
+    expect(sentRevisions()).toEqual(['base:4']);
+    expect(result.current.edits.editedValues).toEqual({});
+  });
+
+  it('names a target without a document as absent', async () => {
+    applyMock.mockResolvedValue(saved);
+    const { result } = renderPage(yaml, {}, yaml, batch, null);
+    await editAndSave(result);
+    expect(sentRevisions()).toEqual(['absent']);
+  });
+
+  it('sends no revision to a server without change batches', async () => {
+    applyMock.mockResolvedValue(saved);
+    const { result } = renderPage(yaml, {}, yaml, BUNDLED_CONFIG_CONTRACT, 'base:4');
+    await editAndSave(result);
+    expect(sentRevisions()).toEqual([undefined]);
+  });
+
+  it('keeps the edits after a conflict, and merges them over the latest version', async () => {
+    applyMock.mockResolvedValueOnce(conflicted).mockResolvedValueOnce(saved);
+    const { result } = renderPage(yaml, {}, yaml, batch, 'base:4');
+    await editAndSave(result);
+    expect(result.current.review.conflict).toBe(true);
+    expect(result.current.review.open).toBe(true);
+    expect(result.current.review.saveIssues).toEqual([]);
+    expect(result.current.edits.editedValues).toEqual({ 'balance.startBalance': 5 });
+    await act(() => result.current.review.mergeLatest());
+    expect(sentRevisions()).toEqual(['base:4', undefined]);
+    expect(result.current.review.conflict).toBe(false);
+    expect(result.current.edits.editedValues).toEqual({});
+  });
+
+  it("does not save from the footer over the other admin's version after a conflict", async () => {
+    applyMock.mockResolvedValueOnce(conflicted).mockResolvedValue(saved);
+    const { result, rerender } = renderPage(yaml, {}, yaml, batch, 'base:4');
+    await editAndSave(result);
+    rerender({ targetRevision: 'base:5' });
+    await act(() => result.current.review.confirm());
+    expect(sentRevisions()).toEqual(['base:4']);
+    expect(result.current.review.conflict).toBe(true);
+    expect(result.current.review.open).toBe(true);
+    expect(result.current.edits.editedValues).toEqual({ 'balance.startBalance': 5 });
+    await act(() => result.current.review.mergeLatest());
+    expect(sentRevisions()).toEqual(['base:4', undefined]);
+    expect(result.current.edits.editedValues).toEqual({});
+  });
+
+  it('saves against the version the review re-read once it is closed and opened again', async () => {
+    applyMock.mockResolvedValueOnce(conflicted).mockResolvedValue(saved);
+    const { result, rerender } = renderPage(yaml, {}, yaml, batch, 'base:4');
+    await editAndSave(result);
+    rerender({ targetRevision: 'base:5' });
+    act(() => result.current.review.closeReview());
+    expect(result.current.review.conflict).toBe(false);
+    expect(result.current.edits.editedValues).toEqual({ 'balance.startBalance': 5 });
+    act(() => result.current.review.openReview());
+    await act(() => result.current.review.confirm());
+    expect(sentRevisions()).toEqual(['base:4', 'base:5']);
+    expect(result.current.edits.editedValues).toEqual({});
+  });
+
+  it('says earlier batches stay saved when a later batch of a split save meets a conflict', async () => {
+    applyMock.mockResolvedValueOnce({
+      ...saved,
+      applied: 0,
+      partiallyWritten: true,
+      failed: [{ path: 'balance.startBalance', code: 'CONFIG_VERSION_CONFLICT', message: 'x' }],
+    });
+    const { result } = renderPage(yaml, {}, yaml, batch, 'base:4');
+    await editAndSave(result);
+    expect(result.current.review.conflict).toBe(false);
+    expect(result.current.edits.saveError).toMatch(/^Save failed partway: the changes written/);
+    expect(result.current.edits.editedValues).toEqual({ 'balance.startBalance': 5 });
+  });
+
+  it('drops the edits and closes the review on Reload after a conflict', async () => {
+    applyMock.mockResolvedValueOnce(conflicted);
+    const { result } = renderPage(yaml, {}, yaml, batch, 'base:4');
+    await editAndSave(result);
+    act(() => result.current.review.reloadLatest());
+    expect(result.current.review.conflict).toBe(false);
+    expect(result.current.review.open).toBe(false);
+    expect(result.current.edits.editedValues).toEqual({});
+    expect(applyMock).toHaveBeenCalledTimes(1);
   });
 });

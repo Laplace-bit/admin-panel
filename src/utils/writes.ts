@@ -78,17 +78,18 @@ export function reportedPath(location: t.ReportedLocation): string {
   return (dotted === -1 ? segments : segments.slice(0, Math.max(dotted, 1))).join('.');
 }
 
+/** The reported items `keep` accepts that name a location, with the panel's reasons. */
 function toSkippedChanges(
   items: t.ReportedSkip[] | undefined,
   fallback: t.SkipReason,
+  keep: (item: t.ReportedSkip) => boolean,
 ): t.SkippedChange[] {
   if (!Array.isArray(items)) return [];
-  return items
-    .map((item) => ({
-      fieldPath: reportedPath(item),
-      reason: REPORTED_SKIP_REASONS[item.reason] ?? fallback,
-    }))
-    .filter((item) => item.fieldPath !== '');
+  return items.flatMap((item): t.SkippedChange[] => {
+    const fieldPath = reportedPath(item);
+    if (fieldPath === '' || !keep(item)) return [];
+    return [{ fieldPath, reason: REPORTED_SKIP_REASONS[item.reason] ?? fallback }];
+  });
 }
 
 /** A reported location key by key: its `segments`, else its dotted `path`. */
@@ -114,26 +115,55 @@ function credentialOwner(segments: readonly string[]): string {
 
 /**
  * What a write's reply says did not take effect, with the panel's reasons:
- * each location it did not store (`skipped`, from a server with
- * `writeReport`), then each stored value the runtime merge leaves out
- * (`ignored`: with `writeReport`, or a credential `secretRebinding` drops).
- * A server without them reports neither, and nothing is read. `ignored`
- * describes the whole stored document, so with the locations the save
- * changes (`changed`, `WritePlan.changed`) only an entry whose owner the save
- * changed is kept (`credentialOwner`: the custom endpoint, MCP server or
- * object it is set in). A save elsewhere, even in the same section, does not
- * repeat it, and one that no longer applies is not reported.
+ * each location it did not store (`skipped`), then each stored value the
+ * runtime merge leaves out (`ignored`). `ignored` describes the whole stored
+ * document, and a value sent as a whole collection can carry parts the save
+ * did not change, so with the locations the save changes (`changed`,
+ * `WritePlan.changed`) only an item whose owner the save changed is kept
+ * (`credentialOwner`: the custom endpoint, MCP server or object it is set
+ * in). A location a write addressed as a whole is one the save changed, so
+ * it is always kept. A save elsewhere, even in the same section, does not
+ * repeat an item, and one that no longer applies is not reported.
+ */
+function collectReport(
+  body: t.PatchFieldsResponse,
+  lists: { skipped: boolean; ignored: boolean },
+  changed?: t.PathIndex,
+): t.SkippedChange[] {
+  const owned = (item: t.ReportedSkip): boolean =>
+    !changed || pathIndexOverlaps(changed, credentialOwner(segmentsOf(item)));
+  return [
+    ...(lists.skipped ? toSkippedChanges(body.skipped, 'notStored', owned) : []),
+    ...(lists.ignored ? toSkippedChanges(body.ignored, 'notApplied', owned) : []),
+  ];
+}
+
+/**
+ * What a field write's reply says did not take effect (`collectReport`):
+ * `skipped` from a server with `writeReport`, `ignored` with `writeReport`
+ * or from one that drops credentials (`secretRebinding`).
  */
 export function readWriteReport(
   body: t.PatchFieldsResponse,
   features: t.ConfigFeatures,
   changed?: t.PathIndex,
 ): t.SkippedChange[] {
-  const skipped = features.writeReport ? toSkippedChanges(body.skipped, 'notStored') : [];
-  const readsIgnored = features.writeReport || features.secretRebinding;
-  if (!readsIgnored || !Array.isArray(body.ignored)) return skipped;
-  const ignored = changed
-    ? body.ignored.filter((item) => pathIndexOverlaps(changed, credentialOwner(segmentsOf(item))))
-    : body.ignored;
-  return [...skipped, ...toSkippedChanges(ignored, 'notApplied')];
+  const lists = {
+    skipped: features.writeReport,
+    ignored: features.writeReport || features.secretRebinding,
+  };
+  return collectReport(body, lists, changed);
+}
+
+/**
+ * What a `POST …/changes` reply says did not take effect (`changesBatch`,
+ * `collectReport`): a batch reply always lists what it did not store
+ * (`skipped`) and what the runtime merge does not use (`ignored`, its
+ * dropped credentials for the whole stored document).
+ */
+export function readBatchReport(
+  body: t.PatchFieldsResponse,
+  changed: t.PathIndex,
+): t.SkippedChange[] {
+  return collectReport(body, { skipped: true, ignored: true }, changed);
 }

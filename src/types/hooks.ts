@@ -132,6 +132,11 @@ export interface ConfigLayers {
   listOverrideCounts: ReadonlyMap<string, number>;
   /** Every layer `useFieldState` derives provenance and revert targets from. */
   valueLayers: ValueLayers | null;
+  /**
+   * The edit target's stored revision as loaded (`expectedRevision`): `null`
+   * when it has no document, absent when the server reports none.
+   */
+  targetRevision?: string | null;
 }
 
 /** Options for `useTabBadges` (WS4). */
@@ -253,6 +258,7 @@ export interface ConfigSaveOptions {
     | 'overridePaths'
     | 'valueLayers'
     | 'baseActiveConfigValues'
+    | 'targetRevision'
   >;
   edits: Pick<
     ConfigEditsState,
@@ -287,6 +293,15 @@ export interface ConfigSaveState {
   /** One readable line per issue ("GPT › Provider must be "anthropic""). */
   issueSummaries: string[];
   handleConfirmSave: () => Promise<void>;
+  /**
+   * The last save found the target saved elsewhere since the edits were
+   * loaded (`expectedRevision`), and wrote nothing.
+   */
+  conflict: boolean;
+  /** Re-reads the target after a conflict; the edits stay, and the review marks what changed. */
+  reloadLatest: () => Promise<void>;
+  /** Saves the edits over the target as it is stored now: what others saved elsewhere stays. */
+  saveOverLatest: () => Promise<void>;
   openReview: () => void;
   cancelReview: () => void;
   closeReview: () => void;

@@ -41,6 +41,7 @@ import { findYamlManagedValues, getWriteSkipReason } from './writes';
 import { isBlankText, findBlankText, findUnsafeKeys } from './keys';
 import { resolveSubSchema, unwrapSchema } from './schema';
 import { scopeGateSkipReason } from './scopes';
+import { usesChangeBatch } from './contract';
 
 /** Whether a write at `path` sets a process-backed (stdio) MCP server field, which the admin API rejects. */
 export function isProcessMcpWrite(path: string, value: t.ConfigValue): boolean {
@@ -267,8 +268,14 @@ function expandIndexedArraySet(state: PlanState, path: string, value: t.ConfigVa
   return true;
 }
 
+/**
+ * Sorts the ops into the plan. A hide removes what the target stores at and
+ * under its path, so a set there in the same batch is not written: the hide
+ * wins, whatever order the two are written in.
+ */
 function collectOps(state: PlanState, ops: t.ConfigChange[]): void {
   const isProfile = state.snapshot.lowerKind === 'inherited';
+  const sets: Array<[string, t.ConfigValue]> = [];
   for (const op of ops) {
     const isRemoval = op.op === 'reset' || op.op === 'untombstone' || op.op === 'removeEntry';
     const reason =
@@ -278,11 +285,15 @@ function collectOps(state: PlanState, ops: t.ConfigChange[]): void {
       state.skipped.push({ fieldPath: op.path, reason });
       continue;
     }
-    if (op.op === 'set') collectSet(state, op.path, op.value);
+    if (op.op === 'set') sets.push([op.path, op.value]);
     else if (op.op === 'upsertEntry' || op.op === 'removeEntry') addEntryOp(state, op);
     else if (op.op === 'reset') state.resets.push(op.path);
     else if (op.op === 'tombstone') state.tombstones.push(op.path);
     else state.untombstones.push(op.path);
+  }
+  for (const [path, value] of sets) {
+    if (state.tombstones.some((hidden) => isAtOrUnder(path, hidden))) continue;
+    collectSet(state, path, value);
   }
 }
 
@@ -484,10 +495,19 @@ function applyToStored(state: PlanState): t.ConfigRecord {
   return stored;
 }
 
-/** Widens each reset to the highest parent it leaves empty, then returns the stored overrides afterwards. */
+/**
+ * Widens each reset to the highest parent it leaves empty, then returns the
+ * stored overrides afterwards. A server that prunes emptied parents itself
+ * (`prunesEmptyParents`) gets each reset as planned. A stored tombstone the
+ * plan unhides does not stop the widening: the unhide removes it first.
+ */
 function pruneEmptyParents(state: PlanState): t.ConfigRecord {
+  if (state.features.prunesEmptyParents) return applyToStored(state);
   const removed = applyToStored(state);
-  const tombstones = [...state.snapshot.tombstones, ...state.tombstones];
+  const kept = state.snapshot.tombstones.filter(
+    (path) => !state.untombstones.some((shown) => isAtOrUnder(path, shown)),
+  );
+  const tombstones = [...kept, ...state.tombstones];
   const widened = state.resets.map((path) => emptiedAncestor(removed, path, tombstones));
   state.resets = [...new Set(widened)].filter((path) => !hasAncestorIn(path, widened));
   return applyToStored(state);
@@ -568,6 +588,53 @@ function isInCollection(path: string): boolean {
   return findKeyedCollectionEntry(path) !== undefined;
 }
 
+/** The layer beneath without the values `tombstones` hide. */
+function hideAll(lower: t.ConfigRecord, tombstones: Iterable<string>): t.ConfigRecord {
+  let result = lower;
+  for (const path of tombstones) result = removeValueAtPath(result, path);
+  return result;
+}
+
+/**
+ * The target's tombstones once a batch is applied: a set clears those at its
+ * path and above it, a removal those at or below it, and new hides are added.
+ */
+function tombstonesAfter(state: PlanState, sets: readonly string[]): string[] {
+  const removals = [...state.resets, ...state.untombstones];
+  const kept = state.snapshot.tombstones.filter(
+    (tombstone) =>
+      !removals.some((path) => isAtOrUnder(tombstone, path)) &&
+      !sets.some((path) => isAtOrUnder(path, tombstone)),
+  );
+  return [...new Set([...kept, ...state.tombstones])];
+}
+
+/**
+ * The layer beneath the target before and after the write, as LibreChat
+ * validates against it. A change batch (`usesChangeBatch`) is judged on its
+ * end state: the layer without the tombstones the target holds before and
+ * after it, for every section it writes (a hide alone included). Separate
+ * field writes go tombstones first, and LibreChat validates a field PATCH
+ * against the layer without the target's tombstones, so a section the plan
+ * sets values in is validated without the values it hides; a hide alone is
+ * not validated by LibreChat, and is not here either.
+ */
+function validationFloors(
+  state: PlanState,
+  sets: readonly string[],
+): { before: t.ConfigRecord; after: t.ConfigRecord } {
+  const { lower, tombstones } = state.snapshot;
+  if (usesChangeBatch(state.features)) {
+    return {
+      before: hideAll(lower, tombstones),
+      after: hideAll(lower, tombstonesAfter(state, sets)),
+    };
+  }
+  const setSections = new Set(sets.map(getConfigSection));
+  const hidden = state.tombstones.filter((path) => setSections.has(getConfigSection(path)));
+  return { before: lower, after: hideAll(lower, hidden) };
+}
+
 /**
  * Whole-section validation of the merged result (lower layer + overrides
  * after the write), so refinements and required siblings are checked. An
@@ -576,17 +643,17 @@ function isInCollection(path: string): boolean {
  * not block an unrelated write. Collection entries are validated per entry.
  */
 function validateSections(state: PlanState, blocked: ReadonlySet<string>): void {
+  const sets = [...state.sets.keys()].filter((path) => !blocked.has(path));
   let storedAfter = state.snapshot.stored;
-  for (const [path, value] of state.sets) {
-    if (!blocked.has(path)) storedAfter = setValueAtPath(storedAfter, path, value);
-  }
+  for (const path of sets) storedAfter = setValueAtPath(storedAfter, path, state.sets.get(path));
   for (const path of [...state.resets, ...state.tombstones]) {
     storedAfter = removeStored(storedAfter, path);
   }
   const written = [
-    ...[...state.sets.keys()].filter((path) => !blocked.has(path)),
+    ...sets,
     ...state.resets,
     ...state.tombstones,
+    ...(usesChangeBatch(state.features) ? state.untombstones : []),
   ];
   /** LibreChat reads librechat.yaml-only sections from the file alone: removing an override there can't break them. */
   const sections = new Set(
@@ -595,24 +662,11 @@ function validateSections(state: PlanState, blocked: ReadonlySet<string>): void 
       .map(getConfigSection),
   );
   const reported = new Set(state.issues.map(issueKey));
-  const { lower, stored } = state.snapshot;
-  /**
-   * LibreChat validates a field PATCH against the layer beneath without the
-   * target's tombstones (tombstones go first), so a section this batch sets
-   * values in is validated without the values it hides. A hide alone is not
-   * validated by LibreChat, and is not here either.
-   */
-  const setSections = new Set(
-    [...state.sets.keys()].filter((path) => !blocked.has(path)).map(getConfigSection),
-  );
-  const lowerAfter = state.tombstones.reduce<t.ConfigRecord>(
-    (current, path) =>
-      setSections.has(getConfigSection(path)) ? removeValueAtPath(current, path) : current,
-    lower,
-  );
+  const { stored } = state.snapshot;
+  const floors = validationFloors(state, sets);
   for (const section of sections) {
-    const before = mergeConfigLayers(lower[section], stored[section], section);
-    const after = mergeConfigLayers(lowerAfter[section], storedAfter[section], section);
+    const before = mergeConfigLayers(floors.before[section], stored[section], section);
+    const after = mergeConfigLayers(floors.after[section], storedAfter[section], section);
     const existing = new Set(validateSection(section, before).map(issueKey));
     for (const issue of validateSection(section, after)) {
       if (isInCollection(issue.path) || reported.has(issueKey(issue))) continue;
@@ -705,6 +759,31 @@ export function planConfigChanges(
     effective: state.effective,
     changed: changedLocations(state),
   };
+}
+
+function toUnsetOp(fieldPath: string): t.ConfigBatchOp {
+  return { op: 'unset', fieldPath };
+}
+
+/**
+ * A plan as the changes of one `POST …/changes` batch: unhides, hides, sets,
+ * then resets, one `unset` per path a hide or set does not already write (a
+ * batch refuses two changes at one path). An unhide removes everything at and
+ * under its path, so it goes first: after them, it would remove a set or hide
+ * inside it (an MCP server shown again with its URL edited). The server
+ * applies the changes in that order and validates the end state.
+ */
+export function toBatchOps(plan: t.WritePlan): t.ConfigBatchOp[] {
+  const written = new Set([...plan.tombstones, ...plan.sets.map(({ fieldPath }) => fieldPath)]);
+  const unhides = [...new Set(plan.untombstones)].filter((path) => !written.has(path));
+  const removed = new Set([...written, ...unhides]);
+  const resets = [...new Set(plan.resets)].filter((path) => !removed.has(path));
+  return [
+    ...unhides.map(toUnsetOp),
+    ...plan.tombstones.map((fieldPath): t.ConfigBatchOp => ({ op: 'tombstone', fieldPath })),
+    ...plan.sets.map(({ fieldPath, value }): t.ConfigBatchOp => ({ op: 'set', fieldPath, value })),
+    ...resets.map(toUnsetOp),
+  ];
 }
 
 /** Keys the admin API redacts on read (secrets and their preview companions). */

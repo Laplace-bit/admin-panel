@@ -4,6 +4,7 @@ import { PrincipalType } from 'librechat-data-provider';
 import { SystemCapabilities } from '@librechat/data-schemas/capabilities';
 import type * as t from '@/types';
 import {
+  toBatchOps,
   verifyWrite,
   getEntryKey,
   reportedPath,
@@ -11,19 +12,24 @@ import {
   isConfigRecord,
   getValueAtPath,
   readWriteReport,
+  readBatchReport,
+  usesChangeBatch,
   createPathIndex,
   describeApiError,
   planConfigChanges,
   describeIssueCode,
+  pathIndexOverlaps,
   getKeyedCollection,
   getWriteSkipReason,
   classifyReportedIssue,
+  toRevisionPrecondition,
   stripSecretPreviewValues,
 } from '@/utils';
 import {
   getWriteRules,
   getConfigSection,
   MERGED_BACK_REASONS,
+  VERSION_CONFLICT_CODE,
   TERMS_NOT_ACCEPTED_CODE,
   TERMS_NOT_ACCEPTED_ISSUE,
 } from '@/constants';
@@ -73,22 +79,24 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 /**
- * The target's stored overrides (redacted by the admin API) and tombstones;
- * none when base has no config yet. A profile whose document is gone is
- * refused (PR-3): the admin API would otherwise silently recreate it, active
- * and at the default priority.
+ * The target's stored overrides (redacted by the admin API), tombstones and
+ * revision (`expectedRevision`); none, and a `null` revision, when base has
+ * no config yet. A profile whose document is gone is refused (PR-3): the
+ * admin API would otherwise silently recreate it, active and at the default
+ * priority.
  */
 async function readStoredLayer(
   target: t.WriteTargetRef,
-): Promise<Pick<t.WriteSnapshot, 'stored' | 'tombstones'>> {
+): Promise<Pick<t.WriteSnapshot, 'stored' | 'tombstones' | 'revision'>> {
   const response = await apiFetch(targetConfigUrl(target));
   if (response.status === 404 && target.type === 'scope') throw new Error(MISSING_SCOPE_MESSAGE);
-  if (response.status === 404) return { stored: {}, tombstones: [] };
+  if (response.status === 404) return { stored: {}, tombstones: [], revision: null };
   if (!response.ok) throw new Error(`Failed to read the stored config: ${response.status}`);
   const { config } = await readJson<t.AdminConfigDocResponse>(response);
   return {
     stored: normalizeAppServiceKeys((config?.overrides ?? {}) as t.ConfigRecord),
     tombstones: config?.tombstones ?? [],
+    ...(typeof config?.revision === 'string' && { revision: config.revision }),
   };
 }
 
@@ -208,6 +216,17 @@ async function failureIssues(
   batch: t.SaveEntry[] = [],
 ): Promise<t.ConfigIssue[]> {
   const body = await readJson<t.PatchFieldsResponse & { section?: string }>(response);
+  return describeFailure(body, response.status, path, features, batch);
+}
+
+/** A refused write as issues: the values it rejected, else the refusal itself, located at `path`. */
+function describeFailure(
+  body: t.PatchFieldsResponse & { section?: string },
+  status: number,
+  path: string,
+  features: t.ConfigFeatures,
+  batch: t.SaveEntry[],
+): t.ConfigIssue[] {
   if (Array.isArray(body.issues) && body.issues.length > 0) {
     return body.issues.map((issue) => attributeBackendIssue(issue, batch, features));
   }
@@ -225,8 +244,10 @@ async function failureIssues(
     describeApiError(body) ??
     body.error ??
     body.message ??
-    `The admin API rejected the change (${response.status})`;
-  return [{ path, code: 'WRITE_FAILED', message }];
+    `The admin API rejected the change (${status})`;
+  return [
+    { path, code: body.code === VERSION_CONFLICT_CODE ? body.code : 'WRITE_FAILED', message },
+  ];
 }
 
 interface WriteOutcome {
@@ -239,20 +260,19 @@ interface WriteOutcome {
 }
 
 /**
- * Files what a write's reply reports (`readWriteReport`, for the locations
- * the save changes): a location the write addressed as a whole is `dropped`,
- * a part of it only `reported`. Before `writeReport`, a PATCH's dropped
- * entries are read from the stored sections (`findDroppedEntries`).
+ * Files what a write's reply reports (`readWriteReport`, `readBatchReport`,
+ * for the locations the save changes): a location the write addressed as a
+ * whole is `dropped`, a part of it only `reported`. Before `writeReport`, a
+ * PATCH's dropped entries are read from the stored sections
+ * (`findDroppedEntries`).
  */
 function fileWriteReport(
-  outcome: WriteOutcome,
-  body: t.PatchFieldsResponse,
+  outcome: Pick<WriteOutcome, 'dropped' | 'reported'>,
+  items: t.SkippedChange[],
   written: readonly string[],
-  features: t.ConfigFeatures,
-  changed: t.PathIndex,
 ): void {
   const whole = new Set(written);
-  for (const item of readWriteReport(body, features, changed)) {
+  for (const item of items) {
     (whole.has(item.fieldPath) ? outcome.dropped : outcome.reported).push(item);
   }
 }
@@ -289,7 +309,7 @@ async function patchFields(
         })),
       );
     }
-    fileWriteReport(outcome, body, paths, features, changed);
+    fileWriteReport(outcome, readWriteReport(body, features, changed), paths);
   }
   return true;
 }
@@ -327,20 +347,24 @@ async function writeFieldOps(
     outcome.writes.push({ kind, path });
     if (response.ok) {
       const body = await readJson<t.PatchFieldsResponse>(response);
-      fileWriteReport(outcome, body, [path], features, changed);
+      fileWriteReport(outcome, readWriteReport(body, features, changed), [path]);
     }
   }
   return true;
 }
 
 /**
- * Writes a plan in a fixed order: tombstones, then every set (one PATCH per
- * 100 entries), then resets and untombstones. Tombstones go first because
- * LibreChat validates a PATCH against the layer beneath minus the target's
- * stored tombstones: switching `memory.agent` from a librechat.yaml `id` to
- * an inline provider/model only validates once `memory.agent.id` is hidden.
- * Sets precede resets, so a rename writes the new entry before removing the
- * old one. Stops at the first failure.
+ * Before `changesBatch`, writes a plan as separate field writes in a fixed
+ * order: untombstones, tombstones, then every set (one PATCH per
+ * `maxPatchEntries` entries), then resets. An untombstone removes everything
+ * at and under its path, so it goes first: after them, it would remove a set
+ * or tombstone inside it (an MCP server shown again with its URL edited).
+ * Tombstones precede sets because LibreChat validates a PATCH against the
+ * layer beneath minus the target's stored tombstones: switching
+ * `memory.agent` from a librechat.yaml `id` to an inline provider/model only
+ * validates once `memory.agent.id` is hidden. Sets precede resets, so a
+ * rename writes the new entry before removing the old one. Stops at the
+ * first failure.
  */
 async function executePlan(
   target: t.WriteTargetRef,
@@ -351,10 +375,10 @@ async function executePlan(
   const { features } = contract;
   const changed = createPathIndex(plan.changed);
   const steps = [
+    () => writeFieldOps(target, 'untombstone', plan.untombstones, outcome, features, changed),
     () => writeFieldOps(target, 'tombstone', plan.tombstones, outcome, features, changed),
     () => patchFields(target, plan.sets, outcome, contract, changed),
     () => writeFieldOps(target, 'reset', plan.resets, outcome, features, changed),
-    () => writeFieldOps(target, 'untombstone', plan.untombstones, outcome, features, changed),
   ];
   try {
     for (const step of steps) {
@@ -449,27 +473,9 @@ function hasWrites(plan: t.WritePlan): boolean {
   );
 }
 
-/**
- * The one write path for config changes (SV-1/SV-2/SV-4). Reads the target's
- * stored overrides and the layer beneath it, and the server's contract
- * (`readConfigContract`), plans the changes against them
- * (`planConfigChanges`: keyed collection ops by identity, validation of
- * fields, entries and whole sections, write rules), and writes nothing when
- * any issue is found. Otherwise it writes tombstones, sets, then resets;
- * if a write fails, the writes before it are rolled back to the captured
- * overrides. Afterwards the stored (and, for base, effective) config is read
- * back, and every change that did not take effect is reported in `skipped`.
- */
-export async function applyConfigChanges(
-  target: t.WriteTargetRef,
-  ops: t.ConfigChange[],
-): Promise<t.ApplyConfigChangesResult> {
-  const contract = await readConfigContract();
-  const rules = getWriteRules(contract);
-  await authorizeWrite(target, ops, rules);
-  const snapshot = await readWriteSnapshot(target);
-  const plan = planConfigChanges(sanitizeOps(ops), snapshot, contract.features, rules);
-  const result: t.ApplyConfigChangesResult = {
+/** What a plan reports before anything is written. */
+function planResult(plan: t.WritePlan): t.ApplyConfigChangesResult {
+  return {
     applied: 0,
     failed: [],
     warnings: plan.warnings,
@@ -477,11 +483,49 @@ export async function applyConfigChanges(
     skipped: plan.skipped,
     reported: [],
   };
-  if (plan.issues.length > 0 || !hasWrites(plan)) return result;
+}
+
+/**
+ * A written plan's result: the input changes that took effect (every change
+ * not reported or found ineffective, merged-back keys aside), each that did
+ * not, with why (`skipped`), and apart from them the parts of written ones
+ * the server reported (`reported`, once each however many writes repeat them).
+ */
+function writtenResult(
+  plan: t.WritePlan,
+  reported: Pick<WriteOutcome, 'dropped' | 'reported'>,
+  verified: t.SkippedChange[],
+): t.ApplyConfigChangesResult {
+  const notEffective = [...reported.dropped, ...verified];
+  const lost = new Set(
+    notEffective
+      .filter((item) => !MERGED_BACK_REASONS.has(item.reason))
+      .map((item) => item.fieldPath),
+  );
+  return {
+    ...planResult(plan),
+    applied: Math.max(0, plan.effective - lost.size),
+    skipped: [...plan.skipped, ...notEffective],
+    reported: uniqueSkipped(reported.reported),
+  };
+}
+
+/**
+ * Before `changesBatch`: tombstones, sets, then resets as separate field
+ * writes; if a write fails, the writes before it are rolled back to the
+ * captured overrides. Afterwards the stored (and, for base, effective)
+ * config is read back for what did not take effect.
+ */
+async function applyFieldWrites(
+  target: t.WriteTargetRef,
+  plan: t.WritePlan,
+  snapshot: t.WriteSnapshot,
+  contract: t.ConfigContract,
+): Promise<t.ApplyConfigChangesResult> {
   const outcome = await executePlan(target, plan, contract);
   if (outcome.failure) {
     const compensated = await compensate(target, outcome.writes, snapshot.stored);
-    return { ...result, failed: outcome.failure, compensated };
+    return { ...planResult(plan), failed: outcome.failure, compensated };
   }
   const reportedPaths = new Set(
     [...outcome.dropped, ...outcome.reported].map((item) => item.fieldPath),
@@ -490,18 +534,191 @@ export async function applyConfigChanges(
   const verified = (await verifyTarget(target, plan, snapshot)).filter(
     (item) => !reportedPaths.has(item.fieldPath),
   );
-  const notEffective = [...outcome.dropped, ...verified];
-  const lost = new Set(
-    notEffective
-      .filter((item) => !MERGED_BACK_REASONS.has(item.reason))
-      .map((item) => item.fieldPath),
+  return writtenResult(plan, outcome, verified);
+}
+
+interface BatchOutcome extends Pick<WriteOutcome, 'dropped' | 'reported' | 'failure'> {
+  /** 409: the target is no longer at the revision the batch named. */
+  conflict?: boolean;
+  /** A batch failed after earlier batches of the plan were written. */
+  partial?: boolean;
+  /** The target's stored overrides after the last batch, as its reply returned them. */
+  stored?: t.ConfigRecord;
+}
+
+/** A refused batch as issues, located at the change it names (`opIndex`). */
+function batchFailure(
+  body: t.ChangesBatchResponse & { section?: string },
+  status: number,
+  ops: t.ConfigBatchOp[],
+  features: t.ConfigFeatures,
+): t.ConfigIssue[] {
+  const refused = body.opIndex === undefined ? undefined : ops[body.opIndex];
+  const sets = ops.flatMap((op): t.SaveEntry[] =>
+    op.op === 'set' ? [{ fieldPath: op.fieldPath, value: op.value }] : [],
   );
-  return {
-    ...result,
-    applied: Math.max(0, plan.effective - lost.size),
-    skipped: [...plan.skipped, ...notEffective],
-    reported: uniqueSkipped(outcome.reported),
-  };
+  return describeFailure(body, status, (refused ?? ops[0]).fieldPath, features, sets);
+}
+
+/**
+ * Writes a plan as `POST …/changes` batches (`changesBatch`): one batch, or
+ * one per `maxChangeOps` changes for a larger plan, each named by the
+ * revision the one before it left. A batch applies whole or not at all, so
+ * nothing is rolled back by hand; a failure after earlier batches were
+ * written is `partial`.
+ */
+async function writeBatches(
+  target: t.WriteTargetRef,
+  plan: t.WritePlan,
+  contract: t.ConfigContract,
+  revision: string | undefined,
+): Promise<BatchOutcome> {
+  const ops = toBatchOps(plan);
+  const changed = createPathIndex(plan.changed);
+  const { features, limits } = contract;
+  const size = limits.maxChangeOps > 0 ? limits.maxChangeOps : ops.length;
+  const priority = target.type === 'base' ? { priority: 0 } : {};
+  const outcome: BatchOutcome = { dropped: [], reported: [] };
+  let expected = revision;
+  let start = 0;
+  try {
+    for (; start < ops.length; start += size) {
+      const batch = ops.slice(start, start + size);
+      const response = await apiFetch(`${targetConfigUrl(target)}/changes`, {
+        method: 'POST',
+        body: JSON.stringify({
+          ops: batch,
+          ...priority,
+          ...(expected !== undefined && { expectedRevision: expected }),
+        }),
+      });
+      const body = await readJson<t.ChangesBatchResponse & { section?: string }>(response);
+      if (!response.ok) {
+        outcome.conflict = response.status === 409 && body.code === VERSION_CONFLICT_CODE;
+        outcome.failure = batchFailure(body, response.status, batch, features);
+        outcome.partial = start > 0;
+        return outcome;
+      }
+      const written = batch.map(({ fieldPath }) => fieldPath);
+      fileWriteReport(outcome, readBatchReport(body, changed), written);
+      expected = toRevisionPrecondition(body.revision);
+      const stored = body.config?.overrides;
+      if (isConfigRecord(stored)) outcome.stored = normalizeAppServiceKeys(stored);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    outcome.failure = [{ path: '', code: 'WRITE_FAILED', message }];
+    outcome.partial = start > 0;
+  }
+  return outcome;
+}
+
+/**
+ * What a written batch did not make take effect beyond what its reply
+ * reported: the stored overrides the reply returned, checked against the
+ * plan, and for Base the effective config, read once where the server
+ * clears its caches before replying (`awaitedInvalidation`). A finding at,
+ * inside or around a location the reply reported is that same change.
+ */
+async function verifyBatch(
+  target: t.WriteTargetRef,
+  plan: t.WritePlan,
+  snapshot: t.WriteSnapshot,
+  outcome: BatchOutcome,
+  features: t.ConfigFeatures,
+): Promise<t.SkippedChange[]> {
+  const reported = createPathIndex(
+    [...outcome.dropped, ...outcome.reported].map((item) => item.fieldPath),
+  );
+  const readsEffective = target.type === 'base' && features.awaitedInvalidation;
+  const effective = readsEffective ? await readBaseConfig(false).catch(() => undefined) : undefined;
+  return verifyWrite(plan, snapshot, outcome.stored ?? plan.storedAfter, effective).filter(
+    (item) => !pathIndexOverlaps(reported, item.fieldPath),
+  );
+}
+
+const CONFLICT_ISSUE: t.ConfigIssue = {
+  path: '',
+  code: VERSION_CONFLICT_CODE,
+  message:
+    describeApiError({ code: VERSION_CONFLICT_CODE }) ?? 'The configuration changed elsewhere',
+};
+
+/** The result of a save that found the target changed since `expectedRevision`: nothing was written. */
+function conflictResult(plan?: t.WritePlan): t.ApplyConfigChangesResult {
+  const result = plan
+    ? planResult(plan)
+    : { applied: 0, warnings: [], issues: [], skipped: [], reported: [] };
+  return { ...result, failed: [CONFLICT_ISSUE], conflict: true };
+}
+
+/**
+ * With `changesBatch`: the plan is written as one `POST …/changes` batch
+ * (`writeBatches`) named by the revision it was planned against. The edits
+ * were made against `expectedRevision`: when the target is stored at another
+ * revision now, or a write lands between the read and the batch (409),
+ * nothing is written and the result is a `conflict`. Without one (an import),
+ * a batch that loses that race is planned and sent once more. A 409 on a
+ * later batch of a split save (`maxChangeOps`) is `partiallyWritten`, not a
+ * conflict: the batches before it stay saved.
+ */
+async function applyBatch(
+  target: t.WriteTargetRef,
+  ops: t.ConfigChange[],
+  contract: t.ConfigContract,
+  rules: t.ConfigWriteRules,
+  expectedRevision: string | undefined,
+): Promise<t.ApplyConfigChangesResult> {
+  for (let attempt = 0; ; attempt++) {
+    const snapshot = await readWriteSnapshot(target);
+    const revision = toRevisionPrecondition(snapshot.revision);
+    const comparable = revision !== undefined && expectedRevision !== undefined;
+    if (comparable && revision !== expectedRevision) {
+      return conflictResult();
+    }
+    const plan = planConfigChanges(sanitizeOps(ops), snapshot, contract.features, rules);
+    if (plan.issues.length > 0 || !hasWrites(plan)) return planResult(plan);
+    const outcome = await writeBatches(target, plan, contract, revision);
+    const retry = outcome.conflict && !outcome.partial && expectedRevision === undefined;
+    if (retry && attempt === 0) continue;
+    if (outcome.failure) {
+      return {
+        ...(outcome.conflict && !outcome.partial ? conflictResult(plan) : planResult(plan)),
+        failed: outcome.failure,
+        ...(outcome.partial && { partiallyWritten: true }),
+      };
+    }
+    const verified = await verifyBatch(target, plan, snapshot, outcome, contract.features);
+    return writtenResult(plan, outcome, verified);
+  }
+}
+
+/**
+ * The one write path for config changes (SV-1/SV-2/SV-4). Reads the target's
+ * stored overrides and the layer beneath it, and the server's contract
+ * (`readConfigContract`), plans the changes against them
+ * (`planConfigChanges`: keyed collection ops by identity, validation of
+ * fields, entries and whole sections, write rules), and writes nothing when
+ * any issue is found. A server with `changesBatch` and `expectedRevision`
+ * takes the plan as one atomic batch (`applyBatch`); an older one as
+ * separate field writes (`applyFieldWrites`). Every change that did not take
+ * effect is reported in `skipped`.
+ */
+export async function applyConfigChanges(
+  target: t.WriteTargetRef,
+  ops: t.ConfigChange[],
+  expectedRevision?: string,
+): Promise<t.ApplyConfigChangesResult> {
+  const contract = await readConfigContract();
+  const rules = getWriteRules(contract);
+  await authorizeWrite(target, ops, rules);
+  if (usesChangeBatch(contract.features)) {
+    return applyBatch(target, ops, contract, rules, expectedRevision);
+  }
+  const snapshot = await readWriteSnapshot(target);
+  const plan = planConfigChanges(sanitizeOps(ops), snapshot, contract.features, rules);
+  if (plan.issues.length > 0 || !hasWrites(plan)) return planResult(plan);
+  return applyFieldWrites(target, plan, snapshot, contract);
 }
 
 const writeTargetSchema = z.discriminatedUnion('type', [
@@ -536,18 +753,25 @@ const configChangeSchema = z.discriminatedUnion('op', [
   }),
 ]);
 
-/** Applies a batch of config changes to base or a profile, all or nothing (see `applyConfigChanges`). */
+/**
+ * Applies a batch of config changes to base or a profile, all or nothing,
+ * unless the target changed since `expectedRevision` (see `applyConfigChanges`).
+ */
 export const applyConfigChangesFn = createServerFn({ method: 'POST' })
   .inputValidator(
     z.object({
       target: writeTargetSchema,
       ops: z.array(configChangeSchema).min(1).max(2000),
-      expectedVersion: z.number().int().optional(),
+      expectedRevision: z.string().min(1).max(200).optional(),
     }),
   )
   .handler(
     ({ data }): Promise<t.ApplyConfigChangesResult> =>
-      applyConfigChanges(data.target as t.WriteTargetRef, data.ops as t.ConfigChange[]),
+      applyConfigChanges(
+        data.target as t.WriteTargetRef,
+        data.ops as t.ConfigChange[],
+        data.expectedRevision,
+      ),
   );
 
 /** Deletes the entire base config DB override, reverting every value back to
