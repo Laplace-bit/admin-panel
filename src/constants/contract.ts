@@ -1,0 +1,127 @@
+import {
+  configSchema,
+  PERMISSION_SUB_KEYS,
+  INTERFACE_PERMISSION_FIELDS,
+  BASE_PRINCIPAL_CONFIG_SECTIONS,
+  RUNTIME_CONFIG_INTERFACE_FIELDS,
+} from 'librechat-data-provider';
+import type * as t from '@/types';
+import { APP_SERVICE_KEY_ALIASES, READ_ONLY_CONFIG_SECTIONS } from './config';
+import { KEYED_COLLECTIONS } from './collections';
+
+/** Every flag of the admin config contract the panel reads. */
+export const CONFIG_FEATURE_FLAGS: readonly t.ConfigFeatureFlag[] = [
+  'dottedKeys',
+  'sectionAllowlist',
+  'readFilteredWriteResponses',
+  'preAuthBaseOverrides',
+  'webSearchStoredKeys',
+  'expectedRevision',
+  'prunesEmptyParents',
+  'awaitedInvalidation',
+  'changesBatch',
+  'yamlMcpHide',
+  'deterministicPrecedence',
+  'priorityRoute',
+  'principalCheck',
+  'roleRenameMovesProfile',
+  'recordSecrets',
+  'azureGroupSecrets',
+  'yamlSecretPreview',
+  'envAllowlist',
+  'secretRebinding',
+];
+
+/** A server without the meta route (or one that leaves a flag out) has none of these behaviours. */
+export const BUNDLED_CONFIG_FEATURES: t.ConfigFeatures = Object.fromEntries(
+  CONFIG_FEATURE_FLAGS.map((flag) => [flag, false]),
+) as Record<t.ConfigFeatureFlag, boolean>;
+
+/** The limits LibreChat enforced before it reported them. */
+export const BUNDLED_CONFIG_LIMITS: t.ConfigLimits = {
+  maxPatchEntries: 100,
+  maxChangeOps: 0,
+  overrideCacheTtlMs: 60_000,
+};
+
+/** A stdio MCP server's process fields: only librechat.yaml sets them (D10). */
+export const PROCESS_MCP_FIELDS: readonly string[] = ['command', 'args', 'env', 'cwd', 'stderr'];
+
+/** Secrets LibreChat encrypted before it reported its registry (`${VAR}` references stay readable). */
+const BUNDLED_SECRET_PATHS: ReadonlyArray<[path: string, allowEnvPlaceholder: boolean]> = [
+  ['langfuse.secretKey', false],
+  ['ocr.apiKey', true],
+  ['speech.tts.openai.apiKey', true],
+  ['speech.tts.azureOpenAI.apiKey', true],
+  ['speech.tts.elevenlabs.apiKey', true],
+  ['speech.tts.localai.apiKey', true],
+  ['speech.stt.openai.apiKey', true],
+  ['speech.stt.azureOpenAI.apiKey', true],
+  ['webSearch.serperApiKey', true],
+  ['webSearch.searxngApiKey', true],
+  ['webSearch.firecrawlApiKey', true],
+  ['webSearch.tavilyApiKey', true],
+  ['webSearch.jinaApiKey', true],
+  ['webSearch.cohereApiKey', true],
+  ['endpoints.assistants.apiKey', true],
+  ['endpoints.azureAssistants.apiKey', true],
+];
+
+const keyedCollections = [...KEYED_COLLECTIONS.values()];
+
+/**
+ * The write rules of a LibreChat server that does not report its own, as the
+ * panel knows them: the bundled config schema and data-provider constants,
+ * and the panel's mirrors of LibreChat's merge rules.
+ */
+export const BUNDLED_CONFIG_RULES: t.ConfigRules = {
+  acceptedSections: Object.keys(configSchema.shape),
+  baseOnlySections: [...READ_ONLY_CONFIG_SECTIONS]
+    .filter(([, reason]) => reason === 'baseOnly')
+    .map(([section]) => section),
+  basePrincipalSections: [...BASE_PRINCIPAL_CONFIG_SECTIONS],
+  baseOnlyPaths: [],
+  arrayMergeKeys: Object.fromEntries(
+    keyedCollections
+      .filter((collection) => collection.merge === 'byKey')
+      .map((collection) => [collection.path, collection.key]),
+  ),
+  atomicMergePaths: ['interface.theme'],
+  overrideKeyMap: Object.fromEntries(
+    Object.entries(APP_SERVICE_KEY_ALIASES).map(([alias, section]) => [section, alias]),
+  ),
+  secretFields: BUNDLED_SECRET_PATHS.map(([path, allowEnvPlaceholder]) => ({
+    path,
+    previewPath: `${path}Preview`,
+    allowEnvPlaceholder,
+  })),
+  arraySecretFields: keyedCollections.flatMap((collection) =>
+    collection.secret
+      ? [
+          {
+            arrayPath: collection.path,
+            secretKey: collection.secret.key,
+            previewKey: collection.secret.preview,
+            identityKey: collection.key,
+          },
+        ]
+      : [],
+  ),
+  recordSecretFields: [],
+  refusedMaps: ['langfuse.headers'],
+  processMcpFields: [...PROCESS_MCP_FIELDS],
+  interface: {
+    permissionFields: [...INTERFACE_PERMISSION_FIELDS],
+    runtimeFields: [...RUNTIME_CONFIG_INTERFACE_FIELDS],
+    permissionSubKeys: [...PERMISSION_SUB_KEYS],
+  },
+  titleResolution: 'block',
+};
+
+/** The contract of a LibreChat server without `GET /api/admin/config/meta`: every behaviour as before it. */
+export const BUNDLED_CONFIG_CONTRACT: t.ConfigContract = {
+  source: 'bundled',
+  features: BUNDLED_CONFIG_FEATURES,
+  limits: BUNDLED_CONFIG_LIMITS,
+  rules: BUNDLED_CONFIG_RULES,
+};

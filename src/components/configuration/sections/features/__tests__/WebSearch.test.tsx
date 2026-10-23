@@ -95,12 +95,17 @@ describe('WebSearchRenderer', () => {
   });
 
   it('masks a typed key and says it will be stored encrypted', () => {
-    renderSection(WebSearchRenderer, { section: 'webSearch', yaml: YAML });
+    renderSection(WebSearchRenderer, {
+      section: 'webSearch',
+      yaml: YAML,
+      features: { webSearchStoredKeys: true },
+    });
     const key = screen.getByLabelText('Cohere API key');
     fireEvent.change(key, { target: { value: 'co-secret-1234567890' } });
     expect(key).toHaveAttribute('type', 'password');
     fireEvent.blur(key);
     expect(screen.getByText('Will be stored encrypted when you save.')).toBeInTheDocument();
+    expect(screen.queryByText(/environment variable references/)).not.toBeInTheDocument();
   });
 
   it('shows a stored key only as its masked preview, with Replace', () => {
@@ -108,12 +113,44 @@ describe('WebSearchRenderer', () => {
       section: 'webSearch',
       yaml: YAML,
       overrides: { webSearch: { cohereApiKeyPreview: '...7890' } },
+      features: { webSearchStoredKeys: true },
     });
     expect(screen.getByDisplayValue('...7890')).toBeDisabled();
     expect(screen.getByRole('button', { name: /Replace/ })).toBeInTheDocument();
     expect(
       screen.getByText('Stored encrypted. Only the last characters are shown.'),
     ).toBeInTheDocument();
+  });
+
+  describe('on a server that reads web search values only from ${VAR} references', () => {
+    const ENV_ONLY = /only from environment variable references such as \$\{COHERE_API_KEY\}/;
+
+    it('warns that a typed key is ignored', () => {
+      renderSection(WebSearchRenderer, { section: 'webSearch', yaml: YAML });
+      const key = screen.getByLabelText('Cohere API key');
+      fireEvent.change(key, { target: { value: 'co-secret-1234567890' } });
+      fireEvent.blur(key);
+      expect(screen.getByText(ENV_ONLY)).toBeInTheDocument();
+      expect(screen.queryByText('Will be stored encrypted when you save.')).not.toBeInTheDocument();
+    });
+
+    it('warns that a stored key is ignored', () => {
+      renderSection(WebSearchRenderer, {
+        section: 'webSearch',
+        yaml: YAML,
+        overrides: { webSearch: { cohereApiKeyPreview: '...7890' } },
+      });
+      expect(screen.getByDisplayValue('...7890')).toBeDisabled();
+      expect(screen.getByText(ENV_ONLY)).toBeInTheDocument();
+    });
+
+    it('does not warn about a ${VAR} reference', () => {
+      renderSection(WebSearchRenderer, {
+        section: 'webSearch',
+        yaml: { webSearch: { ...YAML.webSearch, cohereApiKey: '${COHERE_API_KEY}' } },
+      });
+      expect(screen.queryByText(ENV_ONLY)).not.toBeInTheDocument();
+    });
   });
 
   it('flags a required credential a selected service is missing', () => {

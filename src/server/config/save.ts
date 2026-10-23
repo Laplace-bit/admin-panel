@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { createServerFn } from '@tanstack/react-start';
 import { PrincipalType } from 'librechat-data-provider';
 import { SystemCapabilities } from '@librechat/data-schemas/capabilities';
-import type { AdminConfigResponse } from '@librechat/data-schemas';
 import type * as t from '@/types';
 import {
   verifyWrite,
@@ -13,26 +12,30 @@ import {
   getKeyedCollection,
   getWriteSkipReason,
   describeIssueCode,
+  paramlessIssueCode,
   stripSecretPreviewValues,
 } from '@/utils';
+import {
+  getConfigSection,
+  MERGED_BACK_REASONS,
+  TERMS_NOT_ACCEPTED_CODE,
+  TERMS_NOT_ACCEPTED_ISSUE,
+} from '@/constants';
 import {
   requireCapability,
   requireAnyCapability,
   requireAllSectionCapabilities,
 } from '../capabilities';
-import { getConfigSection, TERMS_NOT_ACCEPTED_CODE, TERMS_NOT_ACCEPTED_ISSUE } from '@/constants';
 import { apiErrorMessage, apiFetch } from '../utils/api';
 import { BASE_CONFIG_PRINCIPAL_ID } from '../constants';
 import { MISSING_SCOPE_MESSAGE } from '../scopes/read';
 import { normalizeAppServiceKeys } from './normalize';
 import { safeFieldPath } from '../utils/validation';
 import { getApiBaseUrl } from '../utils/url';
+import { readConfigContract } from './meta';
 import { getSchemaPathSet } from './schema';
 
 export { parseIndexedArrayPath } from '@/utils';
-
-/** The admin API accepts at most this many entries per PATCH. */
-const MAX_PATCH_ENTRIES = 100;
 
 /** How long to wait before re-reading the effective config once (LibreChat clears its caches asynchronously). */
 const VERIFY_RETRY_MS = 400;
@@ -64,18 +67,28 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 /**
- * The target's stored overrides (redacted by the admin API); `{}` when base
- * has no config yet. A profile whose document is gone is refused (PR-3): the
- * admin API would otherwise silently recreate it, active and at the default
- * priority.
+ * The target's stored overrides (redacted by the admin API) and tombstones;
+ * none when base has no config yet. A profile whose document is gone is
+ * refused (PR-3): the admin API would otherwise silently recreate it, active
+ * and at the default priority.
  */
-async function readStoredOverrides(target: t.WriteTargetRef): Promise<t.ConfigRecord> {
+async function readStoredLayer(
+  target: t.WriteTargetRef,
+): Promise<Pick<t.WriteSnapshot, 'stored' | 'tombstones'>> {
   const response = await apiFetch(targetConfigUrl(target));
   if (response.status === 404 && target.type === 'scope') throw new Error(MISSING_SCOPE_MESSAGE);
-  if (response.status === 404) return {};
+  if (response.status === 404) return { stored: {}, tombstones: [] };
   if (!response.ok) throw new Error(`Failed to read the stored config: ${response.status}`);
-  const { config } = await readJson<AdminConfigResponse>(response);
-  return normalizeAppServiceKeys((config?.overrides ?? {}) as t.ConfigRecord);
+  const { config } = await readJson<t.AdminConfigDocResponse>(response);
+  return {
+    stored: normalizeAppServiceKeys((config?.overrides ?? {}) as t.ConfigRecord),
+    tombstones: config?.tombstones ?? [],
+  };
+}
+
+/** The target's stored overrides (see `readStoredLayer`). */
+async function readStoredOverrides(target: t.WriteTargetRef): Promise<t.ConfigRecord> {
+  return (await readStoredLayer(target)).stored;
 }
 
 /** The base config: merged with the base overrides, or librechat.yaml alone (`baseOnly`). */
@@ -88,13 +101,13 @@ async function readBaseConfig(baseOnly: boolean): Promise<t.ConfigRecord> {
 
 /**
  * The layers a write is planned against, read fresh: the target's stored
- * overrides and the layer beneath it (librechat.yaml for base, the merged
- * base config for a profile).
+ * overrides and tombstones and the layer beneath it (librechat.yaml for base,
+ * the merged base config for a profile).
  */
 async function readWriteSnapshot(target: t.WriteTargetRef): Promise<t.WriteSnapshot> {
   const isBase = target.type === 'base';
-  const [stored, lower] = await Promise.all([readStoredOverrides(target), readBaseConfig(isBase)]);
-  return { stored, lower, lowerKind: isBase ? 'yaml' : 'inherited' };
+  const [own, lower] = await Promise.all([readStoredLayer(target), readBaseConfig(isBase)]);
+  return { ...own, lower, lowerKind: isBase ? 'yaml' : 'inherited' };
 }
 
 async function authorizeWrite(target: t.WriteTargetRef, ops: t.ConfigChange[]): Promise<void> {
@@ -137,10 +150,12 @@ function sanitizeOps(ops: t.ConfigChange[]): t.ConfigChange[] {
 /**
  * A rejected value the admin API reported by path. Paths index into the
  * array that was sent, so an index inside a keyed collection is mapped to the
- * identity of that sent entry.
+ * identity of that sent entry. The admin API reports codes without their
+ * parameters, so a code whose message needs one (`too_small`'s minimum) is
+ * worded without it.
  */
 function attributeBackendIssue(path: string, code: string, batch: t.SaveEntry[]): t.ConfigIssue {
-  const message = describeIssueCode(code, undefined, 'is not a valid value');
+  const message = describeIssueCode(paramlessIssueCode(code), undefined, 'is not a valid value');
   const sent = batch.find(
     ({ fieldPath }) => path === fieldPath || path.startsWith(`${fieldPath}.`),
   );
@@ -183,14 +198,16 @@ interface WriteOutcome {
   failure?: t.ConfigIssue[];
 }
 
+/** Sets in PATCHes of at most the server's `maxPatchEntries` entries each. */
 async function patchFields(
   target: t.WriteTargetRef,
   entries: t.SaveEntry[],
   outcome: WriteOutcome,
+  maxEntries: number,
 ): Promise<boolean> {
   const priority = target.type === 'base' ? { priority: 0 } : {};
-  for (let i = 0; i < entries.length; i += MAX_PATCH_ENTRIES) {
-    const batch = entries.slice(i, i + MAX_PATCH_ENTRIES);
+  for (let i = 0; i < entries.length; i += maxEntries) {
+    const batch = entries.slice(i, i + maxEntries);
     const response = await apiFetch(`${targetConfigUrl(target)}/fields`, {
       method: 'PATCH',
       body: JSON.stringify({ entries: batch, ...priority }),
@@ -255,11 +272,15 @@ async function writeFieldOps(
  * Sets precede resets, so a rename writes the new entry before removing the
  * old one. Stops at the first failure.
  */
-async function executePlan(target: t.WriteTargetRef, plan: t.WritePlan): Promise<WriteOutcome> {
+async function executePlan(
+  target: t.WriteTargetRef,
+  plan: t.WritePlan,
+  contract: t.ConfigContract,
+): Promise<WriteOutcome> {
   const outcome: WriteOutcome = { writes: [], dropped: [] };
   const steps = [
     () => writeFieldOps(target, 'tombstone', plan.tombstones, outcome),
-    () => patchFields(target, plan.sets, outcome),
+    () => patchFields(target, plan.sets, outcome, contract.limits.maxPatchEntries),
     () => writeFieldOps(target, 'reset', plan.resets, outcome),
     () => writeFieldOps(target, 'untombstone', plan.untombstones, outcome),
   ];
@@ -358,7 +379,8 @@ function hasWrites(plan: t.WritePlan): boolean {
 
 /**
  * The one write path for config changes (SV-1/SV-2/SV-4). Reads the target's
- * stored overrides and the layer beneath it, plans the changes against them
+ * stored overrides and the layer beneath it, and the server's contract
+ * (`readConfigContract`), plans the changes against them
  * (`planConfigChanges`: keyed collection ops by identity, validation of
  * fields, entries and whole sections, write rules), and writes nothing when
  * any issue is found. Otherwise it writes tombstones, sets, then resets;
@@ -371,8 +393,8 @@ export async function applyConfigChanges(
   ops: t.ConfigChange[],
 ): Promise<t.ApplyConfigChangesResult> {
   await authorizeWrite(target, ops);
-  const snapshot = await readWriteSnapshot(target);
-  const plan = planConfigChanges(sanitizeOps(ops), snapshot);
+  const [snapshot, contract] = await Promise.all([readWriteSnapshot(target), readConfigContract()]);
+  const plan = planConfigChanges(sanitizeOps(ops), snapshot, contract.features);
   const result: t.ApplyConfigChangesResult = {
     applied: 0,
     failed: [],
@@ -381,7 +403,7 @@ export async function applyConfigChanges(
     skipped: plan.skipped,
   };
   if (plan.issues.length > 0 || !hasWrites(plan)) return result;
-  const outcome = await executePlan(target, plan);
+  const outcome = await executePlan(target, plan, contract);
   if (outcome.failure) {
     const compensated = await compensate(target, outcome.writes, snapshot.stored);
     return { ...result, failed: outcome.failure, compensated };
@@ -389,7 +411,7 @@ export async function applyConfigChanges(
   const notEffective = [...outcome.dropped, ...(await verifyTarget(target, plan, snapshot))];
   const lost = new Set(
     notEffective
-      .filter((item) => item.reason !== 'yamlMerged' && item.reason !== 'inheritedMerged')
+      .filter((item) => !MERGED_BACK_REASONS.has(item.reason))
       .map((item) => item.fieldPath),
   );
   return {

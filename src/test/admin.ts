@@ -57,6 +57,7 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
   const requests: FakeAdminRequest[] = [];
   const strippedSections = new Set<string>();
   let override: FakeAdminOverride | undefined;
+  let meta: t.AdminConfigMetaBody | undefined;
 
   const docKey = (principalType: string, principalId: string) =>
     `${principalType}/${decodeURIComponent(principalId)}`;
@@ -105,6 +106,9 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
     const url = new URL(path, 'http://fake');
     if (url.pathname === '/api/admin/grants/effective') {
       return reply(200, { capabilities: ['manage:configs'] });
+    }
+    if (url.pathname === '/api/admin/config/meta') {
+      return meta ? reply(200, meta) : reply(404, { message: 'Endpoint not found' });
     }
     if (url.pathname === '/api/admin/config/base') {
       const config = url.searchParams.get('baseOnly') === 'true' ? yaml : baseMerged();
@@ -172,6 +176,10 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
     stripSection: (section: string) => strippedSections.add(section),
     setOverride: (next?: FakeAdminOverride) => {
       override = next;
+    },
+    /** Serves `GET /api/admin/config/meta` (a server with the contract); unset, it answers 404 like an older server. */
+    reportMeta: (body?: t.AdminConfigMetaBody) => {
+      meta = body;
     },
     /** Every write request (PATCH, DELETE, POST), in order. */
     writes: () => requests.filter((r) => r.method !== 'GET'),

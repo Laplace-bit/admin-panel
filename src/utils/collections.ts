@@ -1,12 +1,12 @@
 import type * as t from '@/types';
 import { isConfigRecord, getValueAtPath, isConfigValueEqual } from './format';
-import { KEYED_COLLECTIONS } from '@/constants';
+import { KEYED_COLLECTIONS, BUNDLED_CONFIG_RULES } from '@/constants';
 
 type UpsertEntryOp = Extract<t.EntryChange, { op: 'upsertEntry' }>;
 type RemoveEntryOp = Extract<t.EntryChange, { op: 'removeEntry' }>;
 
 /** Object paths LibreChat replaces whole instead of merging (its `ATOMIC_MERGE_PATHS`, in YAML keys). */
-const ATOMIC_MERGE_PATHS: ReadonlySet<string> = new Set(['interface.theme']);
+const ATOMIC_MERGE_PATHS: ReadonlySet<string> = new Set(BUNDLED_CONFIG_RULES.atomicMergePaths);
 
 /** The keyed collection stored at exactly `path`. */
 export function getKeyedCollection(path: string): t.KeyedCollection | undefined {

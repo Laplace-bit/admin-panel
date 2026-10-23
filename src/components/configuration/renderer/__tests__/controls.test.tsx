@@ -532,4 +532,62 @@ describe('YAML-managed notice', () => {
     );
     expect(screen.getAllByText('com_config_yaml_managed_field')).toHaveLength(1);
   });
+
+  it('says a setting LibreChat reads only at startup never takes an override, and disables it', () => {
+    const backgroundTasks = createField({
+      key: 'backgroundTasks',
+      type: 'object',
+      isObject: true,
+      path: 'endpoints.agents.backgroundTasks',
+      children: [
+        createField({
+          key: 'completionResultBatchSize',
+          type: 'number',
+          path: 'endpoints.agents.backgroundTasks.completionResultBatchSize',
+        }),
+        createField({
+          key: 'completionResultMaxChars',
+          type: 'number',
+          path: 'endpoints.agents.backgroundTasks.completionResultMaxChars',
+        }),
+      ],
+    });
+    render(
+      <FieldRenderer
+        fields={[backgroundTasks]}
+        parentValue={{ backgroundTasks: { completionResultBatchSize: 5 } }}
+        parentPath="endpoints.agents"
+        getValue={getValue}
+        onChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /backgroundTasks/ }));
+    expect(screen.getAllByText('com_config_startup_only_field:{"count":1}')).toHaveLength(1);
+    expect(screen.queryByText('com_config_yaml_managed_field')).not.toBeInTheDocument();
+  });
+
+  it('shows one notice above consecutive startup-only settings', () => {
+    const number = (key: string) =>
+      createField({ key, type: 'number', path: `mcpSettings.catalogRecovery.${key}` });
+    render(
+      <FieldRenderer
+        fields={[
+          number('maxStateEntries'),
+          number('maxDetachedDiscoveries'),
+          number('generationReadTimeoutMs'),
+          number('authorizationFenceRetryIntervalMs'),
+        ]}
+        parentValue={{}}
+        parentPath="mcpSettings.catalogRecovery"
+        getValue={getValue}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getAllByText(/^com_config_startup_only_field/).map((el) => el.textContent),
+    ).toEqual([
+      'com_config_startup_only_field:{"count":2}',
+      'com_config_startup_only_field:{"count":1}',
+    ]);
+  });
 });

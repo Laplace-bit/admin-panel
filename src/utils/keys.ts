@@ -2,9 +2,17 @@ import type * as t from '@/types';
 
 const UNSAFE_KEY_RE = /^\$|\./;
 
-/** Record keys the admin API cannot store: containing `.` or starting with `$`. */
-export function isUnsafeConfigKey(key: string): boolean {
-  return UNSAFE_KEY_RE.test(key);
+/** Keys a server that keeps dotted keys (`dottedKeys`) refuses: `$`-prefixed and prototype names. */
+const RESERVED_KEY_RE = /^\$|^(?:__proto__|constructor|prototype)$/;
+
+/**
+ * Record keys the admin API cannot store. An older server silently drops a
+ * key containing `.` or starting with `$`; one that keeps dotted keys
+ * (`allowDots`, its `dottedKeys` feature) refuses only `$`-prefixed keys and
+ * the prototype names.
+ */
+export function isUnsafeConfigKey(key: string, allowDots = false): boolean {
+  return (allowDots ? RESERVED_KEY_RE : UNSAFE_KEY_RE).test(key);
 }
 
 function isKeyValuePairList(value: t.ConfigValue[]): value is t.KeyValuePair[] {
@@ -20,22 +28,27 @@ function isKeyValuePairList(value: t.ConfigValue[]): value is t.KeyValuePair[] {
 
 /**
  * Every object key (or key/value-pair key) under `value` that the admin API
- * would silently drop, with the dot-path of the object that holds it.
+ * would drop or refuse (see `isUnsafeConfigKey`), with the dot-path of the
+ * object that holds it.
  */
-export function findUnsafeKeys(value: t.ConfigValue, basePath: string): t.UnsafeConfigKey[] {
+export function findUnsafeKeys(
+  value: t.ConfigValue,
+  basePath: string,
+  allowDots = false,
+): t.UnsafeConfigKey[] {
   if (value == null || typeof value !== 'object') return [];
   if (Array.isArray(value)) {
     if (isKeyValuePairList(value)) {
       return value
-        .filter((pair) => typeof pair.key === 'string' && isUnsafeConfigKey(pair.key))
+        .filter((pair) => typeof pair.key === 'string' && isUnsafeConfigKey(pair.key, allowDots))
         .map((pair) => ({ path: basePath, key: pair.key }));
     }
-    return value.flatMap((item, index) => findUnsafeKeys(item, `${basePath}.${index}`));
+    return value.flatMap((item, index) => findUnsafeKeys(item, `${basePath}.${index}`, allowDots));
   }
   const found: t.UnsafeConfigKey[] = [];
   for (const [key, child] of Object.entries(value)) {
-    if (isUnsafeConfigKey(key)) found.push({ path: basePath, key });
-    found.push(...findUnsafeKeys(child, basePath ? `${basePath}.${key}` : key));
+    if (isUnsafeConfigKey(key, allowDots)) found.push({ path: basePath, key });
+    found.push(...findUnsafeKeys(child, basePath ? `${basePath}.${key}` : key, allowDots));
   }
   return found;
 }

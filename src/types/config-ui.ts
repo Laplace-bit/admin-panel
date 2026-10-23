@@ -554,7 +554,14 @@ export interface ConfigWriteResult {
   skipped: SkippedChange[];
 }
 
+/** Why a field is managed only in librechat.yaml: read once at startup, or not re-processed after overrides. */
+export type ManagedNoticeKind = 'startup' | 'yaml';
+
 export interface ManagedNoticeProps {
+  /** `startup`: LibreChat reads the field only at startup (`STARTUP_ONLY_FIELDS`); `yaml` by default. */
+  kind?: ManagedNoticeKind;
+  /** How many settings the notice covers (consecutive startup-only fields share one). */
+  count?: number;
   /** The edit target holds its own (ignored) override for the field. */
   hasOverride: boolean;
   /** Removal of that override is already queued for the next save. */

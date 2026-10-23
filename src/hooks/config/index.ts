@@ -1,4 +1,5 @@
 export * from './baseline';
+export * from './contract';
 export * from './counts';
 export * from './draft';
 export * from './edits';

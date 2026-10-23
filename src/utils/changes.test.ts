@@ -7,6 +7,7 @@ import {
   parseIndexedArrayPath,
 } from './changes';
 import { validateEntry, validateSection, validateField } from './validation';
+import { BUNDLED_CONFIG_FEATURES } from '@/constants';
 
 const yaml: t.ConfigRecord = {
   balance: { enabled: true, startBalance: 1000000, refillAmount: 1000000 },
@@ -30,8 +31,12 @@ const yaml: t.ConfigRecord = {
   },
 };
 
-function snapshot(stored: t.ConfigRecord = {}, lower: t.ConfigRecord = yaml): t.WriteSnapshot {
-  return { stored, lower, lowerKind: 'yaml' };
+function snapshot(
+  stored: t.ConfigRecord = {},
+  lower: t.ConfigRecord = yaml,
+  tombstones: string[] = [],
+): t.WriteSnapshot {
+  return { stored, tombstones, lower, lowerKind: 'yaml' };
 }
 
 describe('validateSection / validateEntry / validateField', () => {
@@ -161,6 +166,42 @@ describe('planConfigChanges', () => {
     expect(plan.issues).toMatchObject([
       { code: 'invalid_literal', entryIdentity: 'GPT', entryPath: 'provider' },
     ]);
+  });
+
+  describe('on a server that keeps dotted keys', () => {
+    const dotted: t.ConfigFeatures = { ...BUNDLED_CONFIG_FEATURES, dottedKeys: true };
+
+    it('sends a record with dotted keys whole, at its own path', () => {
+      const profiles = { 'us.anthropic.claude-sonnet-4-6': 'arn:aws:bedrock:x' };
+      const ops: t.ConfigChange[] = [
+        { op: 'set', path: 'endpoints.bedrock.inferenceProfiles', value: profiles },
+      ];
+      expect(planConfigChanges(ops, snapshot()).issues.map((issue) => issue.code)).toEqual([
+        'UNSAFE_KEY',
+      ]);
+      const plan = planConfigChanges(ops, snapshot(), dotted);
+      expect(plan.issues).toEqual([]);
+      expect(plan.sets).toEqual([
+        { fieldPath: 'endpoints.bedrock.inferenceProfiles', value: profiles },
+      ]);
+    });
+
+    it('refuses $-prefixed and prototype keys as reserved', () => {
+      const plan = planConfigChanges(
+        [
+          {
+            op: 'set',
+            path: 'mcpServers.github.headers',
+            value: { $where: '1', 'X-Thread.Id': '2' },
+          },
+        ],
+        snapshot(),
+        dotted,
+      );
+      expect(plan.issues).toMatchObject([
+        { code: 'RESERVED_KEY', path: 'mcpServers.github.headers', params: { key: '$where' } },
+      ]);
+    });
   });
 
   it('names the entry of an unsafe key inside a stored endpoint list, not its stored position', () => {
@@ -452,6 +493,46 @@ describe('planConfigChanges', () => {
     expect(plan.storedAfter).toEqual({});
   });
 
+  it('never widens a reset past a parent with a stored tombstone under it', () => {
+    const plan = planConfigChanges(
+      [{ op: 'reset', path: 'balance.startBalance' }],
+      snapshot({ balance: { startBalance: 5 } }, yaml, ['balance.refillAmount']),
+    );
+    expect(plan.resets).toEqual(['balance.startBalance']);
+  });
+
+  it('never widens a reset past a tombstone the same batch writes', () => {
+    const plan = planConfigChanges(
+      [
+        { op: 'reset', path: 'balance.startBalance' },
+        { op: 'tombstone', path: 'balance.refillAmount' },
+      ],
+      snapshot({ balance: { startBalance: 5 } }),
+    );
+    expect(plan.resets).toEqual(['balance.startBalance']);
+    expect(plan.tombstones).toEqual(['balance.refillAmount']);
+  });
+
+  it('still widens over tombstones under the reset path itself, which the reset removes anyway', () => {
+    const plan = planConfigChanges(
+      [{ op: 'reset', path: 'mcpServers.github.headers' }],
+      snapshot({ mcpServers: { github: { headers: { 'X-A': '1' } } } }, yaml, [
+        'mcpServers.github.headers.Authorization',
+      ]),
+    );
+    expect(plan.resets).toEqual(['mcpServers']);
+  });
+
+  it('widens up to the last parent without another tombstone under it', () => {
+    const plan = planConfigChanges(
+      [{ op: 'reset', path: 'endpoints.anthropic.models.default' }],
+      snapshot({ endpoints: { anthropic: { models: { default: ['claude-opus-5-5'] } } } }, yaml, [
+        'endpoints.anthropic.titleModel',
+      ]),
+    );
+    expect(plan.resets).toEqual(['endpoints.anthropic.models']);
+  });
+
   it('folds a reset with new descendant values into one set (rename onto the same key)', () => {
     const stored = { mcpServers: { srv: { type: 'sse', url: 'https://old', title: 'Old' } } };
     const plan = planConfigChanges(
@@ -503,21 +584,28 @@ describe('planConfigChanges', () => {
   });
 
   it('expands an item write of a plain array into the whole array', () => {
-    const lower = {
-      modelSpecs: { list: [{ name: 'a', label: 'A', preset: { endpoint: 'openAI' } }] },
-    };
+    const lower = { endpoints: { agents: { allowedProviders: ['openAI', 'anthropic'] } } };
     const plan = planConfigChanges(
-      [
-        {
-          op: 'set',
-          path: 'endpoints.agents.toolApproval.hooks.0',
-          value: { module: 'm' },
-        },
-      ],
+      [{ op: 'set', path: 'endpoints.agents.allowedProviders.1', value: 'google' }],
       snapshot({}, lower),
     );
     expect(plan.sets).toEqual([
-      { fieldPath: 'endpoints.agents.toolApproval.hooks', value: [{ module: 'm' }] },
+      { fieldPath: 'endpoints.agents.allowedProviders', value: ['openAI', 'google'] },
+    ]);
+  });
+
+  it('never sends a setting LibreChat reads only at startup', () => {
+    const plan = planConfigChanges(
+      [
+        { op: 'set', path: 'endpoints.agents.toolApproval.hooks.0', value: { module: 'm' } },
+        { op: 'set', path: 'mcpSettings.catalogRecovery.maxStateEntries', value: 10 },
+      ],
+      snapshot(),
+    );
+    expect(plan.sets).toEqual([]);
+    expect(plan.skipped).toEqual([
+      { fieldPath: 'endpoints.agents.toolApproval.hooks.0', reason: 'yamlOnly' },
+      { fieldPath: 'mcpSettings.catalogRecovery.maxStateEntries', reason: 'yamlOnly' },
     ]);
   });
 
@@ -558,6 +646,34 @@ describe('verifyWrite', () => {
       { fieldPath: 'endpoints.bedrock.inferenceProfiles', reason: 'notStored' },
       { fieldPath: 'mcpServers.github.headers.Authorization', reason: 'yamlMerged' },
     ]);
+  });
+
+  it('compares a record with dotted keys whole, without splitting its keys into paths', () => {
+    const headers = { 'x-portkey.config': 'cfg', 'X-Plain': '1' };
+    const entry = {
+      name: 'Portkey',
+      apiKey: 'user_provided',
+      baseURL: 'https://api.portkey.ai/v1',
+      models: { default: ['m'] },
+      headers,
+    };
+    const plan = planConfigChanges(
+      [
+        {
+          op: 'upsertEntry',
+          path: 'endpoints.custom',
+          key: 'Portkey',
+          identity: null,
+          value: entry,
+        },
+      ],
+      snapshot(),
+      { ...BUNDLED_CONFIG_FEATURES, dottedKeys: true },
+    );
+    const storedActual = { endpoints: { custom: [entry] } };
+    const yamlEntries = (yaml.endpoints as t.ConfigRecord).custom as t.ConfigRecord[];
+    const effective = { endpoints: { custom: [...yamlEntries, entry] } };
+    expect(verifyWrite(plan, snapshot(), storedActual, effective)).toEqual([]);
   });
 
   it('accepts redacted secrets and an effective value that differs from YAML', () => {

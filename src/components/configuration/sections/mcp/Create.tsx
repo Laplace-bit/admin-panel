@@ -19,16 +19,16 @@ import {
   isConfigValueEqual,
 } from '@/utils';
 import { planTransportSwitch, transportLabelKey, transportOf, TRANSPORTS } from './transport';
+import { deepClone, isPlainObject, resolveEntryKey, setLeaf } from './validation';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
 import { ConfigErrorsProvider } from '@/contexts/ConfigErrorsContext';
 import { RowProblemsContext } from '@/contexts/RowProblemsContext';
-import { deepClone, isPlainObject, setLeaf } from './validation';
+import { useLocalize, useConfigFeatures } from '@/hooks';
 import { FormDialog } from '@/components/shared';
 import { toFieldId } from '../../renderer/paths';
 import { serverNameProblem } from './names';
 import { McpServerEditor } from './Editor';
 import { labelForPath } from '../../meta';
-import { useLocalize } from '@/hooks';
 import { McpNote } from './Note';
 
 /** Data path of the draft: field ids and the tri-states' names derive from it ("New server: Startup"). */
@@ -96,17 +96,27 @@ function toEntry(value: t.ConfigRecord, fields?: t.SchemaField[]): t.ConfigRecor
 /**
  * The label of a missing field: under a record of objects it names the
  * entry ("User variables › MY_KEY › Title"), else the field ("Server URL").
+ * The entry is found among the draft's own names, so a dotted one
+ * (`MY.TOKEN`, with `dottedKeys`) is named whole.
  */
-function missingLabel(rest: string, fields: t.SchemaField[], localize: t.LocalizeFn): string {
-  const [head, entryKey, ...leaf] = rest.split('.');
+function missingLabel(
+  rest: string,
+  entry: t.ConfigRecord,
+  fields: t.SchemaField[],
+  localize: t.LocalizeFn,
+): string {
+  const [head] = rest.split('.', 1);
   const field = fields.find((candidate) => candidate.key === head);
-  if (!isRecordOfObjects(field) || entryKey === undefined || leaf.length === 0) {
+  const located = isRecordOfObjects(field)
+    ? resolveEntryKey(rest.slice(head.length + 1), Object.keys(asConfigRecord(entry[head])))
+    : null;
+  if (!located || located.segments.length === 0) {
     return labelForPath(`mcpServers.{}.${rest}`, localize);
   }
   return [
     labelForPath(`mcpServers.{}.${head}`, localize),
-    entryKey,
-    labelForPath(`mcpServers.{}.${head}.{}.${leaf.join('.')}`, localize),
+    located.entryKey,
+    labelForPath(`mcpServers.{}.${head}.{}.${located.segments.join('.')}`, localize),
   ].join(' › ');
 }
 
@@ -159,7 +169,7 @@ function checkDraft(
     }
     const rest = issue.path.slice(DRAFT_PATH.length + 1);
     if (issue.code === 'required' && valueAt(entry, rest) === undefined) {
-      missing.push(missingLabel(rest, fields, localize));
+      missing.push(missingLabel(rest, entry, fields, localize));
     } else if (!(issue.path in errors)) {
       errors[issue.path] = issue.message;
     }
@@ -280,6 +290,7 @@ export function CreateMcpServerDialog({
   hiddenKeys,
 }: t.CreateMcpServerDialogProps) {
   const localize = useLocalize();
+  const { dottedKeys } = useConfigFeatures();
   const [name, setName] = useState('');
   const [draft, setDraft] = useState<t.ConfigRecord>(NEW_SERVER);
   const [rowProblems, setRowProblems] = useState<ReadonlyMap<string, number>>(() => new Map());
@@ -306,10 +317,10 @@ export function CreateMcpServerDialog({
   const shownNameProblem = trimmed === '' || nameProblem == null ? null : localize(nameProblem);
   /** Rows the key/value editors flag (blank, missing, repeated or dotted keys), by field label. */
   const rowsToFix = useMemo(() => {
-    const unsafe = findUnsafeKeys(entry, DRAFT_PATH).map(({ path }) => toFieldId(path));
+    const unsafe = findUnsafeKeys(entry, DRAFT_PATH, dottedKeys).map(({ path }) => toFieldId(path));
     const ids = new Set([...rowProblems.keys(), ...unsafe]);
     return [...ids].map((fieldId) => labelOfFieldId(fieldId, localize));
-  }, [entry, rowProblems, localize]);
+  }, [entry, rowProblems, dottedKeys, localize]);
   const isDirty = name !== '' || !isConfigValueEqual(draft, NEW_SERVER);
   const blocked =
     !isInherited &&

@@ -1,5 +1,6 @@
 import type * as t from '@/types';
 import { isPlainObject, resolveEntryKey, setLeaf, deepClone } from './validation';
+import { hasDottedKey } from '@/utils';
 
 function readLeaf(value: t.ConfigValue, segments: string[]): t.ConfigValue {
   let cursor = value;
@@ -10,14 +11,19 @@ function readLeaf(value: t.ConfigValue, segments: string[]): t.ConfigValue {
   return cursor;
 }
 
-/** Every leaf of an object as `[segments, value]`; arrays and scalars are leaves. */
+/**
+ * Every leaf of an object as `[segments, value]`; arrays and scalars are
+ * leaves, and so is an object with a dotted key (`hasDottedKey`: a header
+ * named `x.api.version`), which a dot-path built from the segments would
+ * split, so it is written whole.
+ */
 export function leafEntries(
   value: t.ConfigRecord,
   prefix: string[] = [],
 ): Array<[string[], t.ConfigValue]> {
   return Object.entries(value).flatMap(([key, child]): Array<[string[], t.ConfigValue]> => {
     const segments = [...prefix, key];
-    if (isPlainObject(child) && Object.keys(child).length > 0) {
+    if (isPlainObject(child) && Object.keys(child).length > 0 && !hasDottedKey(child)) {
       return leafEntries(child, segments);
     }
     return [[segments, child]];

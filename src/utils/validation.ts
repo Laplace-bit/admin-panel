@@ -124,7 +124,49 @@ const ISSUE_MESSAGES: Readonly<Record<string, string>> = {
     'can only be configured in librechat.yaml for process-backed MCP servers (command, args, env, cwd, stderr, stdio)',
   BLANK_VALUE: 'is blank: enter a value, or clear the field',
   BLANK_KEY: 'has a blank key: name it, or remove the entry',
+  UNSAFE_KEY:
+    "has a key LibreChat can't store yet (\"{{key}}\" contains '.' or starts with '$'); set it in librechat.yaml",
+  RESERVED_KEY:
+    "has a key LibreChat can't store (\"{{key}}\" starts with '$' or is a reserved name); rename it",
+  invalid_value: 'is not a valid value',
+  wrong_type: 'has the wrong type of value',
+  invalid_option: 'is not one of the allowed values',
+  too_small_value: 'is too small',
+  too_big_value: 'is too large',
+  dotted_key: "has a key with a dot where LibreChat expects a setting's name",
+  unknown_section: "isn't a section LibreChat knows",
 };
+
+/**
+ * Codes whose message needs parameters, worded without them: the admin API
+ * reports issue codes only (no minimum, expected type or options).
+ */
+const PARAMLESS_CODES: Readonly<Record<string, string>> = {
+  invalid_type: 'wrong_type',
+  invalid_literal: 'invalid_value',
+  invalid_enum_value: 'invalid_option',
+  too_small: 'too_small_value',
+  too_small_exclusive: 'too_small_value',
+  too_small_length: 'too_small_value',
+  too_small_items: 'too_small_value',
+  too_big: 'too_big_value',
+  too_big_exclusive: 'too_big_value',
+  too_big_length: 'too_big_value',
+  too_big_items: 'too_big_value',
+};
+
+const PLACEHOLDER_RE = /\{\{\w+\}\}/;
+
+/**
+ * The code to show for an issue reported without parameters: one whose
+ * message names them (`too_small`: "must be at least {{minimum}}") becomes
+ * its parameter-free wording ("is too small"); other codes stay.
+ */
+export function paramlessIssueCode(code: string): string {
+  const template = ISSUE_MESSAGES[code];
+  if (!template || !PLACEHOLDER_RE.test(template)) return code;
+  return PARAMLESS_CODES[code] ?? 'invalid_value';
+}
 
 /** Fills `{{param}}` placeholders. */
 export function interpolateIssue(

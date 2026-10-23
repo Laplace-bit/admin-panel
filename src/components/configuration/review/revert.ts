@@ -17,6 +17,21 @@ function relativeSegments(path: string, base: string): string[] {
 }
 
 /**
+ * The segments of a row's path below `base` (a prefix of it). A dotted record
+ * key (`us.anthropic.claude-sonnet-4-6`) stays one segment: the row carries
+ * its path's `segments`, since splitting the path would break the key apart.
+ */
+function segmentsBelow(item: t.ChangeSummaryItem, base: string): string[] {
+  if (!item.segments) return relativeSegments(item.path, base);
+  let prefix = '';
+  for (let i = 0; i < item.segments.length; i++) {
+    prefix = i === 0 ? item.segments[i] : `${prefix}.${item.segments[i]}`;
+    if (prefix === base) return item.segments.slice(i + 1);
+  }
+  return relativeSegments(item.path, base);
+}
+
+/**
  * `pending` with the value at `segments` put back to the one in `baseline`
  * (removed when the baseline has none). Where the pending value is shaped
  * differently from the baseline (a key/value pair list standing for a
@@ -97,7 +112,7 @@ function revertListEntry(
     next[index] = revertAt(pending[index], previous, [key]);
     return next;
   }
-  next[index] = revertAt(pending[index], previous, relativeSegments(item.path, entryPath));
+  next[index] = revertAt(pending[index], previous, segmentsBelow(item, entryPath));
   return next;
 }
 
@@ -113,7 +128,7 @@ function revertWithin(
   item: t.ChangeSummaryItem,
 ): t.ConfigValue {
   const { collectionPath } = item;
-  const byPath = () => revertAt(pending, baseline, relativeSegments(item.path, sourcePath));
+  const byPath = () => revertAt(pending, baseline, segmentsBelow(item, sourcePath));
   if (
     collectionPath == null ||
     (collectionPath !== sourcePath && !collectionPath.startsWith(`${sourcePath}.`))

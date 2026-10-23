@@ -1,0 +1,132 @@
+import type { ReactNode } from 'react';
+
+/**
+ * A behaviour of the admin config API that a LibreChat server reports in
+ * `GET /api/admin/config/meta`. Mirrors `AdminConfigFeatureFlag` of newer
+ * `@librechat/data-schemas` releases (the pinned one has no meta contract).
+ */
+export type ConfigFeatureFlag =
+  | 'dottedKeys'
+  | 'sectionAllowlist'
+  | 'readFilteredWriteResponses'
+  | 'preAuthBaseOverrides'
+  | 'webSearchStoredKeys'
+  | 'expectedRevision'
+  | 'prunesEmptyParents'
+  | 'awaitedInvalidation'
+  | 'changesBatch'
+  | 'yamlMcpHide'
+  | 'deterministicPrecedence'
+  | 'priorityRoute'
+  | 'principalCheck'
+  | 'roleRenameMovesProfile'
+  | 'recordSecrets'
+  | 'azureGroupSecrets'
+  | 'yamlSecretPreview'
+  | 'envAllowlist'
+  | 'secretRebinding';
+
+/** Which admin config behaviours the server has; a flag it does not report is `false`. */
+export type ConfigFeatures = Readonly<Record<ConfigFeatureFlag, boolean>>;
+
+export interface ConfigLimits {
+  /** Most entries one `PATCH /fields` accepts. */
+  maxPatchEntries: number;
+  /** Most ops one `POST /changes` accepts (`0` without `changesBatch`). */
+  maxChangeOps: number;
+  /** How long another LibreChat instance may serve resolved config from before a write. */
+  overrideCacheTtlMs: number;
+}
+
+/** A secret config field: encrypted at rest, omitted from reads, kept when a write omits it. */
+export interface ConfigSecretFieldRule {
+  path: string;
+  /** Masked-preview companion returned on reads; never writable. */
+  previewPath: string;
+  /** Whether a `${ENV_VAR}` reference is stored as is instead of encrypted. */
+  allowEnvPlaceholder: boolean;
+}
+
+/** A secret held by every item of an array, matched across writes by `identityKey`. */
+export interface ConfigArraySecretFieldRule {
+  arrayPath: string;
+  secretKey: string;
+  previewKey: string;
+  identityKey: string;
+}
+
+/** A secret every entry of a record keyed by entry name holds, such as each MCP server's. */
+export interface ConfigRecordSecretFieldRule {
+  recordPath: string;
+  secretPath: string;
+  previewPath: string;
+}
+
+export interface ConfigInterfaceRules {
+  /** Interface fields that are role permissions; overrides drop them. */
+  permissionFields: string[];
+  /** Permission fields whose boolean form is a runtime toggle overrides keep. */
+  runtimeFields: string[];
+  /** Sub-keys of an object-form permission field that are permission bits. */
+  permissionSubKeys: string[];
+}
+
+/** The write rules a server enforces, in `librechat.yaml` key names. */
+export interface ConfigRules {
+  /** Top-level sections the server's config schema defines. */
+  acceptedSections: string[];
+  /** Sections only `librechat.yaml` sets; writes to them are dropped. */
+  baseOnlySections: string[];
+  /** Sections only the base document holds, through their dedicated APIs. */
+  basePrincipalSections: string[];
+  /** Fields inside overridable sections that only `librechat.yaml` sets. */
+  baseOnlyPaths: string[];
+  /** Arrays merged item by item on a key field instead of replaced. */
+  arrayMergeKeys: Readonly<Record<string, string>>;
+  /** Objects an override replaces whole instead of merging into. */
+  atomicMergePaths: string[];
+  /** Override sections the resolved config holds under another name. */
+  overrideKeyMap: Readonly<Record<string, string>>;
+  secretFields: ConfigSecretFieldRule[];
+  arraySecretFields: ConfigArraySecretFieldRule[];
+  recordSecretFields: ConfigRecordSecretFieldRule[];
+  /** Maps of credentials admin writes are refused for. */
+  refusedMaps: string[];
+  /** MCP server fields that make a server process-backed; only `librechat.yaml` sets them. */
+  processMcpFields: string[];
+  interface: ConfigInterfaceRules;
+  /** Whether `endpoints.all` title settings apply as one block or per field. */
+  titleResolution: 'block' | 'field';
+}
+
+export interface ConfigVersions {
+  librechat: string;
+  dataProvider: string;
+  configSchema: string;
+}
+
+/**
+ * The admin config API contract of the connected LibreChat server: what it
+ * reports in `GET /api/admin/config/meta`, each part it leaves out (or an
+ * older server without the route) filled from the panel's bundled fallback.
+ */
+export interface ConfigContract {
+  /** `server`: read from the meta route; `bundled`: the server has none, or it could not be read. */
+  source: 'server' | 'bundled';
+  versions?: ConfigVersions;
+  features: ConfigFeatures;
+  limits: ConfigLimits;
+  rules: ConfigRules;
+}
+
+/** `GET /api/admin/config/meta` as parsed: every part optional, since forks and older servers differ. */
+export interface AdminConfigMetaBody {
+  versions?: Partial<ConfigVersions>;
+  features?: Partial<Record<string, boolean>>;
+  limits?: Partial<ConfigLimits>;
+  rules?: Partial<ConfigRules>;
+}
+
+export interface ConfigContractProviderProps {
+  children: ReactNode;
+}

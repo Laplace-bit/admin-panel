@@ -8,7 +8,13 @@ import {
   isHttpTransport,
   transportLabelKey,
 } from './transport';
-import { isConfigRecord, isConfigValueEqual, asConfigRecord, hasConfigValue } from '@/utils';
+import {
+  hasDottedKey,
+  isConfigRecord,
+  asConfigRecord,
+  hasConfigValue,
+  isConfigValueEqual,
+} from '@/utils';
 import { renderCollectionEntryFields, renderInlineField, toFieldId } from '../../renderer';
 import { RecordObjectField } from '../../fields/RecordObjectField';
 import { UnknownSettings } from '../../UnknownSettings';
@@ -369,6 +375,8 @@ function UrlHint({ transport }: { transport: t.McpTransport }) {
  * The values each user enters (customUserVars), as cards keyed by variable
  * name. Only the variables that change are written, so a server's override
  * stays sparse; variables the layer beneath defines can't be removed (D3).
+ * While a variable's name has a dot (`dottedKeys`), the variables are
+ * written as one record: a dot-path can't name that variable.
  */
 function UserVariables({
   field,
@@ -390,6 +398,10 @@ function UserVariables({
   const current = asConfigRecord(value);
   const write = (next: t.ConfigValue) => {
     const nextRecord = asConfigRecord(next);
+    if (hasDottedKey(current) || hasDottedKey(nextRecord)) {
+      onChange(field.key, Object.keys(nextRecord).length > 0 ? nextRecord : undefined);
+      return;
+    }
     for (const [key, item] of Object.entries(nextRecord)) {
       if (!isConfigValueEqual(current[key], item)) onChange(`${field.key}.${key}`, item);
     }

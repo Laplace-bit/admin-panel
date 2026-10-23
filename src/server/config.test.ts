@@ -78,31 +78,52 @@ function findField(fields: t.SchemaField[], key: string): t.SchemaField | undefi
 }
 
 describe('applyLangfuseSchemaVisibility', () => {
+  const langfuseTree = () =>
+    extractSchemaTree(z3.object({ langfuse: z3.object({ schemaOnlyField: z3.string() }) }));
+
   it('removes a Langfuse section supplied by the schema when fanout is disabled', () => {
     const tree = extractSchemaTree(z3.object({ langfuse: z3.object({ enabled: z3.boolean() }) }));
 
-    applyLangfuseSchemaVisibility(tree, false);
+    applyLangfuseSchemaVisibility(tree, { langfuseFanoutEnabled: false });
 
     expect(findField(tree, 'langfuse')).toBeUndefined();
   });
 
   it('preserves the schema-provided Langfuse section when fanout is enabled', () => {
-    const tree = extractSchemaTree(
-      z3.object({ langfuse: z3.object({ schemaOnlyField: z3.string() }) }),
-    );
+    const tree = langfuseTree();
 
-    applyLangfuseSchemaVisibility(tree, true);
+    applyLangfuseSchemaVisibility(tree, { langfuseFanoutEnabled: true });
 
     expect(findField(tree, 'schemaOnlyField')).toBeDefined();
     expect(tree.filter((field) => field.key === 'langfuse')).toHaveLength(1);
   });
 
   it('preserves a schema-provided Langfuse section when fanout state is unknown', () => {
-    const tree = extractSchemaTree(
-      z3.object({ langfuse: z3.object({ schemaOnlyField: z3.string() }) }),
-    );
+    const tree = langfuseTree();
 
     applyLangfuseSchemaVisibility(tree, undefined);
+
+    expect(findField(tree, 'schemaOnlyField')).toBeDefined();
+  });
+
+  it('hides the section when LibreChat denies the admin connection access, fanout on or not', () => {
+    const tree = langfuseTree();
+
+    applyLangfuseSchemaVisibility(tree, {
+      langfuseFanoutEnabled: true,
+      langfuseConnectionAccess: false,
+    });
+
+    expect(findField(tree, 'langfuse')).toBeUndefined();
+  });
+
+  it('keeps the section when LibreChat grants connection access', () => {
+    const tree = langfuseTree();
+
+    applyLangfuseSchemaVisibility(tree, {
+      langfuseFanoutEnabled: true,
+      langfuseConnectionAccess: true,
+    });
 
     expect(findField(tree, 'schemaOnlyField')).toBeDefined();
   });
@@ -110,7 +131,7 @@ describe('applyLangfuseSchemaVisibility', () => {
   it('keeps the Langfuse section shipped in the pinned configSchema', () => {
     const tree = extractSchemaTree(realConfigSchema);
 
-    applyLangfuseSchemaVisibility(tree, true);
+    applyLangfuseSchemaVisibility(tree, { langfuseFanoutEnabled: true });
 
     expect(findField(tree, 'langfuse')?.isObject).toBe(true);
     expect(findField(tree, 'destination')?.path).toBe('langfuse.destination');
@@ -1331,7 +1352,7 @@ function preflight(saves: t.SaveEntry[], resets: string[] = []) {
     ...saves.map(({ fieldPath, value }): t.ConfigChange => ({ op: 'set', path: fieldPath, value })),
     ...resets.map((path): t.ConfigChange => ({ op: 'reset', path })),
   ];
-  const plan = planConfigChanges(ops, { stored: {}, lower: {}, lowerKind: 'yaml' });
+  const plan = planConfigChanges(ops, { stored: {}, tombstones: [], lower: {}, lowerKind: 'yaml' });
   return { issues: plan.issues, skipped: plan.skipped };
 }
 

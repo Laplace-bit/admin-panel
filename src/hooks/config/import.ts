@@ -3,6 +3,23 @@ import { PrincipalType } from 'librechat-data-provider';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type * as t from '@/types';
 import {
+  hasDottedKey,
+  notifySuccess,
+  notifyWarning,
+  flattenObject,
+  isConfigRecord,
+  asConfigRecord,
+  getValueAtPath,
+  revertTargetAt,
+  createBaseLayers,
+  mergeConfigLayers,
+  hasPathOrAncestor,
+  planConfigChanges,
+  setValueAtPath,
+  getKeyedCollection,
+  stripSecretPreviewValues,
+} from '@/utils';
+import {
   locate,
   fieldLabel,
   describePath,
@@ -16,27 +33,14 @@ import {
   identityKeyFor,
   summarizeChanges,
 } from '@/components/configuration/review/diff';
-import {
-  notifySuccess,
-  notifyWarning,
-  flattenObject,
-  isConfigRecord,
-  getValueAtPath,
-  revertTargetAt,
-  createBaseLayers,
-  mergeConfigLayers,
-  hasPathOrAncestor,
-  planConfigChanges,
-  setValueAtPath,
-  getKeyedCollection,
-  stripSecretPreviewValues,
-} from '@/utils';
 import { createRoleFn, createScopeFn, createGroupFn, baseConfigOptions } from '@/server';
 import { isConfigValueEqual, normalizeForSave } from '@/components/configuration/edits';
 import { planImport, IMPORT_SKIP_KEYS } from '@/components/configuration/import';
 import { findSchemaField } from '@/components/configuration/controls';
 import { describeIssues } from '@/components/configuration/issues';
 import { resolvedConfigOptions, runtimeDefaultAt } from './layers';
+import { MERGED_BACK_REASONS } from '@/constants';
+import { useConfigFeatures } from './contract';
 import { useLocalize } from '../useLocalize';
 
 /** Lists LibreChat merges with librechat.yaml by name; an import upserts their entries by name. */
@@ -164,6 +168,29 @@ function upsertByName(path: string, own: t.ConfigValue, incoming: t.ConfigValue)
   ];
 }
 
+/**
+ * A record of plain values imported whole (it holds a dotted key, which no
+ * path can address) merges into `record` key by key, as its keys would one
+ * by one (D4): into the target's own record for the write, so keys the YAML
+ * leaves out stay, and into what the target has now for the preview, since
+ * LibreChat merges the stored record over the layer beneath it.
+ */
+function mergeIntoRecord(record: t.ConfigValue, incoming: t.ConfigRecord): t.ConfigRecord {
+  return { ...asConfigRecord(record), ...incoming };
+}
+
+/** Whether a planned entry is a record imported whole (see `mergeIntoRecord`). */
+function isWholeRecord(value: t.ConfigValue): value is t.ConfigRecord {
+  return isConfigRecord(value) && hasDottedKey(value);
+}
+
+/** An entry as the preview compares it with `baseline`: a whole record reads merged into it. */
+function previewOf(entry: t.SaveEntry, baseline: t.ConfigRecord): t.SaveEntry {
+  if (!isWholeRecord(entry.value)) return entry;
+  const value = mergeIntoRecord(getValueAtPath(baseline, entry.fieldPath), entry.value);
+  return { fieldPath: entry.fieldPath, value };
+}
+
 /** Only the entries the import lists, so the preview never reads the others as removed. */
 function onlyImported(
   path: string,
@@ -201,6 +228,7 @@ export function useImportPreview({
   target,
 }: t.ImportPreviewOptions): t.ImportPreviewState {
   const localize = useLocalize();
+  const features = useConfigFeatures();
   const { data: base, isLoading: baseLoading } = useQuery(baseConfigOptions);
   const existingScope = target?.type === 'scope' && target.exists ? target.scope : undefined;
   const { data: scopeData, isLoading: scopeLoading } = useQuery(
@@ -211,8 +239,11 @@ export function useImportPreview({
 
   const isScopeTarget = target != null && target.type !== 'base';
   const plan = useMemo(
-    () => (appConfig ? planImport(appConfig, schemaTree, schemaPathSet, isScopeTarget) : undefined),
-    [appConfig, schemaTree, schemaPathSet, isScopeTarget],
+    () =>
+      appConfig
+        ? planImport(appConfig, schemaTree, schemaPathSet, isScopeTarget, features)
+        : undefined,
+    [appConfig, schemaTree, schemaPathSet, isScopeTarget, features],
   );
 
   /** librechat.yaml and the base overrides as layers, so a value is labelled by the layer that sets it. */
@@ -238,6 +269,11 @@ export function useImportPreview({
     const isScope = target.type !== 'base';
     const written = plan.entries.flatMap((entry): t.SaveEntry[] => {
       const path = entry.fieldPath;
+      if (isWholeRecord(entry.value)) {
+        return [
+          { fieldPath: path, value: mergeIntoRecord(getValueAtPath(own, path), entry.value) },
+        ];
+      }
       if (!MERGED_COLLECTIONS.has(path)) return [entry];
       const effective = isScope
         ? mergeConfigLayers(getValueAtPath(base.config, path), getValueAtPath(own, path), path)
@@ -295,7 +331,7 @@ export function useImportPreview({
         : baseline;
       const save = isMerged
         ? { fieldPath: path, value: withoutPreviews(mergedEntries(path, existing, entry.value)) }
-        : entry;
+        : previewOf(entry, baseline);
       const items = !written.has(path)
         ? []
         : summarizeChanges({
@@ -374,14 +410,24 @@ export function useImportPreview({
     [entries, own],
   );
 
-  /** The target's stored overrides and the layer beneath, as the validated write reads them. */
+  /** The target's stored overrides and tombstones and the layer beneath, as the validated write reads them. */
   const snapshot = useMemo<t.WriteSnapshot | null>(() => {
     if (!target || !base) return null;
     if (target.type === 'base') {
-      return { stored: base.dbOverrides ?? {}, lower: base.yamlConfig ?? {}, lowerKind: 'yaml' };
+      return {
+        stored: base.dbOverrides ?? {},
+        tombstones: base.dbTombstones,
+        lower: base.yamlConfig ?? {},
+        lowerKind: 'yaml',
+      };
     }
-    return { stored: own, lower: base.config ?? {}, lowerKind: 'inherited' };
-  }, [target, base, own]);
+    return {
+      stored: own,
+      tombstones: (existingScope && scopeData?.tombstones) || [],
+      lower: base.config ?? {},
+      lowerKind: 'inherited',
+    };
+  }, [target, base, own, existingScope, scopeData]);
 
   /** The same pre-flight the write runs, so the preview refuses what Import would (an endpoint with only a name). */
   const issuesFor = useCallback(
@@ -391,10 +437,10 @@ export function useImportPreview({
         ({ fieldPath, value }): t.ConfigChange => ({ op: 'set', path: fieldPath, value }),
       );
       if (ops.length === 0) return [];
-      const { issues } = planConfigChanges(ops, snapshot);
+      const { issues } = planConfigChanges(ops, snapshot, features);
       return describeIssues(issues, [], localize).summaries;
     },
-    [snapshot, entriesFor, localize],
+    [snapshot, entriesFor, features, localize],
   );
 
   return {
@@ -450,7 +496,10 @@ export function useConfigImport({
           queryClient.invalidateQueries({ queryKey: ['groups'] }),
         ]);
       }
-      const skipped = await writeChanges(writeTarget, entries, []);
+      /** Keys LibreChat merges back from the layer beneath are the merge an import asks for (D4), not a loss. */
+      const skipped = (await writeChanges(writeTarget, entries, [])).filter(
+        (item) => !MERGED_BACK_REASONS.has(item.reason),
+      );
       const written = Math.max(0, entries.length - skipped.length);
       const message =
         writeTarget.type === 'scope'

@@ -3,10 +3,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { act, render, screen, waitFor, fireEvent } from '@testing-library/react';
 import type * as t from '@/types';
 import { matchVariant, switchVariant, VariantField } from '../VariantField';
+import { ConfigContractContext } from '@/contexts/ContractContext';
 import { RowProblemsContext } from '@/contexts/RowProblemsContext';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { RecordObjectField } from '../RecordObjectField';
 import { ArrayObjectField } from '../ArrayObjectField';
+import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
 import { ObjectEntryCard } from '../ObjectEntryCard';
 import { KeyValueField } from '../KeyValueField';
 import { createField } from '@/test/fixtures';
@@ -296,6 +298,74 @@ describe('RecordObjectField', () => {
     expect(screen.getByRole('button', { name: 'com_ui_delete OWN' })).toBeInTheDocument();
     expect(screen.getAllByTitle(/com_a11y_rename_entry/)).toHaveLength(1);
     expect(screen.getByTitle('com_config_ctl_kv_locked')).toBeInTheDocument();
+  });
+});
+
+describe('record keys the server cannot store', () => {
+  const dotted: t.ConfigContract = {
+    ...BUNDLED_CONFIG_CONTRACT,
+    features: { ...BUNDLED_CONFIG_CONTRACT.features, dottedKeys: true },
+  };
+
+  function addKey(key: string, contract?: t.ConfigContract) {
+    const onChange = vi.fn();
+    const field = (
+      <RecordObjectField
+        id="profiles"
+        path="fileConfig.endpoints"
+        value={{}}
+        fields={[]}
+        onChange={onChange}
+        allowPrimitiveValues
+        renderFields={renderNameFields}
+      />
+    );
+    render(
+      contract ? (
+        <ConfigContractContext.Provider value={contract}>{field}</ConfigContractContext.Provider>
+      ) : (
+        field
+      ),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /com_ui_add_item/ }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'com_ui_key' }), {
+      target: { value: key },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_add' }));
+    return onChange;
+  }
+
+  it('refuses a dotted key on a server that drops it', () => {
+    const onChange = addKey('image/svg+xml.v2');
+    expect(screen.getByRole('alert')).toHaveTextContent('com_config_unsafe_key_error');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('accepts a dotted key on a server that keeps dotted keys', () => {
+    const onChange = addKey('us.anthropic.claude', dotted);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(onChange).toHaveBeenCalledWith({ 'us.anthropic.claude': true });
+  });
+
+  it('still refuses a $ key on a server that keeps dotted keys', () => {
+    const onChange = addKey('$where', dotted);
+    expect(screen.getByRole('alert')).toHaveTextContent('com_config_reserved_key_error');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('flags a dotted key/value key only on a server that drops it', () => {
+    const pairs = [{ key: 'x-portkey.config', value: 'cfg', valueType: 'string' as const }];
+    const { unmount } = render(
+      <KeyValueField id="kv" pairs={pairs} onChange={vi.fn()} onClear={vi.fn()} />,
+    );
+    expect(screen.getByText('com_config_unsafe_key_error')).toBeInTheDocument();
+    unmount();
+    render(
+      <ConfigContractContext.Provider value={dotted}>
+        <KeyValueField id="kv" pairs={pairs} onChange={vi.fn()} onClear={vi.fn()} />
+      </ConfigContractContext.Provider>,
+    );
+    expect(screen.queryByText('com_config_unsafe_key_error')).not.toBeInTheDocument();
   });
 });
 

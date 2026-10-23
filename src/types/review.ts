@@ -262,21 +262,31 @@ export interface ReviewRowViewProps {
 }
 
 /** Why an imported key is left out (WS7). */
-export type ImportSkipReason = SkippedChange['reason'] | 'unsafeKey' | 'processMcp';
+export type ImportSkipReason =
+  | SkippedChange['reason']
+  | 'unsafeKey'
+  | 'reservedKey'
+  | 'dottedKey'
+  | 'dottedName'
+  | 'processMcp';
 
 /** An imported leaf that will not be written, and why (WS7). */
 export interface ImportSkippedKey {
   fieldPath: string;
   reason: ImportSkipReason;
-  /** For `unsafeKey`: the key, held by the object at `fieldPath`. */
+  /** For `unsafeKey`, `reservedKey`, `dottedKey` and `dottedName`: the key, held by the object at `fieldPath`. */
   key?: string;
 }
 
 /** Leaves of an imported YAML, and the keys the admin API can't store (WS7). */
 export interface ImportLeaves {
   leaves: FlatConfigMap;
-  /** Keys containing `.` or starting with `$`, with the path of the object holding them. */
+  /** Keys the admin API can't store (`isUnsafeConfigKey`), with the path of the object holding them. */
   unsafe: UnsafeConfigKey[];
+  /** With `dottedKeys`: dotted keys where the schema expects a setting name, not a free key. */
+  dotted: UnsafeConfigKey[];
+  /** With `dottedKeys`: dotted names in a record of setting groups (an MCP server), written field by field. */
+  dottedNames: UnsafeConfigKey[];
 }
 
 /** Imported leaves split into what can be written and what is left out (WS7). */

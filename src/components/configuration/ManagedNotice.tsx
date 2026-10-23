@@ -5,18 +5,26 @@ import { useLocalize } from '@/hooks';
 
 /**
  * Explains why a field is read-only because LibreChat only applies it from
- * librechat.yaml. When the edit target still holds an override for the field
- * (written before it became read-only), offers to queue its removal.
+ * librechat.yaml (`kind` `startup`: reads it only while it starts; `count`: the
+ * settings below it the notice covers). When the edit target still holds an
+ * override for them (written before they became read-only), offers to queue
+ * its removal.
  */
 export function ManagedNotice({
+  kind = 'yaml',
+  count = 1,
   hasOverride,
   pendingRemoval,
   onRemoveOverride,
 }: t.ManagedNoticeProps) {
   const localize = useLocalize();
+  const text =
+    kind === 'startup'
+      ? localize('com_config_startup_only_field', { count })
+      : localize('com_config_yaml_managed_field');
   return (
     <div className="mb-2 flex flex-col gap-2">
-      <InfoBanner text={localize('com_config_yaml_managed_field')} dismissible={false} />
+      <InfoBanner text={text} dismissible={false} />
       {hasOverride && (
         <div
           role="status"

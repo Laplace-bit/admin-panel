@@ -1,13 +1,16 @@
+import '@/locales/i18n';
 import { describe, it, expect, vi } from 'vitest';
+import { createToast } from '@clickhouse/click-ui';
+import { act, renderHook } from '@testing-library/react';
 import { configSchema, PrincipalType } from 'librechat-data-provider';
-import { renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { extractSchemaTree, getSchemaPathSet } from '@/server/config';
-import { useImportPreview } from './import';
-import { flattenObject } from '@/utils';
-import '@/locales/i18n';
+import { ConfigContractContext } from '@/contexts/ContractContext';
+import { useImportPreview, useConfigImport } from './import';
+import { flattenObject, setValueAtPath } from '@/utils';
+import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
 
 vi.mock('@/server', () => ({
   baseConfigOptions: { queryKey: ['baseConfig'], queryFn: vi.fn(), staleTime: Infinity },
@@ -15,6 +18,11 @@ vi.mock('@/server', () => ({
   createScopeFn: vi.fn(),
   createGroupFn: vi.fn(),
 }));
+
+vi.mock('@clickhouse/click-ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@clickhouse/click-ui')>();
+  return { ...actual, createToast: vi.fn() };
+});
 
 const tree = extractSchemaTree(configSchema as t.ZodSchemaLike);
 const schemaPathSet = getSchemaPathSet();
@@ -84,15 +92,28 @@ const engineeringData: t.ResolvedConfigData = {
   tombstones: [],
 };
 
-function renderPreview(appConfig: t.ConfigRecord, target: t.ImportTarget = { type: 'base' }) {
+function renderPreview(
+  appConfig: t.ConfigRecord,
+  target: t.ImportTarget = { type: 'base' },
+  {
+    features = {},
+    baseData = base,
+  }: { features?: Partial<t.ConfigFeatures>; baseData?: t.BaseConfigData } = {},
+) {
   const client = new QueryClient();
-  client.setQueryData(['baseConfig'], base);
+  client.setQueryData(['baseConfig'], baseData);
   client.setQueryData(
     ['resolvedConfig', engineering.principalType, engineering.principalId],
     engineeringData,
   );
+  const contract: t.ConfigContract = {
+    ...BUNDLED_CONFIG_CONTRACT,
+    features: { ...BUNDLED_CONFIG_CONTRACT.features, ...features },
+  };
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    <QueryClientProvider client={client}>
+      <ConfigContractContext.Provider value={contract}>{children}</ConfigContractContext.Provider>
+    </QueryClientProvider>
   );
   return renderHook(
     () => useImportPreview({ schemaTree: tree, schemaPathSet, appConfig, target }),
@@ -101,6 +122,109 @@ function renderPreview(appConfig: t.ConfigRecord, target: t.ImportTarget = { typ
 }
 
 describe('useImportPreview', () => {
+  it('on a server that keeps dotted keys, merges an imported dotted record into the stored one', () => {
+    const profiles = { 'us.anthropic.a': 'arn:a' };
+    const bedrock = { inferenceProfiles: profiles };
+    const baseData: t.BaseConfigData = {
+      ...base,
+      config: setValueAtPath(base.config, 'endpoints.bedrock', bedrock),
+      dbOverrides: setValueAtPath(dbOverrides, 'endpoints.bedrock', bedrock),
+    };
+    const { result } = renderPreview(
+      { endpoints: { bedrock: { inferenceProfiles: { 'us.anthropic.b': 'arn:b' } } } },
+      { type: 'base' },
+      { features: { dottedKeys: true }, baseData },
+    );
+    const rows = result.current.groups.flatMap((group) => group.rows.flatMap((row) => row.rows));
+    expect(rows.map((row) => row.item.kind)).toEqual(['added']);
+    expect(result.current.entriesFor(new Set(['endpoints.bedrock.inferenceProfiles']))).toEqual([
+      {
+        fieldPath: 'endpoints.bedrock.inferenceProfiles',
+        value: { 'us.anthropic.a': 'arn:a', 'us.anthropic.b': 'arn:b' },
+      },
+    ]);
+  });
+
+  it('on a server that keeps dotted keys, never lists librechat.yaml record keys as removed', () => {
+    const bedrock = { inferenceProfiles: { 'us.anthropic.a': 'arn:a' } };
+    const baseData: t.BaseConfigData = {
+      ...base,
+      config: setValueAtPath(base.config, 'endpoints.bedrock', bedrock),
+      yamlConfig: setValueAtPath(yamlConfig, 'endpoints.bedrock', bedrock),
+    };
+    const { result } = renderPreview(
+      { endpoints: { bedrock: { inferenceProfiles: { 'us.anthropic.b': 'arn:b' } } } },
+      { type: 'base' },
+      { features: { dottedKeys: true }, baseData },
+    );
+    const rows = result.current.groups.flatMap((group) => group.rows.flatMap((row) => row.rows));
+    expect(rows.map((row) => [row.item.kind, row.item.path])).toEqual([
+      ['added', 'endpoints.bedrock.inferenceProfiles.us.anthropic.b'],
+    ]);
+    expect(result.current.entriesFor(new Set(['endpoints.bedrock.inferenceProfiles']))).toEqual([
+      { fieldPath: 'endpoints.bedrock.inferenceProfiles', value: { 'us.anthropic.b': 'arn:b' } },
+    ]);
+  });
+
+  it('on a server that keeps dotted keys, imports MCP servers field by field and leaves a dotted name out', () => {
+    const cloudflare = { type: 'streamable-http', url: 'https://mcp.cloudflare.com/mcp' };
+    const everything = { type: 'streamable-http', url: 'https://everything.example.com/mcp' };
+    const stored = { timeout: 45000, initTimeout: 20000 };
+    const yaml = setValueAtPath(yamlConfig, 'mcpServers', { cloudflare, everything });
+    const baseData: t.BaseConfigData = {
+      ...base,
+      config: setValueAtPath(base.config, 'mcpServers', {
+        cloudflare: { ...cloudflare, ...stored },
+        everything,
+      }),
+      yamlConfig: yaml,
+      yamlPaths: Object.keys(flattenObject(yaml)),
+      dbOverrides: setValueAtPath(dbOverrides, 'mcpServers', { cloudflare: stored }),
+    };
+    const { result } = renderPreview(
+      {
+        mcpServers: {
+          'my.server': { type: 'streamable-http', url: 'https://example.com/mcp' },
+          cloudflare: { ...cloudflare, serverInstructions: 'Use carefully' },
+          everything: { serverInstructions: 'Sparse' },
+        },
+      },
+      { type: 'base' },
+      { features: { dottedKeys: true }, baseData },
+    );
+    const paths = new Set(result.current.plan?.entries.map((entry) => entry.fieldPath));
+    expect(paths.has('mcpServers')).toBe(false);
+    const rows = result.current.groups.flatMap((group) => group.rows.flatMap((row) => row.rows));
+    expect(rows.map((row) => [row.item.kind, row.item.path])).toEqual([
+      ['added', 'mcpServers.cloudflare.serverInstructions'],
+      ['added', 'mcpServers.everything.serverInstructions'],
+    ]);
+    expect(result.current.skipped).toEqual([
+      expect.objectContaining({
+        path: 'mcpServers',
+        label: expect.stringContaining('"my.server"'),
+        reason: expect.stringContaining('name with a dot'),
+      }),
+    ]);
+    expect(result.current.entriesFor(paths)).toEqual(
+      expect.arrayContaining([
+        { fieldPath: 'mcpServers.cloudflare.serverInstructions', value: 'Use carefully' },
+        { fieldPath: 'mcpServers.everything.serverInstructions', value: 'Sparse' },
+      ]),
+    );
+    expect(result.current.issuesFor(paths)).toEqual([]);
+  });
+
+  it('on an older server, leaves out a record holding a dotted key', () => {
+    const { result } = renderPreview({
+      endpoints: { bedrock: { inferenceProfiles: { 'us.anthropic.b': 'arn:b' } } },
+    });
+    expect(result.current.groups).toEqual([]);
+    expect(result.current.skipped.map((row) => row.path)).toEqual([
+      'endpoints.bedrock.inferenceProfiles',
+    ]);
+  });
+
   it('lists only the keys a partial custom endpoint sets, merged by name (D4)', () => {
     const { result } = renderPreview({
       endpoints: { custom: [{ name: 'Moonshot', modelDisplayLabel: 'Kimi Import' }] },
@@ -178,5 +302,56 @@ describe('useImportPreview', () => {
     expect(onProfile.result.current.issuesFor(all)).toEqual([]);
     const onBase = renderPreview(sparse);
     expect(onBase.result.current.issuesFor(all)).toEqual(['Server URL is required']);
+  });
+});
+
+describe('useConfigImport', () => {
+  function renderImport(skipped: t.SkippedChange[]) {
+    const client = new QueryClient();
+    const writeChanges = vi.fn<t.WriteChangesFn>().mockResolvedValue(skipped);
+    const describeSkipped = (items: t.SkippedChange[]) =>
+      items.map((item) => item.fieldPath).join(', ');
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useConfigImport({ writeChanges, describeSkipped }), {
+      wrapper,
+    });
+    return { result, writeChanges };
+  }
+  const entries: t.SaveEntry[] = [
+    { fieldPath: 'mcpServers.github.headers', value: { 'x-team.id': 'eng' } },
+    { fieldPath: 'balance.startBalance', value: 5 },
+  ];
+
+  it('reports keys LibreChat merges back as the merge asked for, not as left out', async () => {
+    const toast = vi.mocked(createToast);
+    toast.mockClear();
+    const { result, writeChanges } = renderImport([
+      { fieldPath: 'mcpServers.github.headers.Authorization', reason: 'yamlMerged' },
+    ]);
+    await act(() => result.current.handleImport({ target: { type: 'base' }, entries }));
+    expect(writeChanges).toHaveBeenCalledWith({ type: 'base' }, entries, []);
+    expect(toast).toHaveBeenCalledWith({
+      type: 'success',
+      title: 'Imported 2 values into the base configuration',
+    });
+  });
+
+  it('still reports a value that was not stored', async () => {
+    const toast = vi.mocked(createToast);
+    toast.mockClear();
+    const { result } = renderImport([
+      { fieldPath: 'mcpServers.github.headers.Authorization', reason: 'yamlMerged' },
+      { fieldPath: 'balance.startBalance', reason: 'notStored' },
+    ]);
+    await act(() => result.current.handleImport({ target: { type: 'base' }, entries }));
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'warning',
+        title: 'Imported 1 value into the base configuration',
+        description: 'balance.startBalance',
+      }),
+    );
   });
 });

@@ -3,15 +3,15 @@ import { isProcessMCPServerConfig } from 'librechat-data-provider';
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type * as t from '@/types';
 import { getValueAtPath, isConfigRecord, isRowVisible, asConfigRecord } from '@/utils';
-import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
-import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
 import { previewedSecret, storedSecrets, usesSecret } from './validation';
+import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
+import { useLocalize, useValuesScope, useConfigFeatures } from '@/hooks';
+import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
 import { McpDeletedRow, McpHiddenRow, McpServerCard } from './Card';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { INSPECTOR_DERIVED, transportOf } from './transport';
 import { copyName, serverNameProblem } from './names';
 import { buildServerList, leafEntries } from './list';
-import { useLocalize, useValuesScope } from '@/hooks';
 import { CreateMcpServerDialog } from './Create';
 import { sourceLabel } from '../../values';
 import { McpServerEditor } from './Editor';
@@ -97,6 +97,7 @@ export function McpServersRenderer({
   editSessionId,
 }: t.FieldRendererProps) {
   const localize = useLocalize();
+  const { dottedKeys } = useConfigFeatures();
   const scope = useValuesScope();
   const rowFilter = useContext(RowFilterContext);
   const valuesData = useContext(ConfigValuesContext);
@@ -552,13 +553,17 @@ export function McpServersRenderer({
   };
 
   /**
-   * Why a card's fields are read-only: a dotted name the admin API drops, a
+   * Why a card's fields are read-only: a dotted name (an older admin API drops
+   * it; a newer one keeps it, but a field path can't address it), a
    * stdio server (LibreChat applies no override to it, so overrides stored
    * anyway can only be removed), or an inherited server not overridden yet.
    */
   const readOnlyNoteFor = (key: string, reason: t.McpReadOnlyReason | null, overrides: number) => {
     if (reason === 'dotted') {
-      return <McpNote tone="lock">{localize('com_config_mcp_dotted_name')}</McpNote>;
+      const noteKey = dottedKeys
+        ? 'com_config_mcp_dotted_name_paths'
+        : 'com_config_mcp_dotted_name';
+      return <McpNote tone="lock">{localize(noteKey)}</McpNote>;
     }
     if (reason === 'process') {
       const canRemove = overrides > 0 && !disabled && !list.reverted.has(key);

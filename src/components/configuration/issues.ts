@@ -1,8 +1,9 @@
 import type * as t from '@/types';
 import {
   getEntryKey,
-  getKeyedCollection,
   hasIssueMessage,
+  getKeyedCollection,
+  paramlessIssueCode,
   findKeyedCollectionEntry,
 } from '@/utils';
 import { labelForPath } from './meta';
@@ -48,10 +49,15 @@ function displayParams(
   );
 }
 
-/** Localized message of an issue: `com_config_issue_<code>` when there is one, else the server's text. */
+/**
+ * Localized message of an issue: `com_config_issue_<code>` when there is one,
+ * else the server's text. An issue without parameters (the admin API reports
+ * codes only) is worded without them (`paramlessIssueCode`).
+ */
 function issuePredicate(issue: t.ConfigIssue, localize: t.LocalizeFn): string {
   if (!issue.code) return issue.message;
-  const key = `com_config_issue_${issue.code.toLowerCase()}`;
+  const code = issue.params ? issue.code : paramlessIssueCode(issue.code);
+  const key = `com_config_issue_${code.toLowerCase()}`;
   const localized = localize(key, displayParams(issue.params));
   return localized === key ? issue.message : localized;
 }

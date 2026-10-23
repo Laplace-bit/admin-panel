@@ -1,5 +1,5 @@
 import type * as t from '@/types';
-import { isConfigRecord } from './format';
+import { hasDottedKey, isConfigRecord } from './format';
 
 const UNSAFE_SEGMENTS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -9,7 +9,7 @@ function collectInto(value: t.ConfigRecord, prefix: string, out: string[]): void
     const child = value[key];
     if (child === undefined) continue;
     const path = prefix ? `${prefix}.${key}` : key;
-    if (isConfigRecord(child)) {
+    if (isConfigRecord(child) && !hasDottedKey(child)) {
       collectInto(child, path, out);
     } else {
       out.push(path);
@@ -18,9 +18,10 @@ function collectInto(value: t.ConfigRecord, prefix: string, out: string[]): void
 }
 
 /**
- * Leaf paths a config tree sets: arrays, primitives and `null` are leaves, and
- * an empty object sets nothing (LibreChat leaves `{}` behind when the last
- * override under a section is removed, and it must not count as a setting).
+ * Leaf paths a config tree sets: arrays, primitives, `null` and objects with a
+ * dotted key (`hasDottedKey`) are leaves, and an empty object sets nothing
+ * (LibreChat leaves `{}` behind when the last override under a section is
+ * removed, and it must not count as a setting).
  */
 export function collectLeafPaths(value: t.ConfigValue, prefix = ''): string[] {
   if (!isConfigRecord(value)) return value === undefined || !prefix ? [] : [prefix];

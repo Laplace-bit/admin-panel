@@ -14,6 +14,14 @@ import {
   findKeyedCollectionEntry,
 } from './collections';
 import {
+  hasDottedKey,
+  isConfigRecord,
+  getValueAtPath,
+  setValueAtPath,
+  removeValueAtPath,
+  isConfigValueEqual,
+} from './format';
+import {
   validateEntry,
   validateField,
   validateSection,
@@ -24,21 +32,13 @@ import {
   getConfigSection,
   getReadOnlyReason,
   SECRET_CONFIG_KEYS,
-  BLOCK_UNSAFE_CONFIG_KEYS,
-  UNSAFE_CONFIG_KEY_MESSAGE,
+  BUNDLED_CONFIG_FEATURES,
 } from '@/constants';
-import {
-  isConfigRecord,
-  getValueAtPath,
-  setValueAtPath,
-  removeValueAtPath,
-  isConfigValueEqual,
-} from './format';
 import { isSecretKey, toSecretPreviewKey, valueOrSecretPreview } from './secrets';
 import { findYamlManagedValues, getWriteSkipReason } from './writes';
+import { isBlankText, findBlankText, findUnsafeKeys } from './keys';
 import { resolveSubSchema, unwrapSchema } from './schema';
 import { scopeGateSkipReason } from './scopes';
-import { isBlankText, findBlankText, findUnsafeKeys } from './keys';
 
 /** Whether a write at `path` sets a process-backed (stdio) MCP server field, which the admin API rejects. */
 export function isProcessMcpWrite(path: string, value: t.ConfigValue): boolean {
@@ -53,11 +53,16 @@ export function isProcessMcpWrite(path: string, value: t.ConfigValue): boolean {
 
 /**
  * Write-rule problems of one value: YAML-managed fields, process-backed MCP
- * fields and unsafe keys. In a keyed collection's list, each problem names
+ * fields and keys the server can't store (dotted keys only before its
+ * `dottedKeys` feature). In a keyed collection's list, each problem names
  * its entry, since the list's positions are not the ones the page shows.
  */
-export function findWriteRuleIssues(path: string, value: t.ConfigValue): t.ConfigIssue[] {
-  const issues = findValueRuleIssues(path, value);
+export function findWriteRuleIssues(
+  path: string,
+  value: t.ConfigValue,
+  features: t.ConfigFeatures = BUNDLED_CONFIG_FEATURES,
+): t.ConfigIssue[] {
+  const issues = findValueRuleIssues(path, value, features);
   const collection = getKeyedCollection(path);
   if (!collection || !Array.isArray(value) || issues.length === 0) return issues;
   return issues.map((issue) => withEntryOf(issue, collection, value));
@@ -75,7 +80,11 @@ function withEntryOf(
   return { ...issue, entryIdentity: identity, entryPath: located.rest };
 }
 
-function findValueRuleIssues(path: string, value: t.ConfigValue): t.ConfigIssue[] {
+function findValueRuleIssues(
+  path: string,
+  value: t.ConfigValue,
+  features: t.ConfigFeatures,
+): t.ConfigIssue[] {
   const managed = findYamlManagedValues(path, value);
   if (managed.length > 0) {
     return managed.map((managedPath) => ({
@@ -94,11 +103,11 @@ function findValueRuleIssues(path: string, value: t.ConfigValue): t.ConfigIssue[
     ];
   }
   const blank = [...blankPathKeys(path), ...findBlankText(value, path)].map(blankTextIssue);
-  if (!BLOCK_UNSAFE_CONFIG_KEYS) return blank;
-  const unsafe = findUnsafeKeys(value, path).map(({ path: holder, key }) => ({
+  const code = features.dottedKeys ? 'RESERVED_KEY' : 'UNSAFE_KEY';
+  const unsafe = findUnsafeKeys(value, path, features.dottedKeys).map(({ path: holder, key }) => ({
     path: holder,
-    code: 'UNSAFE_KEY',
-    message: `"${key}": ${UNSAFE_CONFIG_KEY_MESSAGE}`,
+    code,
+    message: describeIssueCode(code, { key }, ''),
     params: { key },
   }));
   return [...unsafe, ...blank];
@@ -129,6 +138,7 @@ function blankTextIssue({ path, key }: t.BlankConfigText): t.ConfigIssue {
 
 interface PlanState {
   snapshot: t.WriteSnapshot;
+  features: t.ConfigFeatures;
   sets: Map<string, t.ConfigValue>;
   resets: string[];
   tombstones: string[];
@@ -407,12 +417,37 @@ function parentPath(path: string): string {
   return path.slice(0, Math.max(0, path.lastIndexOf('.')));
 }
 
+function isAtOrUnder(path: string, ancestor: string): boolean {
+  return path === ancestor || path.startsWith(`${ancestor}.`);
+}
+
+/**
+ * Whether removing `ancestor` would also remove a tombstone that removing
+ * `path` leaves: LibreChat drops every tombstone at or under a removed path,
+ * so widening a reset over one would show again a value the target hides.
+ */
+function holdsOtherTombstone(
+  ancestor: string,
+  path: string,
+  tombstones: readonly string[],
+): boolean {
+  return tombstones.some(
+    (tombstone) => isAtOrUnder(tombstone, ancestor) && !isAtOrUnder(tombstone, path),
+  );
+}
+
 /**
  * The highest ancestor a removal leaves empty, so no `{}` remains stored: a
  * parent whose only key is the emptied child (`endpoints.anthropic.models`
  * after its last key goes, then `endpoints.anthropic`, then `endpoints`).
+ * It never widens past an ancestor with another tombstone under it (stored,
+ * or written by this batch), which the wider removal would drop.
  */
-function emptiedAncestor(storedAfter: t.ConfigRecord, path: string): string {
+function emptiedAncestor(
+  storedAfter: t.ConfigRecord,
+  path: string,
+  tombstones: readonly string[],
+): string {
   let current = path;
   const leftEmpty = getValueAtPath(storedAfter, current);
   if (isConfigRecord(leftEmpty) && Object.keys(leftEmpty).length > 0) return current;
@@ -421,6 +456,7 @@ function emptiedAncestor(storedAfter: t.ConfigRecord, path: string): string {
     const value = getValueAtPath(storedAfter, parent);
     const child = current.slice(parent.length + 1);
     if (!isConfigRecord(value) || Object.keys(value).some((key) => key !== child)) break;
+    if (holdsOtherTombstone(parent, path, tombstones)) break;
     current = parent;
     parent = parentPath(current);
   }
@@ -446,7 +482,8 @@ function applyToStored(state: PlanState): t.ConfigRecord {
 /** Widens each reset to the highest parent it leaves empty, then returns the stored overrides afterwards. */
 function pruneEmptyParents(state: PlanState): t.ConfigRecord {
   const removed = applyToStored(state);
-  const widened = state.resets.map((path) => emptiedAncestor(removed, path));
+  const tombstones = [...state.snapshot.tombstones, ...state.tombstones];
+  const widened = state.resets.map((path) => emptiedAncestor(removed, path, tombstones));
   state.resets = [...new Set(widened)].filter((path) => !hasAncestorIn(path, widened));
   return applyToStored(state);
 }
@@ -504,7 +541,7 @@ function isIntroducedIssue(state: PlanState, path: string, issue: t.ConfigIssue)
 function validateSets(state: PlanState): Set<string> {
   const blocked = new Set<string>();
   for (const [path, value] of state.sets) {
-    const ruleIssues = findWriteRuleIssues(path, value).filter((issue) =>
+    const ruleIssues = findWriteRuleIssues(path, value, state.features).filter((issue) =>
       isIntroducedIssue(state, path, issue),
     );
     if (ruleIssues.length > 0) {
@@ -601,16 +638,22 @@ function findMergedBackKeys(state: PlanState): void {
 
 /**
  * Resolves a batch of changes against the target's stored overrides and the
- * layer beneath it, into the admin API writes that implement it. Everything
+ * layer beneath it, into the admin API writes that implement it, by the
+ * server's contract `features` (the bundled ones: an older server). Everything
  * is checked before anything may be written: write rules (read-only and
  * YAML-managed paths, process-backed MCP fields, unsafe keys), field and
  * entry schemas, whole sections, and the keyed collection rules. The client
  * runs it for the review and inline errors; the server runs it again against
  * freshly read layers right before writing.
  */
-export function planConfigChanges(ops: t.ConfigChange[], snapshot: t.WriteSnapshot): t.WritePlan {
+export function planConfigChanges(
+  ops: t.ConfigChange[],
+  snapshot: t.WriteSnapshot,
+  features: t.ConfigFeatures = BUNDLED_CONFIG_FEATURES,
+): t.WritePlan {
   const state: PlanState = {
     snapshot,
+    features,
     sets: new Map(),
     resets: [],
     tombstones: [],
@@ -659,9 +702,13 @@ function stripSecrets(value: t.ConfigValue): t.ConfigValue {
   return Object.keys(result).length === 0 ? undefined : result;
 }
 
-/** Leaf paths (relative) and values of a value; arrays are leaves, secrets are skipped. */
+/**
+ * Leaf paths (relative) and values of a value; arrays are leaves, and so is an
+ * object with a dotted key, which no path can split (`hasDottedKey`); secrets
+ * are skipped.
+ */
 function leavesOf(value: t.ConfigValue, prefix = ''): Array<[string, t.ConfigValue]> {
-  if (!isConfigRecord(value)) return [[prefix, value]];
+  if (!isConfigRecord(value) || hasDottedKey(value)) return [[prefix, value]];
   return Object.entries(value).flatMap(([key, child]) =>
     isRedactedKey(key) ? [] : leavesOf(child, prefix ? `${prefix}.${key}` : key),
   );

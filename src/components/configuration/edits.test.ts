@@ -161,9 +161,9 @@ describe('identity-keyed collection ops (SV-1)', () => {
     expect(ops).toEqual([
       expect.objectContaining({ op: 'upsertEntry', key: 'Moonshot', identity: 'Moonshot' }),
     ]);
-    expect(planConfigChanges(ops, { stored: {}, lower: root, lowerKind: 'yaml' }).issues).toEqual(
-      [],
-    );
+    expect(
+      planConfigChanges(ops, { stored: {}, tombstones: [], lower: root, lowerKind: 'yaml' }).issues,
+    ).toEqual([]);
   });
 
   it('restores a renamed entry deleted and then undone as the entry it was loaded as', () => {
@@ -225,7 +225,12 @@ describe('identity-keyed collection ops (SV-1)', () => {
       expect.objectContaining({ op: 'upsertEntry', identity: 'a', index: 1 }),
       expect.objectContaining({ op: 'upsertEntry', identity: 'b', index: 2 }),
     ]);
-    const plan = planConfigChanges(ops, { stored: {}, lower: specRoot, lowerKind: 'yaml' });
+    const plan = planConfigChanges(ops, {
+      stored: {},
+      tombstones: [],
+      lower: specRoot,
+      lowerKind: 'yaml',
+    });
     expect(plan.sets.map((set) => set.fieldPath)).toEqual(['modelSpecs.list']);
     const saved = plan.sets[0].value as t.ConfigRecord[];
     expect(saved.map((spec) => spec.name)).toEqual(['c', 'a', 'b']);
@@ -247,7 +252,12 @@ describe('identity-keyed collection ops (SV-1)', () => {
       schemaPaths,
       context({ root: specRoot, collections }),
     );
-    const plan = planConfigChanges(ops, { stored: {}, lower: specRoot, lowerKind: 'yaml' });
+    const plan = planConfigChanges(ops, {
+      stored: {},
+      tombstones: [],
+      lower: specRoot,
+      lowerKind: 'yaml',
+    });
     expect(plan.issues).toEqual([]);
     const saved = plan.sets[0].value as t.ConfigRecord[];
     expect(saved.map((entry) => entry.name)).toEqual(['b', 'c', 'x']);
@@ -273,7 +283,12 @@ describe('identity-keyed collection ops (SV-1)', () => {
       schemaPaths,
       context({ root: specRoot, collections }),
     );
-    const plan = planConfigChanges(ops, { stored: {}, lower: specRoot, lowerKind: 'yaml' });
+    const plan = planConfigChanges(ops, {
+      stored: {},
+      tombstones: [],
+      lower: specRoot,
+      lowerKind: 'yaml',
+    });
     expect(plan.issues).toEqual([]);
     const saved = plan.sets[0].value as t.ConfigRecord[];
     expect(saved.map((spec) => [spec.name, spec.label])).toEqual([
@@ -461,6 +476,17 @@ describe('issue display and summary', () => {
     });
   });
 
+  it('words an issue the admin API reported without parameters without placeholders', () => {
+    const issue: t.ConfigIssue = {
+      path: 'balance.startBalance',
+      code: 'too_small',
+      message: 'is too small',
+    };
+    const text = formatIssue(issue, issue.path, localize).inline;
+    expect(text).toMatch(/is too small$/);
+    expect(text).not.toContain('{{');
+  });
+
   it('names an entry without a name as such, not with an empty identity', () => {
     const issue: t.ConfigIssue = {
       path: 'endpoints.custom',
@@ -521,6 +547,7 @@ describe('issue display and summary', () => {
     const changeSet = buildConfigChanges(new Set(Object.keys(values)), values, schemaPaths, ctx);
     const plan = planConfigChanges(changeSet.ops, {
       stored: specsRoot,
+      tombstones: [],
       lower: {},
       lowerKind: 'yaml',
     });
@@ -549,6 +576,7 @@ describe('issue display and summary', () => {
     );
     const plan = planConfigChanges(changeSet.ops, {
       stored: {},
+      tombstones: [],
       lower: { ...root, balance: { refillAmount: 1000000 } },
       lowerKind: 'yaml',
     });

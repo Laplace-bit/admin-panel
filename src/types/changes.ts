@@ -114,6 +114,12 @@ export type ChangeKind =
 /** One human-readable row of the change review (WS1 produces, WS7 renders). */
 export interface ChangeSummaryItem {
   path: string;
+  /**
+   * The segments of `path` when a record key in it holds a dot (an inference
+   * profile `us.anthropic.claude-sonnet-4-6`), which splitting `path` would
+   * break apart; Revert follows them.
+   */
+  segments?: string[];
   /** Identity (e.g. name) of the collection entry the change belongs to. */
   entryIdentity?: string;
   kind: ChangeKind;
@@ -167,6 +173,8 @@ export type LowerLayerKind = 'yaml' | 'inherited';
 export interface WriteSnapshot {
   /** The target's own stored overrides (secrets redacted). */
   stored: ConfigRecord;
+  /** Paths the target hides from the layer beneath (its stored tombstones). */
+  tombstones: readonly string[];
   /** The layer beneath the target: librechat.yaml for base, the base config for a profile. */
   lower: ConfigRecord;
   lowerKind: LowerLayerKind;

@@ -3,6 +3,7 @@ export type * from './auth';
 export type * from './changes';
 export type * from './config';
 export type * from './config-ui';
+export type * from './contract';
 export type * from './endpoints';
 export type * from './controls';
 export type * from './features';
