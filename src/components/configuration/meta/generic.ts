@@ -293,7 +293,7 @@ const STATIC_META: t.FieldMetaRegistry = {
   },
   'endpoints.custom[].provider': { labelKey: 'com_config_label_custom_provider' },
   'endpoints.custom[].customParams.defaultParamsEndpoint': { optionSource: 'endpoints' },
-  'endpoints.agents.allowedProviders': { optionSource: 'endpoints' },
+  'endpoints.agents.allowedProviders': { optionSource: 'providers' },
   'endpoints.agents.capabilities': { emptyListIsValue: true },
   'endpoints.assistants.capabilities': { emptyListIsValue: true },
   'endpoints.azureAssistants.capabilities': { emptyListIsValue: true },
@@ -301,8 +301,8 @@ const STATIC_META: t.FieldMetaRegistry = {
   'modelSpecs.list[].preset.endpoint': { optionSource: 'endpoints' },
   'modelSpecs.list[].group': { optionSource: 'specGroups' },
   'modelSpecs.list[].mcpServers': { optionSource: 'mcpServers' },
-  'summarization.provider': { optionSource: 'endpoints' },
-  'memory.agent.provider': { optionSource: 'endpoints' },
+  'summarization.provider': { optionSource: 'providers' },
+  'memory.agent.provider': { optionSource: 'providers' },
   'memory.agent': {
     enumLabels: {
       id: 'com_config_variant_memory_agent_id',
@@ -310,8 +310,22 @@ const STATIC_META: t.FieldMetaRegistry = {
     },
   },
   'mcpServers.{}.apiKey.key': { secret: true },
+  'mcpServers.{}.url': { placeholderKey: 'com_config_placeholder_mcp_url' },
+  'mcpServers.{}.title': { placeholderKey: 'com_config_placeholder_mcp_title' },
+  'mcpServers.{}.description': { placeholderKey: 'com_config_placeholder_mcp_description' },
+  'mcpServers.{}.iconPath': { placeholderKey: 'com_config_placeholder_mcp_icon' },
+  'mcpServers.{}.customUserVars.{}.title': {
+    placeholderKey: 'com_config_placeholder_user_var_title',
+  },
+  'mcpServers.{}.customUserVars.{}.description': {
+    multiline: true,
+    placeholderKey: 'com_config_placeholder_user_var_description',
+  },
+  'endpoints.custom[].apiKey': { placeholderKey: 'com_config_placeholder_api_key' },
+  'modelSpecs.list[].description': { placeholderKey: 'com_config_placeholder_spec_description' },
+  'endpoints.custom[].baseURL': { placeholderKey: 'com_config_placeholder_base_url' },
+  'endpoints.custom[].iconURL': { placeholderKey: 'com_config_placeholder_icon_url' },
   'mcpServers.{}.serverInstructions': { multiline: true },
-  'mcpServers.{}.customUserVars.{}.description': { multiline: true },
   fileStrategy: { confirmChange: true },
   'fileStrategies.default': {
     confirmChange: true,
@@ -362,7 +376,7 @@ function endpointMeta(): t.FieldMetaRegistry {
       entries[`${parent}.${key}`] = { ...entries[`${parent}.${key}`], runtimeDefault };
     }
     for (const key of ENDPOINT_REFERENCES) {
-      entries[`${parent}.${key}`] = { ...entries[`${parent}.${key}`], optionSource: 'endpoints' };
+      entries[`${parent}.${key}`] = { ...entries[`${parent}.${key}`], optionSource: 'providers' };
     }
   }
   return entries;

@@ -12,6 +12,7 @@ import {
   filterSecretPreviewFields,
   filterInterfacePermissionChildren,
 } from '@/utils';
+import { RUNTIME_NUMBER_LIMITS } from '@/constants';
 import { apiFetch } from '../utils/api';
 
 /** Hide the Langfuse section when LibreChat reports fanout is disabled. When the
@@ -435,10 +436,12 @@ function buildField(
   const typeName = schema?._def?.typeName;
   if (typeName === 'ZodArray') return arrayField(base, schema, path);
   if (typeName === 'ZodRecord') return recordField(base, schema, path);
+  const limits = RUNTIME_NUMBER_LIMITS[base.path];
+  const constraints = extractConstraints(schema);
   return finalizeField({
     ...base,
     type: getZodTypeName(schema),
-    constraints: extractConstraints(schema),
+    constraints: limits ? { ...constraints, ...limits } : constraints,
   });
 }
 

@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react';
 import { Button } from '@clickhouse/click-ui';
 import type * as t from '@/types';
 import { BLANK_ENDPOINT_TEMPLATE, ENDPOINT_TEMPLATES } from '@/constants';
+import { useLocalize, useValuesScope, useDiscardPrompt } from '@/hooks';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
 import { isConfigRecord, isConfigValueEqual } from '@/utils';
 import { hasBlockingIssue, validateEndpoint } from './model';
-import { useLocalize, useValuesScope } from '@/hooks';
+import { DiscardConfirm } from '@/components/shared';
 import { sourceLabel } from '../../values';
 import { EndpointDrawer } from './Drawer';
 import { EndpointEditor } from './Editor';
@@ -27,6 +28,14 @@ const MISSING_CODES: ReadonlySet<t.EndpointIssueCode> = new Set([
   'baseUrlRequired',
   'modelsRequired',
 ]);
+
+/** The order the form shows the required fields in, so the footer lists them the same way. */
+const FORM_ORDER: readonly string[] = ['name', 'baseURL', 'apiKey', 'models.default'];
+
+function formPosition(field: string): number {
+  const index = FORM_ORDER.indexOf(field);
+  return index === -1 ? FORM_ORDER.length : index;
+}
 
 /** The draft as it would be added: empty values and empty lists left out, the name trimmed. */
 function toEntry(draft: t.ConfigRecord): t.ConfigRecord {
@@ -74,13 +83,15 @@ export function EndpointCreator({
   const [template, setTemplate] = useState<t.EndpointTemplate | null>(null);
   const [draft, setDraft] = useState<t.ConfigRecord>({});
   const [attempted, setAttempted] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  /** What Discard does once confirmed: close the drawer, or go back to the templates. */
+  const [discardAction, setDiscardAction] = useState<'close' | 'back'>('close');
+  const prompt = useDiscardPrompt();
 
   const reset = () => {
     setTemplate(null);
     setDraft({});
     setAttempted(false);
-    setConfirming(false);
+    prompt.dismiss();
   };
   const close = () => {
     reset();
@@ -106,20 +117,36 @@ export function EndpointCreator({
     [draft, names],
   );
   const shownIssues = attempted ? issues : issues.filter((issue) => !MISSING_CODES.has(issue.code));
-  const missing = issues
-    .filter((issue) => MISSING_CODES.has(issue.code))
-    .map((issue) => labelForPath(`${DRAFT_PATH}.${issue.field}`, localize));
+  const labelsOf = (list: t.EndpointIssue[]) =>
+    [...new Set(list.map((issue) => issue.field))]
+      .sort((a, b) => formPosition(a) - formPosition(b))
+      .map((field) => labelForPath(`${DRAFT_PATH}.${field}`, localize));
+  const missing = labelsOf(issues.filter((issue) => MISSING_CODES.has(issue.code)));
+  const toFix = labelsOf(
+    issues.filter((issue) => issue.severity === 'error' && !MISSING_CODES.has(issue.code)),
+  );
+  const footerHint = [
+    missing.length > 0
+      ? localize('com_config_endpoint_required_missing', { fields: missing.join(', ') })
+      : null,
+    toFix.length > 0
+      ? localize('com_config_endpoint_required_fix', { fields: toFix.join(', ') })
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const name = typeof entry.name === 'string' ? entry.name : '';
   const inherited = scope != null && inheritedNames.includes(name) ? name : null;
   const blocked = hasBlockingIssue(issues) || inherited != null;
   const isDirty = template != null && !isConfigValueEqual(draft, template.entry);
 
   const requestClose = () => {
-    if (isDirty && !confirming) {
-      setConfirming(true);
+    if (!isDirty) {
+      close();
       return;
     }
-    close();
+    if (!prompt.confirming) setDiscardAction('close');
+    prompt.request();
   };
 
   const submit = () => {
@@ -132,7 +159,7 @@ export function EndpointCreator({
   };
 
   const handleFieldChange = (key: string, value: t.ConfigValue) => {
-    setConfirming(false);
+    prompt.dismiss();
     setDraft((prev) => {
       const next = { ...prev, [key]: value };
       if (value === undefined) delete next[key];
@@ -140,32 +167,16 @@ export function EndpointCreator({
     });
   };
 
-  const footer = confirming ? (
-    <div role="alert" className="flex w-full flex-wrap items-center justify-between gap-2">
-      <span className="text-sm text-(--cui-color-text-default)">
-        {localize('com_config_ce_discard_confirm')}
-      </span>
-      <div className="flex items-center gap-2">
-        <Button
-          type="secondary"
-          htmlType="button"
-          label={localize('com_config_ce_keep_editing')}
-          onClick={() => setConfirming(false)}
-        />
-        <Button
-          type="danger"
-          htmlType="button"
-          label={localize('com_config_ce_discard')}
-          onClick={close}
-        />
-      </div>
-    </div>
+  const footer = prompt.confirming ? (
+    <DiscardConfirm
+      message={localize('com_config_ce_discard_confirm')}
+      onKeep={prompt.keep}
+      onDiscard={discardAction === 'back' ? reset : close}
+    />
   ) : (
     <div className="flex w-full flex-wrap items-center justify-between gap-2">
       <span className="min-w-0 text-sm text-(--cui-color-text-muted)">
-        {template && missing.length > 0
-          ? localize('com_config_endpoint_required_missing', { fields: missing.join(', ') })
-          : null}
+        {template && footerHint !== '' ? footerHint : null}
       </span>
       <div className="ml-auto flex items-center gap-2">
         {template && (
@@ -175,11 +186,12 @@ export function EndpointCreator({
             iconLeft="arrow-left"
             label={localize('com_config_ce_back')}
             onClick={() => {
-              if (isDirty) {
-                setConfirming(true);
+              if (!isDirty) {
+                reset();
                 return;
               }
-              reset();
+              setDiscardAction('back');
+              prompt.request();
             }}
           />
         )}
@@ -242,6 +254,9 @@ export function EndpointCreator({
     >
       {template ? (
         <form
+          ref={(el) => {
+            prompt.formRef.current = el;
+          }}
           onSubmit={(event) => {
             event.preventDefault();
             submit();
@@ -256,7 +271,6 @@ export function EndpointCreator({
               onFieldChange={handleFieldChange}
               issues={shownIssues}
               origin={scope ? 'scope' : 'admin'}
-              endpointNames={names}
               storedSecret={false}
               essentialsOnly
             />

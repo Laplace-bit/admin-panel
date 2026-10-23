@@ -4,18 +4,18 @@ import { configSchema, PrincipalType } from 'librechat-data-provider';
 import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import type * as t from '@/types';
 import {
+  baseConfigFixture,
+  valuesDataFixture,
+  scopeConfigFixture,
+  FIXTURE_SCHEMA_PATHS,
+} from '@/test/layers';
+import {
   flattenObject,
   withScopeLayer,
   createPathIndex,
   deriveFieldValue,
   createBaseLayers,
 } from '@/utils';
-import {
-  baseConfigFixture,
-  valuesDataFixture,
-  scopeConfigFixture,
-  FIXTURE_SCHEMA_PATHS,
-} from '@/test/layers';
 import { extractSchemaTree, getSchemaPathSet } from '@/server/config';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
@@ -271,6 +271,140 @@ describe('McpServersRenderer — defaults and locks (MCP-1, MCP-5, MCP-6)', () =
     expand('acme');
     expect(card('acme').querySelector('#mcpServers-acme-cwd')).toBeNull();
     expect(card('acme').querySelector('#mcpServers-acme-command')).toBeNull();
+  });
+});
+
+describe('McpServersRenderer — create (MCP-9)', () => {
+  it('creates a Streamable HTTP server with a header', async () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: /com_config_create_mcp_server/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(
+      within(dialog).getByPlaceholderText('com_config_mcp_create_name_placeholder'),
+      {
+        target: { value: 'srv-a' },
+      },
+    );
+    const url = dialog.querySelector<HTMLInputElement>('#mcpDraft-url input, input#mcpDraft-url');
+    if (!url) throw new Error('no URL input');
+    fireEvent.change(url, { target: { value: 'https://mcp.example.com/mcp' } });
+    fireEvent.blur(url);
+    const headers = dialog.querySelector<HTMLElement>('#mcpDraft-headers');
+    if (!headers) throw new Error('no headers editor');
+    fireEvent.click(within(headers).getByRole('button', { name: /com_ui_add_item/ }));
+    const key = within(headers).getByRole('textbox', { name: 'com_ui_key 1' });
+    fireEvent.change(key, { target: { value: 'X-Org' } });
+    fireEvent.blur(key);
+    const value = within(headers)
+      .getAllByRole('textbox')
+      .find((input) => input !== key);
+    if (!value) throw new Error('no value input');
+    fireEvent.change(value, { target: { value: 'acme' } });
+    fireEvent.blur(value);
+    expect(within(dialog).queryByText('must be an object')).not.toBeInTheDocument();
+    const create = within(dialog).getByRole('button', { name: 'com_ui_create' });
+    expect(create).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(create);
+    });
+    expect(edits.editedValues).toMatchObject({
+      'mcpServers.srv-a.type': 'streamable-http',
+      'mcpServers.srv-a.url': 'https://mcp.example.com/mcp',
+      'mcpServers.srv-a.headers.X-Org': 'acme',
+    });
+  });
+});
+
+describe('McpServersRenderer — create explains an unparsable URL (MCP-9)', () => {
+  it('marks the URL invalid with a message instead of only disabling Create', async () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: /com_config_create_mcp_server/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(
+      within(dialog).getByPlaceholderText('com_config_mcp_create_name_placeholder'),
+      { target: { value: 'srv-u' } },
+    );
+    const url = dialog.querySelector<HTMLInputElement>('#mcpDraft-url input, input#mcpDraft-url');
+    if (!url) throw new Error('no URL input');
+    fireEvent.change(url, { target: { value: 'not a url' } });
+    fireEvent.blur(url);
+    expect(within(dialog).getByRole('button', { name: 'com_ui_create' })).toBeDisabled();
+    expect(url).toHaveAttribute('aria-invalid', 'true');
+    expect(url).toHaveAccessibleDescription(expect.stringContaining('must be a valid URL'));
+    fireEvent.change(url, { target: { value: 'https://mcp.example.com/u' } });
+    fireEvent.blur(url);
+    expect(url).not.toHaveAttribute('aria-invalid');
+    expect(within(dialog).getByRole('button', { name: 'com_ui_create' })).toBeEnabled();
+  });
+});
+
+describe('McpServersRenderer — create validates header rows (MCP-9)', () => {
+  async function openFilledDialog() {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: /com_config_create_mcp_server/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(
+      within(dialog).getByPlaceholderText('com_config_mcp_create_name_placeholder'),
+      { target: { value: 'srv-d' } },
+    );
+    const url = dialog.querySelector<HTMLInputElement>('#mcpDraft-url input, input#mcpDraft-url');
+    if (!url) throw new Error('no URL input');
+    fireEvent.change(url, { target: { value: 'https://mcp.example.com/c' } });
+    fireEvent.blur(url);
+    const headers = dialog.querySelector<HTMLElement>('#mcpDraft-headers');
+    if (!headers) throw new Error('no headers editor');
+    return { dialog, headers };
+  }
+
+  function typeRow(headers: HTMLElement, n: number, key: string, value = 'v') {
+    fireEvent.click(within(headers).getByRole('button', { name: /com_ui_add_item/ }));
+    const input = within(headers).getByRole('textbox', { name: `com_ui_key ${n}` });
+    fireEvent.change(input, { target: { value: key } });
+    fireEvent.blur(input);
+    const valueInput = within(headers).getByRole('textbox', { name: `com_ui_value ${n}` });
+    fireEvent.change(valueInput, { target: { value } });
+    fireEvent.blur(valueInput);
+  }
+
+  it.each([
+    ['a blank key', '   '],
+    ['a repeated key', 'X-Good'],
+    ['a dotted key', 'X.Bad'],
+  ])('keeps Create disabled and names the rows to fix for %s', async (_case, key) => {
+    const { dialog, headers } = await openFilledDialog();
+    typeRow(headers, 1, 'X-Good');
+    const create = within(dialog).getByRole('button', { name: 'com_ui_create' });
+    expect(create).toBeEnabled();
+    typeRow(headers, 2, key);
+    expect(create).toBeDisabled();
+    expect(within(dialog).getByText(/com_config_mcp_create_fix_rows/)).toBeInTheDocument();
+    fireEvent.click(
+      within(headers)
+        .getAllByRole('button', { name: /com_ui_delete/ })
+        .at(-1)!,
+    );
+    expect(create).toBeEnabled();
+  });
+
+  it('a header with a key but no value is still needed, not silently left out', async () => {
+    const { dialog, headers } = await openFilledDialog();
+    typeRow(headers, 1, 'X-Org', '');
+    expect(within(dialog).getByRole('button', { name: 'com_ui_create' })).toBeDisabled();
+    expect(within(dialog).getByText(/com_config_mcp_create_missing/)).toBeInTheDocument();
+  });
+
+  it('Enter in a header key commits the row instead of creating the server', async () => {
+    const { headers } = await openFilledDialog();
+    fireEvent.click(within(headers).getByRole('button', { name: /com_ui_add_item/ }));
+    const input = within(headers).getByRole('textbox', { name: 'com_ui_key 1' });
+    fireEvent.change(input, { target: { value: 'X-Good' } });
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    act(() => {
+      input.dispatchEvent(enter);
+    });
+    expect(enter.defaultPrevented).toBe(true);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(edits.editedValues).toEqual({});
   });
 });
 
@@ -633,7 +767,7 @@ describe('McpServersRenderer — profiles (MCP-10)', () => {
   it('lists every inherited server read-only until its fields are overridden', () => {
     render(<Harness scope />);
     for (const key of ['github', 'everything', 'cloudflare', 'acme']) {
-      expect(within(card(key)).getByText('com_config_ui_state_inherited')).toBeInTheDocument();
+      expect(within(card(key)).getByText('com_config_values_source_inherited')).toBeInTheDocument();
     }
     expand('cloudflare');
     expect(card('cloudflare').querySelector('input#mcpServers-cloudflare-url')).toBeNull();

@@ -17,8 +17,8 @@ function SectionBlock({
         </h4>
       )}
       {section.notices.includes('ownershipChange') && (
-        <p className="m-0 flex items-start gap-1 text-xs text-(--cui-color-accent-warning)">
-          <span aria-hidden="true" className="flex pt-0.5">
+        <p className="m-0 flex items-start gap-1 text-xs text-(--settings-warn-fg)">
+          <span aria-hidden="true" className="flex pt-0.5 text-(--settings-warn-mark)">
             <Icon name="warning" size="xs" />
           </span>
           {localize(

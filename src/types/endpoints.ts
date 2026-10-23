@@ -15,6 +15,7 @@ export type EndpointIssueCode =
   | 'nameWhitespace'
   | 'nameTaken'
   | 'nameSimilar'
+  | 'nameMerged'
   | 'nameReserved'
   | 'apiKeyRequired'
   | 'baseUrlRequired'
@@ -77,7 +78,7 @@ export interface EndpointRow {
   issues: EndpointIssue[];
 }
 
-/** A saved endpoint a pending edit removes; Undo puts it back at `index`. */
+/** A saved endpoint a pending edit removes; Undo puts it back at `restoreIndex`. */
 export interface EndpointRemoval {
   key: string;
   title: string;
@@ -148,8 +149,6 @@ export interface EndpointEditorProps {
   issues: EndpointIssue[];
   origin: EndpointOrigin;
   disabled?: boolean;
-  /** Names of the endpoints in the list, for the endpoint pickers. */
-  endpointNames: readonly string[];
   storedSecret: boolean;
   /** The endpoint as the layer beneath defines it (librechat.yaml, or Base in a profile). */
   lowerEntry?: ConfigRecord;
@@ -220,6 +219,8 @@ export interface EndpointListProps {
   onDelete: (row: EndpointRow) => void;
   /** Reverts every override of the endpoint (to librechat.yaml, or to Base in a profile). */
   onRevert: (row: EndpointRow) => void;
+  /** In a profile: starts overriding an endpoint Base defines ("Override for Role: USER"). */
+  override?: { label: string; onSelect: (row: EndpointRow) => void };
   onUndoRemoval: (removal: EndpointRemoval) => void;
   /** Row ids are `${idPrefix}-${index}`, the ids the table of contents and deep links target. */
   idPrefix: string;
@@ -286,6 +287,8 @@ export interface TagListFieldProps {
 export interface PricingRowProps {
   /** Data path of `tokenConfig`. */
   path: string;
+  /** The schema of `tokenConfig`: its entries' fields name the rates. */
+  field?: SchemaField;
   value: ConfigValue;
   /** The endpoint's models, suggested when adding a row. */
   models: readonly string[];
@@ -299,8 +302,58 @@ export interface PricingRowProps {
 /** Props of one row of the endpoint list. */
 export interface EndpointListRowProps extends Pick<
   EndpointListProps,
-  'idPrefix' | 'disabled' | 'onOpen' | 'onReveal' | 'onDelete' | 'onRevert'
+  'idPrefix' | 'disabled' | 'onOpen' | 'onReveal' | 'onDelete' | 'onRevert' | 'override'
 > {
   row: EndpointRow;
   isOpen: boolean;
+}
+
+/** The Global shadow chip of one endpoint reference row (D11). */
+export interface ShadowChipProps {
+  path: string;
+  /** The endpoint's own value; nothing is shadowed while it sets none. */
+  value: ConfigValue;
+}
+
+/** One link of the endpoint editor's section nav (WS10). */
+export interface EndpointNavSection {
+  id: string;
+  label: string;
+  /** Problems in the section that block saving. */
+  errorCount: number;
+}
+
+/** The endpoint editor's sticky section links (WS10). */
+export interface EndpointSectionNavProps {
+  sections: EndpointNavSection[];
+  /** Sections have the ids `<idPrefix>-section-<id>`. */
+  idPrefix: string;
+}
+
+/** A schema field of the endpoint editor by entry key; nested ones (`models.default`) name their parent. */
+export interface EndpointResolvedField {
+  key: string;
+  field: SchemaField;
+  parentKey?: string;
+}
+
+/** One section of the endpoint editor as laid out: its rows shown and to add, and its warnings. */
+export interface EndpointSectionLayout {
+  section: EndpointSectionDef;
+  visible: EndpointFieldDef[];
+  hidden: EndpointFieldDef[];
+  warnings: string[];
+}
+
+/** One row of the endpoint editor (WS10): label and help from the field, the control, chips and a note. */
+export interface EndpointEditorRowProps {
+  /** Data path of the field. */
+  path: string;
+  /** Its schema field (label meta and help text). */
+  field: SchemaField;
+  required?: boolean;
+  chips?: ReactNode;
+  control: ReactNode;
+  /** Shown under the control, muted (a non-blocking warning, a lock note). */
+  note?: ReactNode;
 }

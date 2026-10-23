@@ -9,15 +9,15 @@ import {
 } from './layout';
 import { useLocalize, useGlobalTitleBlock, usePersistentExpanded } from '@/hooks';
 import { getValueAtPath, isConfigRecord, getUnknownConfigEntries } from '@/utils';
+import { GLOBAL_PROVIDER_KEY, DEFAULT_RECURSION_LIMIT } from '@/constants';
 import { ProviderStatusBadge, ProviderStatusRow } from './ProviderStatus';
 import { isPathSet, countConfigured, hasPathOverlap } from '../../counts';
-import { ProviderGroup, PROVIDERS_STORAGE_KEY } from './ProviderGroup';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
+import { ProviderGroup, PROVIDERS_STORAGE_KEY } from './Group';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { UnknownSettings } from '../../UnknownSettings';
 import { SettingsSection } from '../../SettingsSection';
 import { GlobalTitlesNotice } from './GlobalNotice';
-import { GLOBAL_PROVIDER_KEY } from '@/constants';
 import { AzureGroupsTable } from './AzureGroups';
 import { StaleOverride } from './StaleOverride';
 import { InfoBanner } from '../../InfoBanner';
@@ -27,6 +27,11 @@ import { SetBadge } from './SetBadge';
 const NO_PATHS: ReadonlySet<string> = new Set();
 const AZURE_TABLE_KEYS: ReadonlySet<string> = new Set(['groups']);
 const VERTEX_KEYS: ReadonlySet<string> = new Set(['vertex']);
+
+/** A number setting's value, or undefined when unset or not a number. */
+function numberAt(value: t.ConfigValue): number | undefined {
+  return typeof value === 'number' ? value : undefined;
+}
 
 /**
  * One provider of the AI providers tab (AP-4): an h2 card whose header names
@@ -132,7 +137,11 @@ export function ProviderCard({ field, parentPath, parentValue, ...rest }: t.Prov
                 onRemove={disabled || !onResetField ? undefined : () => onResetField(groupsPath)}
               />
             )}
-            <AzureGroupsTable path={groupsPath} value={groupsValue} />
+            <AzureGroupsTable
+              path={groupsPath}
+              value={groupsValue}
+              field={children.find((child) => child.key === 'groups')}
+            />
           </div>
         ),
       };
@@ -147,6 +156,19 @@ export function ProviderCard({ field, parentPath, parentValue, ...rest }: t.Prov
         hiddenKeys: VERTEX_KEYS,
         after: (
           <p className="settings-help m-0 py-2">{localize('com_config_providers_vertex_none')}</p>
+        ),
+      };
+    }
+    if (key === 'features' && field.key === 'agents') {
+      const limit =
+        numberAt(getValue(`${path}.recursionLimit`, undefined)) ?? DEFAULT_RECURSION_LIMIT;
+      const max = numberAt(getValue(`${path}.maxRecursionLimit`, undefined));
+      if (max === undefined || max < 1 || max >= limit) return {};
+      return {
+        after: (
+          <p role="note" className="m-0 py-2 text-xs text-(--settings-warn-fg)">
+            {localize('com_config_providers_recursion_capped', { max, limit })}
+          </p>
         ),
       };
     }

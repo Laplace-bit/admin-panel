@@ -159,7 +159,12 @@ export function ConfigRow({
             onUndo={undo}
             undoLabel={undoLabel}
           />
-          {showsShadow(state) && <ShadowBadge shadowedBy={state.shadowedBy} />}
+          {showsShadow(state) && (
+            <ShadowBadge
+              shadowedBy={state.shadowedBy}
+              source={localize('com_config_ui_state_edited')}
+            />
+          )}
         </>
       );
     }

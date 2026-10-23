@@ -26,8 +26,10 @@ vi.mock('@/hooks', async () => {
     await vi.importActual<typeof import('@/hooks/config/scope')>('@/hooks/config/scope');
   const field =
     await vi.importActual<typeof import('@/hooks/config/field')>('@/hooks/config/field');
+  const dialogs = await vi.importActual<typeof import('@/hooks/dialogs')>('@/hooks/dialogs');
   return {
     useLocalize: () => localize,
+    useReturnFocus: dialogs.useReturnFocus,
     useScopeActions: scope.useScopeActions,
     useFieldProfiles: scope.useFieldProfiles,
     useFieldState: field.useFieldState,

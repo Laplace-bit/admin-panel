@@ -8,15 +8,15 @@ import {
   isHttpTransport,
   transportLabelKey,
 } from './transport';
-import { renderCollectionEntryFields, toFieldId } from '../../renderer';
+import { isConfigRecord, isConfigValueEqual, asConfigRecord, hasConfigValue } from '@/utils';
+import { renderCollectionEntryFields, renderInlineField, toFieldId } from '../../renderer';
 import { RecordObjectField } from '../../fields/RecordObjectField';
-import { isConfigRecord, isConfigValueEqual } from '@/utils';
-import { useLocalize } from '@/hooks';
-import { TransportSelect } from './Transport';
+import { UnknownSettings } from '../../UnknownSettings';
 import { InstructionsField } from './Instructions';
-import { asRecord, hasValue } from './values';
+import { TransportSelect } from './Transport';
 import { McpAuthMethod } from './Method';
 import { McpFieldGroup } from './Group';
+import { useLocalize } from '@/hooks';
 import { IconPreview } from './Icon';
 import { McpField } from './Field';
 
@@ -35,6 +35,16 @@ const ADVANCED = [
   'oauthPersistenceWaitTimeout',
 ];
 const AUTH_KEYS = ['requiresOAuth', 'apiKey', 'oauth', 'oauth_headers', 'obo'];
+
+/** The entry without what MCP inspection fills in (never configuration). */
+function withoutDerived(entry: t.ConfigRecord): t.ConfigRecord {
+  return Object.fromEntries(Object.entries(entry).filter(([key]) => !INSPECTOR_DERIVED.has(key)));
+}
+
+/** An object of settings (not a list or record): its rows render in a group of their own. */
+function isNestedObject(field: t.SchemaField): boolean {
+  return Boolean(field.children?.length) && !field.isArray && field.type !== 'record';
+}
 
 const GROUPED: ReadonlySet<string> = new Set([
   ...CONNECTION,
@@ -78,15 +88,36 @@ export function McpServerEditor({
   const isShown = (key: string) => fieldsByKey.has(key) && isMcpFieldShown(key, gating);
   const shownKeys = (keys: readonly string[]) => keys.filter(isShown);
   const pathsOf = (keys: readonly string[]) => keys.map((key) => `${entryPath}.${key}`);
-  const countSet = (keys: readonly string[]) => keys.filter((key) => hasValue(entry[key])).length;
+  const countSet = (keys: readonly string[]) =>
+    keys.filter((key) => hasConfigValue(entry[key])).length;
   /** Whether "Set values only" keeps a group: a value at all in Base, the profile's own in a profile. */
   const keeps = (keys: readonly string[]) =>
-    keys.some((key) => (ownKeys ? ownKeys.has(key) : hasValue(entry[key])));
+    keys.some((key) => (ownKeys ? ownKeys.has(key) : hasConfigValue(entry[key])));
   const yamlLock = localize('com_config_mcp_locked_yaml');
+
+  /** A setting that is an object of settings (a newer schema's): a group of its rows. */
+  const renderObject = (
+    field: t.SchemaField,
+    parentValue: t.ConfigRecord,
+    parentPath: string,
+    change: (key: string, value: t.ConfigValue) => void,
+  ): ReactNode =>
+    renderInlineField(
+      field,
+      parentValue,
+      parentPath,
+      change,
+      localize,
+      disabled,
+      undefined,
+      false,
+      editSessionId,
+    );
 
   const renderField = (key: string, options?: Partial<t.McpFieldRowProps>): ReactNode => {
     const field = fieldsByKey.get(key);
     if (!field || !isShown(key)) return null;
+    if (isNestedObject(field)) return renderObject(field, entry, entryPath, onChange);
     return (
       <McpField
         key={key}
@@ -110,13 +141,18 @@ export function McpServerEditor({
   ): ReactNode => {
     const field = fieldsByKey.get(parent)?.children?.find((child) => child.key === key);
     if (!field) return null;
+    const change = (childKey: string, value: t.ConfigValue) =>
+      onChange(`${parent}.${childKey}`, value);
+    if (isNestedObject(field)) {
+      return renderObject(field, asConfigRecord(entry[parent]), `${entryPath}.${parent}`, change);
+    }
     return (
       <McpField
         key={`${parent}.${key}`}
         field={field}
         entryPath={`${entryPath}.${parent}`}
-        entry={asRecord(entry[parent])}
-        onChange={(childKey, value) => onChange(`${parent}.${childKey}`, value)}
+        entry={asConfigRecord(entry[parent])}
+        onChange={change}
         onDiscard={onDiscard}
         disabled={disabled}
         quiet={quiet}
@@ -125,6 +161,9 @@ export function McpServerEditor({
       />
     );
   };
+
+  /** The fields of an object setting (`apiKey`, `oauth`), for the auth methods' newer settings. */
+  const childFields = (parent: string): t.SchemaField[] => fieldsByKey.get(parent)?.children ?? [];
 
   const typeId = toFieldId(`${entryPath}.type`);
   const typeLabel = localize('com_config_field_type');
@@ -169,21 +208,23 @@ export function McpServerEditor({
             required: !typeLocked,
           })}
         {renderField('url', {
-          required: true,
+          required: !hasConfigValue(asConfigRecord(lower).url),
           extra: <UrlHint transport={transport} />,
         })}
         {renderField('headers')}
         {[...PROCESS_FIELDS]
-          .filter((key) => REQUIRED_PROCESS_FIELDS.has(key) || hasValue(entry[key]))
+          .filter((key) => REQUIRED_PROCESS_FIELDS.has(key) || hasConfigValue(entry[key]))
           .map((key) => renderField(key, { lockReason: yamlLock }))}
       </McpFieldGroup>
-      {(isHttp || AUTH_KEYS.some((key) => hasValue(entry[key]))) && (
+      {(isHttp || AUTH_KEYS.some((key) => hasConfigValue(entry[key]))) && (
         <McpFieldGroup
           title={localize('com_config_mcp_group_auth')}
           paths={authPaths}
           defaultExpanded={isDraft === true}
           configured={
-            hasValue(entry.apiKey) || hasValue(entry.oauth) || hasValue(entry.obo) ? 1 : 0
+            hasConfigValue(entry.apiKey) || hasConfigValue(entry.oauth) || hasConfigValue(entry.obo)
+              ? 1
+              : 0
           }
         >
           <McpAuthMethod
@@ -196,6 +237,7 @@ export function McpServerEditor({
             onSwitch={onSwitch}
             renderField={renderField}
             renderNested={renderNested}
+            childFields={childFields}
           />
         </McpFieldGroup>
       )}
@@ -266,6 +308,7 @@ export function McpServerEditor({
           {advanced.map((key) => renderField(key))}
         </McpFieldGroup>
       )}
+      <UnknownSettings fields={fields} value={withoutDerived(entry)} path={entryPath} />
     </div>
   );
 }
@@ -344,9 +387,9 @@ function UserVariables({
   disabled?: boolean;
   editSessionId?: number;
 }) {
-  const current = asRecord(value);
+  const current = asConfigRecord(value);
   const write = (next: t.ConfigValue) => {
-    const nextRecord = asRecord(next);
+    const nextRecord = asConfigRecord(next);
     for (const [key, item] of Object.entries(nextRecord)) {
       if (!isConfigValueEqual(current[key], item)) onChange(`${field.key}.${key}`, item);
     }

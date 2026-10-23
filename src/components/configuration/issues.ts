@@ -77,9 +77,17 @@ export function formatIssue(
   const predicate = issuePredicate(issue, localize);
   const entryLevel = issue.entryIdentity !== undefined && !issue.entryPath;
   if (entryLevel) return { inline: predicate, summary: predicate };
-  const label = labelForPath(displayPath, localize);
+  /** An entry field the page doesn't list (an import's new entry) is named by the field, not the collection. */
+  const labelPath =
+    issue.entryPath && issueCollection(issue)?.path === displayPath
+      ? `${displayPath}.0.${issue.entryPath}`
+      : displayPath;
+  const label = labelForPath(labelPath, localize);
   const inline = labeledMessage(label, predicate, hasIssueMessage(issue.code));
-  const summary = issue.entryIdentity ? `${issue.entryIdentity} › ${inline}` : inline;
+  const identity = issue.entryIdentity?.trim() ? issue.entryIdentity : undefined;
+  const unnamed = issue.entryIdentity !== undefined && identity === undefined;
+  const entry = unnamed ? localize('com_config_issue_unnamed_entry') : identity;
+  const summary = entry ? `${entry} › ${inline}` : inline;
   return { inline, summary };
 }
 

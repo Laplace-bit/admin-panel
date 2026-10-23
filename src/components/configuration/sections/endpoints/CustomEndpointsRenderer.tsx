@@ -6,21 +6,28 @@ import { useLocalize, useValuesScope, useEndpointRows } from '@/hooks';
 import { RevealTargetContext } from '@/contexts/RevealTargetContext';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { isConfigRecord, isRowVisible } from '@/utils';
+import { endpointHost, modelNames } from './model';
 import { SearchInput } from '@/components/shared';
 import { revealConfigPath } from '../../reveal';
 import { sourceLabel } from '../../values';
 import { EndpointCreator } from './Create';
 import { EndpointDrawer } from './Drawer';
 import { EndpointEditor } from './Editor';
-import { modelNames } from './model';
 import { Banner } from './Banner';
 
 /** Shown once the list is long enough that scanning it is slower than typing. */
 const FILTER_THRESHOLD = 6;
 
-function matchesFilter(row: t.EndpointRow, query: string): boolean {
+/** Whether every word of the query appears in the name, host or a model of an endpoint. */
+function matchesFilter(
+  { title, value }: t.EndpointRemoval | t.EndpointRow,
+  query: string,
+): boolean {
   if (query === '') return true;
-  const haystack = [row.title, row.host ?? '', ...modelNames(row.value)].join('\n').toLowerCase();
+  const baseURL = isConfigRecord(value) ? value.baseURL : undefined;
+  const haystack = [title, endpointHost(baseURL) ?? '', ...modelNames(value)]
+    .join('\n')
+    .toLowerCase();
   return query
     .toLowerCase()
     .split(/\s+/)
@@ -73,6 +80,7 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
   const [revealField, setRevealField] = useState<string | undefined>();
   const [openAfterCreate, setOpenAfterCreate] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const latestRef = useRef<t.ConfigRecord>({});
   const lastRowIdRef = useRef('');
   const createButtonRef = useRef<HTMLDivElement>(null);
@@ -95,6 +103,45 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
 
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
+
+  /**
+   * After a delete, keyboard focus goes to the pending deletion's Undo, else
+   * (an endpoint never saved just goes) to the row that took its place, the
+   * one before it, or Create. A frame later (not cancelled by the re-renders
+   * that stage the delete), so the closing menu doesn't move it.
+   */
+  const focusAfterDeleteRef = useRef<t.EndpointRow | null>(null);
+  useEffect(() => {
+    const deleted = focusAfterDeleteRef.current;
+    if (!deleted) return;
+    focusAfterDeleteRef.current = null;
+    requestAnimationFrame(() => {
+      const list = listRef.current;
+      const undo = deleted.loadedName
+        ? list?.querySelector<HTMLElement>(
+            `[data-removal-undo="${CSS.escape(`removed-${deleted.loadedName}`)}"]`,
+          )
+        : null;
+      const rowButtons = [
+        ...(list?.querySelectorAll<HTMLElement>('button[aria-haspopup="dialog"]') ?? []),
+      ];
+      const neighbour = rowButtons[Math.min(deleted.index, rowButtons.length - 1)];
+      const fallback = createButtonRef.current?.querySelector<HTMLElement>('button');
+      (undo ?? neighbour ?? fallback)?.focus();
+    });
+  }, [rows]);
+  /** After Undo, focus goes to the restored row (its Undo button is gone), once it is back in the list. */
+  const focusAfterUndoRef = useRef<string | null>(null);
+  useEffect(() => {
+    const name = focusAfterUndoRef.current;
+    if (name == null) return;
+    const restored = listRef.current?.querySelector<HTMLElement>(
+      `[data-endpoint-row="${CSS.escape(name)}"] button[aria-haspopup="dialog"]`,
+    );
+    if (!restored) return;
+    focusAfterUndoRef.current = null;
+    requestAnimationFrame(() => restored.focus());
+  }, [rows]);
   useEffect(() => {
     if (!revealTarget) return;
     const located = locateEntry(revealTarget, path);
@@ -133,7 +180,7 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
       matchesFilter(row, trimmedQuery) &&
       (!configuredOnly || row.overridden || row.edited || row.origin === 'scope'),
   );
-  const shownRemovals = trimmedQuery === '' ? removals : [];
+  const shownRemovals = removals.filter((removal) => matchesFilter(removal, trimmedQuery));
 
   const closeDrawer = () => {
     setOpenKey(null);
@@ -151,6 +198,7 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
   const handleDelete = (row: t.EndpointRow) => {
     if (!isDeletable(row)) return;
     if (row.key === openKey) closeDrawer();
+    focusAfterDeleteRef.current = row;
     onChange(
       path,
       items.filter((_, index) => index !== row.index),
@@ -165,6 +213,8 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
   };
 
   const handleUndoRemoval = (removal: t.EndpointRemoval) => {
+    const name = isConfigRecord(removal.value) ? removal.value.name : undefined;
+    focusAfterUndoRef.current = typeof name === 'string' ? name : null;
     const at = Math.min(removal.restoreIndex, items.length);
     onChange(path, [...items.slice(0, at), removal.value, ...items.slice(at)]);
   };
@@ -230,21 +280,39 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
         </Banner>
       );
     }
+    /** Overriding started but nothing changed yet: Cancel goes back to the read-only view. */
+    const canCancel = !row.overridden && !row.edited && overriding.has(row.key);
+    const action = (() => {
+      if (disabled) return undefined;
+      if (row.overridden) {
+        return (
+          <Button
+            type="secondary"
+            htmlType="button"
+            iconLeft="history"
+            label={localize('com_config_ce_remove_scope_overrides', { scope: scopeName })}
+            onClick={() => handleRevert(row)}
+          />
+        );
+      }
+      if (!canCancel) return undefined;
+      return (
+        <Button
+          type="secondary"
+          htmlType="button"
+          label={localize('com_ui_cancel')}
+          onClick={() =>
+            setOverriding((prev) => {
+              const next = new Set(prev);
+              next.delete(row.key);
+              return next;
+            })
+          }
+        />
+      );
+    })();
     return (
-      <Banner
-        tone="info"
-        action={
-          row.overridden && !disabled ? (
-            <Button
-              type="secondary"
-              htmlType="button"
-              iconLeft="history"
-              label={localize('com_config_ce_remove_scope_overrides', { scope: scopeName })}
-              onClick={() => handleRevert(row)}
-            />
-          ) : undefined
-        }
-      >
+      <Banner tone="info" action={action}>
         {localize('com_config_ce_notice_inherited_override', { scope: scopeName })}
       </Banner>
     );
@@ -276,7 +344,7 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
   const isEmpty = rows.length === 0 && removals.length === 0;
 
   return (
-    <div className="flex flex-col gap-3">
+    <div ref={listRef} className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2 py-1">
         {rows.length >= FILTER_THRESHOLD && (
           <SearchInput
@@ -323,10 +391,22 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
             }}
             onDelete={handleDelete}
             onRevert={handleRevert}
+            override={
+              scope
+                ? {
+                    label: localize('com_config_ce_override_for', { scope: scopeName }),
+                    onSelect: (row) => {
+                      setOverriding((prev) => new Set(prev).add(row.key));
+                      setCreating(false);
+                      setOpenKey(row.key);
+                    },
+                  }
+                : undefined
+            }
             onUndoRemoval={handleUndoRemoval}
             idPrefix={idPrefix}
           />
-          {visible.length === 0 && (
+          {visible.length === 0 && shownRemovals.length === 0 && (
             <p className="m-0 py-2 text-sm text-(--cui-color-text-muted)" role="status">
               {configuredOnly && trimmedQuery === ''
                 ? localize('com_config_ce_none_set_in_scope', { scope: scopeName })
@@ -366,7 +446,6 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
             issues={open.issues}
             origin={open.origin}
             disabled={!editable}
-            endpointNames={names}
             storedSecret={open.storedSecret}
             lowerEntry={open.loadedName ? lowerEntry(open.loadedName) : undefined}
             savedEntry={open.saved}

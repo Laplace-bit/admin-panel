@@ -538,13 +538,13 @@ export function formatFieldValue(
   return value.length > HINT_MAX_LENGTH ? `${value.slice(0, HINT_MAX_LENGTH - 3)}…` : value;
 }
 
-/** The "(default: …)" text for a field: its schema default, else LibreChat's runtime default. */
+/** The "(default: …)" text for a field: what LibreChat fills in when unset (its runtime default), else the schema default. */
 export function getDefaultHint(
   field: t.SchemaField,
   schemaDefault: t.ConfigValue,
   localize: t.LocalizeFn,
 ): string | null {
-  const value = schemaDefault ?? getFieldMeta(field.path)?.runtimeDefault;
+  const value = getFieldMeta(field.path)?.runtimeDefault ?? schemaDefault;
   return formatFieldValue(field, value, localize);
 }
 

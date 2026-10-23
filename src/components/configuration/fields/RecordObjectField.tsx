@@ -1,6 +1,7 @@
 import { Button } from '@clickhouse/click-ui';
 import { useId, useState, useContext, useCallback, useEffect, useRef, memo } from 'react';
 import type * as t from '@/types';
+import { RowProblemsContext } from '@/contexts/RowProblemsContext';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { cn, isRowVisible, isUnsafeConfigKey } from '@/utils';
 import { BLOCK_UNSAFE_CONFIG_KEYS } from '@/constants';
@@ -189,6 +190,7 @@ export function RecordObjectField({
       )}
       {!disabled && showAddInput && (
         <AddKeyInput
+          reportId={id}
           existingKeys={record}
           onAdd={handleAdd}
           onCancel={() => setShowAddInput(false)}
@@ -210,12 +212,15 @@ export function RecordObjectField({
 
 /** Isolated input so keystrokes don't re-render sibling ObjectEntryCards. */
 const AddKeyInput = memo(function AddKeyInput({
+  reportId,
   existingKeys,
   onAdd,
   onCancel,
   validateKey,
   keyListId,
 }: {
+  /** The record's id, under which a refused key is reported to `RowProblemsContext`. */
+  reportId: string;
   existingKeys: Record<string, t.ConfigValue>;
   onAdd: (key: string) => void;
   onCancel: () => void;
@@ -226,6 +231,17 @@ const AddKeyInput = memo(function AddKeyInput({
   const [newKey, setNewKey] = useState('');
   const [error, setError] = useState<string | null>(null);
   const errorId = useId();
+  const reportProblems = useContext(RowProblemsContext);
+  const hasError = error != null;
+
+  useEffect(() => {
+    if (!reportProblems) return;
+    reportProblems(reportId, hasError ? 1 : 0);
+  }, [reportProblems, reportId, hasError]);
+  useEffect(() => {
+    if (!reportProblems) return;
+    return () => reportProblems(reportId, 0);
+  }, [reportProblems, reportId]);
 
   const handleAdd = () => {
     const trimmed = newKey.trim();

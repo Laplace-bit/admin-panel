@@ -681,7 +681,7 @@ function AuditLogTableRow({
       onClick={onActivate}
       onKeyDown={onKeyDown}
       className={cn(
-        'cursor-pointer bg-(--cui-color-background-panel) outline-none hover:bg-(--cui-color-background-hover) focus-visible:bg-(--cui-color-background-hover) focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--cui-color-outline)',
+        'cursor-pointer bg-(--cui-color-background-panel) outline-none hover:bg-(--cui-color-background-hover) focus-visible:bg-(--cui-color-background-hover) focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--cui-color-outline) focus-visible:outline-solid',
         !isLast && 'border-b border-(--cui-color-stroke-default)',
       )}
     >

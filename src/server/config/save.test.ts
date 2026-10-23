@@ -223,6 +223,47 @@ describe('applyConfigChanges — validated, ordered, compensated (SV-2)', () => 
     expect(api.current!.stored()).toEqual(before);
   });
 
+  it('reports a save LibreChat refuses until the admin accepts its terms, with where to accept them', async () => {
+    api.current!.setOverride((request) =>
+      request.method === 'PATCH'
+        ? {
+            status: 403,
+            body: {
+              code: 'terms_not_accepted',
+              message: 'Terms of service must be accepted before using this feature',
+            },
+          }
+        : undefined,
+    );
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'memory.tokenLimit', value: 5000 },
+    ]);
+    expect(result.failed).toEqual([
+      expect.objectContaining({
+        path: '',
+        code: 'TERMS_NOT_ACCEPTED',
+        params: { url: expect.any(String) },
+      }),
+    ]);
+  });
+
+  it('keeps the admin API message of a refused write that names no issues', async () => {
+    api.current!.setOverride((request) =>
+      request.method === 'PATCH'
+        ? { status: 409, body: { message: 'Config was changed by someone else' } }
+        : undefined,
+    );
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'memory.tokenLimit', value: 5000 },
+    ]);
+    expect(result.failed).toEqual([
+      expect.objectContaining({
+        code: 'WRITE_FAILED',
+        message: 'Config was changed by someone else',
+      }),
+    ]);
+  });
+
   it('maps backend issues on the sent array back to the entry name (SV-3)', async () => {
     api.current!.setOverride((request) =>
       request.method === 'PATCH'

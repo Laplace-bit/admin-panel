@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within, fireEvent } from '@testing-library/react';
 import { sectionFields, renderSection } from './harness';
 import { InterfaceRenderer } from '../Interface';
 import { INTERFACE_GROUPS } from '@/constants';
@@ -78,5 +78,17 @@ describe('InterfaceRenderer', () => {
     });
     const trace = screen.getByRole('heading', { name: /^Trace viewer/ });
     expect(trace).toHaveTextContent(/1 of 7 set/);
+  });
+
+  it('asks before requiring acceptance of the terms, since it also gates the admin', () => {
+    const { onChange } = renderSection(InterfaceRenderer, { section: 'interface' });
+    const control = document.getElementById('interface-termsOfService-modalAcceptance');
+    if (!control) throw new Error('no Require acceptance control');
+    fireEvent.click(within(control).getByRole('button', { name: 'On' }));
+    const dialog = screen.getByRole('dialog', { name: 'Require everyone to accept the terms?' });
+    expect(dialog).toHaveTextContent(/This includes you and other admins/);
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Require acceptance' }));
+    expect(onChange).toHaveBeenCalledWith('interface.termsOfService.modalAcceptance', true);
   });
 });

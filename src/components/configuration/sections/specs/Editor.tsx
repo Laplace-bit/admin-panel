@@ -11,17 +11,17 @@ import {
   GroupField,
   DefaultField,
   EndpointField,
-} from './SpecFields';
+} from './Fields';
 import { MODEL_KEYS, presetParams, paramGroupKeys, specModelKeys, specPromptKeys } from './params';
+import { getUnknownConfigEntries, isConfigRecord, hasConfigValue, trimmedText } from '@/utils';
 import { isAgentSpec, problemsOf, specEndpoint } from './validation';
-import { getUnknownConfigEntries, isConfigRecord } from '@/utils';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { UnknownSettings } from '../../UnknownSettings';
-import { renderInlineField } from '../../renderer';
 import { useSpecList, specIndexOf } from './context';
+import { renderInlineField } from '../../renderer';
 import { PresetEditor } from './PresetEditor';
 import { useLocalize } from '@/hooks';
-import { SpecGroup } from './SpecGroup';
+import { SpecGroup } from './Group';
 
 const BASICS = ['label', 'name', 'description', 'iconURL'];
 const CAPABILITIES = [
@@ -59,14 +59,8 @@ const GROUPED: ReadonlySet<string> = new Set([
   'preset',
 ]);
 
-function hasValue(value: t.ConfigValue): boolean {
-  if (value === undefined || value === null || value === '') return false;
-  if (Array.isArray(value)) return value.length > 0;
-  return !isConfigRecord(value) || Object.keys(value).length > 0;
-}
-
 function countSet(record: t.ConfigRecord, keys: readonly string[]): number {
-  return keys.filter((key) => hasValue(record[key])).length;
+  return keys.filter((key) => hasConfigValue(record[key])).length;
 }
 
 /**
@@ -136,7 +130,7 @@ export function SpecEditor({
   const presetPath = `${path}.preset`;
   const endpoint = specEndpoint(spec);
   const isAgent = isAgentSpec(spec);
-  const model = typeof preset.model === 'string' ? preset.model.trim() : '';
+  const model = trimmedText(preset.model);
   const promptKeys = specPromptKeys(preset, endpoint, options.customEndpoint(endpoint));
   const { params } = useMemo(
     () => presetParams(endpoint, model, options.customEndpoint(endpoint), presetKeys),
@@ -158,13 +152,16 @@ export function SpecEditor({
    * Name, Endpoint and Model) stays, so the spec can be completed.
    */
   const shows = (record: t.ConfigRecord, key: string, problemField = key) =>
-    !configuredOnly || hasValue(record[key]) || errorFields.has(problemField);
+    !configuredOnly || hasConfigValue(record[key]) || errorFields.has(problemField);
   const showsPreset = (key: string) => shows(preset, key, `preset.${key}`);
   const showsGroup = (count: number) => !configuredOnly || count > 0;
   const modelKeys = specModelKeys(preset, endpoint);
-  const paramCount = Object.keys(preset).filter(
+  const setParams = Object.keys(preset).filter(
     (key) => !MODEL_KEYS.includes(key) && !promptKeys.includes(key),
-  ).length;
+  );
+  const paramCount = setParams.length;
+  /** The endpoint's own parameters, plus the other preset fields the spec sets (all listed in the group). */
+  const paramTotal = paramKeys.length;
   const subagentKeys = (subagentsField?.children ?? []).map((field) => field.key);
   const advancedKeys = [...ADVANCED, ...rest.map((field) => field.key)];
   const unknownCount =
@@ -224,29 +221,34 @@ export function SpecEditor({
     return presetRow(key);
   };
 
-  return (
-    <div className="flex min-w-0 flex-col **:[[role=group]]:flex-wrap">
-      {(showsGroup(countSet(spec, BASICS)) || opensFor(BASICS)) && (
-        <SpecGroup
-          title={localize('com_config_specs_group_basics')}
-          paths={paths(BASICS)}
-          defaultExpanded
-        >
-          {shows(spec, 'label') && <LabelField {...fieldProps} field={byKey.get('label')} />}
-          {shows(spec, 'name') && <NameField {...fieldProps} field={byKey.get('name')} />}
-          {row('description')}
-          {shows(spec, 'iconURL') && <IconField {...fieldProps} field={byKey.get('iconURL')} />}
-        </SpecGroup>
-      )}
-
+  const basicsGroup =
+    showsGroup(countSet(spec, BASICS)) || opensFor(BASICS) ? (
       <SpecGroup
-        title={localize('com_config_specs_group_model')}
-        description={localize('com_config_specs_group_model_desc')}
-        paths={paths(modelKeys, presetPath)}
+        title={localize('com_config_specs_group_basics')}
+        paths={paths(BASICS)}
         defaultExpanded
       >
-        {modelKeys.map(modelRow)}
+        {shows(spec, 'label') && <LabelField {...fieldProps} field={byKey.get('label')} />}
+        {shows(spec, 'name') && <NameField {...fieldProps} field={byKey.get('name')} />}
+        {row('description')}
+        {shows(spec, 'iconURL') && <IconField {...fieldProps} field={byKey.get('iconURL')} />}
       </SpecGroup>
+    ) : null;
+  const modelGroup = (
+    <SpecGroup
+      title={localize('com_config_specs_group_model')}
+      description={localize('com_config_specs_group_model_desc')}
+      paths={paths(modelKeys, presetPath)}
+      defaultExpanded
+    >
+      {modelKeys.map(modelRow)}
+    </SpecGroup>
+  );
+
+  return (
+    <div className="spec-editor flex min-w-0 flex-col **:[[role=group]]:flex-wrap">
+      {basicsGroup}
+      {modelGroup}
 
       {presetField && showsGroup(paramCount) && (paramKeys.length > 0 || !rowFilter) && (
         <SpecGroup
@@ -254,6 +256,8 @@ export function SpecEditor({
           description={localize('com_config_specs_group_params_desc')}
           paths={paramKeys.length > 0 ? paths(paramKeys, presetPath) : [presetPath]}
           defaultExpanded={false}
+          configuredCount={paramCount}
+          totalCount={paramTotal}
         >
           <PresetEditor
             presetField={presetField}
@@ -345,6 +349,11 @@ export function SpecEditor({
                   editSessionId,
                 ),
           )}
+          <UnknownSettings
+            fields={subagentsField.children ?? []}
+            value={subagents}
+            path={`${path}.${SUBAGENTS}`}
+          />
         </SpecGroup>
       )}
 

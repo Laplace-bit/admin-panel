@@ -35,6 +35,29 @@ function snapshot(stored: t.ConfigRecord = {}, lower: t.ConfigRecord = yaml): t.
 }
 
 describe('validateSection / validateEntry / validateField', () => {
+  it('blocks agent recursion limits LibreChat runs fail on (0, negatives, fractions)', () => {
+    const issues = (agents: t.ConfigRecord) =>
+      validateSection('endpoints', { agents }).map((issue) => `${issue.path}:${issue.code}`);
+    expect(issues({ recursionLimit: 0, maxRecursionLimit: -5 })).toEqual([
+      'endpoints.agents.recursionLimit:too_small',
+      'endpoints.agents.maxRecursionLimit:too_small',
+    ]);
+    expect(issues({ recursionLimit: 2.5 })).toEqual([
+      'endpoints.agents.recursionLimit:invalid_type',
+    ]);
+    expect(issues({ recursionLimit: 75, maxRecursionLimit: 60 })).toEqual([]);
+  });
+
+  it('blocks a recursion limit of 0 in a save plan', () => {
+    const plan = planConfigChanges(
+      [{ op: 'set', path: 'endpoints.agents.recursionLimit', value: 0 }],
+      snapshot(),
+    );
+    expect(plan.issues).toEqual([
+      expect.objectContaining({ path: 'endpoints.agents.recursionLimit', code: 'too_small' }),
+    ]);
+  });
+
   it('catches cloudfront and turnstile refinements and required siblings', () => {
     expect(
       validateSection('cloudfront', { invalidateOnDelete: true }).map((i) => i.path),

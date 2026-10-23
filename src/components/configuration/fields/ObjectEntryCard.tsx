@@ -3,9 +3,9 @@ import type * as t from '@/types';
 import { useLocalize, useValuesScope, useExpandableState } from '@/hooks';
 import { DecorativeIcon, StateChip } from '@/components/shared';
 import { BLOCK_UNSAFE_CONFIG_KEYS } from '@/constants';
-import { sourceLabel } from '../values';
 import { cn, isUnsafeConfigKey } from '@/utils';
 import { getEntrySummary } from './entries';
+import { sourceLabel } from '../values';
 import { CodeField } from './CodeField';
 
 const ACTION_CLASSES =
@@ -113,8 +113,11 @@ export function ObjectEntryCard({
     if (pendingRemoval && focusUndo) undoRef.current?.focus();
   }, [pendingRemoval, focusUndo]);
 
+  /** A new entry takes focus once, when it appears; moving it later (its id changes) must not. */
+  const announcedNewRef = useRef(false);
   useEffect(() => {
-    if (!isNew || !cardRef.current) return;
+    if (!isNew || !cardRef.current || announcedNewRef.current) return;
+    announcedNewRef.current = true;
     const card = cardRef.current;
     requestAnimationFrame(() => {
       card.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
@@ -225,13 +228,13 @@ export function ObjectEntryCard({
   return (
     <div
       ref={cardRef}
-      id={id}
+      id={id ?? (dataPath ? `section-${baseId}` : undefined)}
       data-entry-card
       className="rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default)"
     >
       <div
         className={cn(
-          '@container flex w-full items-center gap-1 pr-2',
+          '@container flex w-full items-center gap-1 rounded-lg pr-2 transition-colors hover:bg-(--cui-color-background-hover)',
           isExpanded && 'sticky top-0 z-5 rounded-t-lg bg-(--cui-color-background-default)',
         )}
       >
@@ -276,7 +279,7 @@ export function ObjectEntryCard({
             aria-expanded={isExpanded}
             aria-controls={panelId}
             onClick={toggle}
-            className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-lg border-none bg-transparent px-3 py-2.5 text-left transition-colors select-none hover:bg-(--cui-color-background-hover) focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--cui-color-outline)"
+            className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-lg border-none bg-transparent px-3 py-2.5 text-left select-none focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--cui-color-outline)"
           >
             <span
               aria-hidden="true"
@@ -357,6 +360,7 @@ export function ObjectEntryCard({
           <button
             type="button"
             onClick={onMoveUp}
+            data-move="up"
             className={ACTION_CLASSES}
             aria-label={localize('com_config_ctl_entry_move_up', { name: entryKey })}
             title={localize('com_config_ctl_entry_move_up', { name: entryKey })}
@@ -368,6 +372,7 @@ export function ObjectEntryCard({
           <button
             type="button"
             onClick={onMoveDown}
+            data-move="down"
             className={ACTION_CLASSES}
             aria-label={localize('com_config_ctl_entry_move_down', { name: entryKey })}
             title={localize('com_config_ctl_entry_move_down', { name: entryKey })}

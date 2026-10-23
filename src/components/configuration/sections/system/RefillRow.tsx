@@ -51,7 +51,11 @@ export function RefillRow({
   const amountInput = inputValues(amount);
   const everyInput = inputValues(every);
   const shownAmount = asNumber(amount.own) ?? asNumber(amount.fallback);
-  const unitOptions = unitField ? getFieldOptions(unitField, localize) : [];
+  /** Unit names as they read mid-sentence ("every 4 hours"). */
+  const unitOptions = (unitField ? getFieldOptions(unitField, localize) : []).map((option) => ({
+    ...option,
+    label: localize(`com_config_credits_unit_${option.value}`),
+  }));
   const unitLabels = Object.fromEntries(unitOptions.map((option) => [option.value, option.label]));
   const unitLabel = (value: t.ConfigValue) => unitLabels[String(value)] ?? String(value ?? '');
   const isPending = (part: t.OwnedField) =>

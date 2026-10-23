@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { configSchema } from 'librechat-data-provider';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import {
@@ -15,10 +15,10 @@ import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { ModelSpecsRenderer } from '../ModelSpecsRenderer';
 import { extractSchemaTree } from '@/server/config';
-import { previewText } from '../SpecsSettings';
-import { slugify } from '../SpecFields';
+import { previewText } from '../Settings';
 import { createPathIndex } from '@/utils';
-import { withDefault } from '../SpecList';
+import { withDefault } from '../List';
+import { slugify } from '../Fields';
 
 vi.mock('@/hooks/useLocalize', () => ({
   default: () => (key: string, params?: Record<string, string | number>) =>
@@ -55,20 +55,24 @@ function renderSpecs(
   {
     onChange = vi.fn(),
     data,
+    collectionEdits = {},
     showConfiguredOnly,
   }: {
     onChange?: t.FieldRendererProps['onChange'];
     data?: t.ConfigValuesData;
+    collectionEdits?: t.CollectionEdits;
     showConfiguredOnly?: boolean;
   } = {},
 ) {
   const values = data ?? valuesDataFixture(baseLayersFixture());
   const wrap = (children: ReactNode) => (
-    <ConfigValuesProvider
-      value={{ ...values, configValues: { ...values.configValues, modelSpecs } }}
-    >
-      {children}
-    </ConfigValuesProvider>
+    <CollectionEditsContext.Provider value={collectionEdits}>
+      <ConfigValuesProvider
+        value={{ ...values, configValues: { ...values.configValues, modelSpecs } }}
+      >
+        {children}
+      </ConfigValuesProvider>
+    </CollectionEditsContext.Provider>
   );
   const ui = (
     <ModelSpecsRenderer
@@ -104,7 +108,7 @@ describe('ModelSpecsRenderer', () => {
     ).toBeInTheDocument();
   });
 
-  it('opens a new spec with Endpoint and Model up front, marked required', () => {
+  it('Add spec appends an empty spec', () => {
     const { onChange } = renderSpecs({ list: SPECS });
     fireEvent.click(screen.getByRole('button', { name: 'com_config_specs_add' }));
     expect(onChange).toHaveBeenCalledWith('modelSpecs.list', [...SPECS, {}]);
@@ -129,6 +133,73 @@ describe('ModelSpecsRenderer', () => {
     expect(
       (document.getElementById('modelSpecs-list-0-preset-model') as HTMLInputElement).value,
     ).toBe('gpt-4o');
+  });
+
+  it('a renamed saved spec stays a saved one: Basics first, and its label no longer renames it', () => {
+    const renamed = { ...SPECS[1], name: 'claude-v2' };
+    const { onChange } = renderSpecs(
+      { list: [SPECS[0], renamed] },
+      {
+        collectionEdits: {
+          'modelSpecs.list': {
+            baseline: SPECS,
+            origins: SPECS.map((spec) => ({ identity: String(spec.name), baseline: spec })),
+          },
+        },
+      },
+    );
+    const card = document.querySelectorAll<HTMLElement>('[data-entry-card]')[1];
+    fireEvent.click(card.querySelector<HTMLButtonElement>('button[aria-expanded]')!);
+    const groups = [...card.querySelectorAll('button[aria-expanded]')]
+      .map((button) => button.textContent ?? '')
+      .filter((text) => /com_config_specs_group_(basics|model)$/.test(text));
+    expect(groups).toEqual(['com_config_specs_group_basics', 'com_config_specs_group_model']);
+    const label = document.getElementById('modelSpecs-list-1-label') as HTMLInputElement;
+    fireEvent.change(label, { target: { value: 'Claude V2' } });
+    fireEvent.blur(label);
+    const writes = vi.mocked(onChange).mock.calls.filter(([path]) => path === 'modelSpecs.list.1');
+    expect(writes.length).toBeGreaterThan(0);
+    for (const [, entry] of writes) expect(entry).toMatchObject({ name: 'claude-v2' });
+  });
+
+  it("selects a new spec's derived name on focus, so typing replaces it", () => {
+    renderSpecs({
+      list: [{ name: 'research-assistant', label: 'Research Assistant', preset: {} }],
+    });
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>('[data-entry-card] button[aria-expanded]')!,
+    );
+    const name = document.getElementById('modelSpecs-list-0-name') as HTMLInputElement;
+    act(() => name.focus());
+    expect([name.selectionStart, name.selectionEnd]).toEqual([0, 'research-assistant'.length]);
+  });
+
+  it('asks before switching endpoints strands parameters, and removes them on request', () => {
+    const claude = {
+      name: 'claude',
+      label: 'Claude',
+      preset: { endpoint: 'anthropic', model: 'claude-sonnet-4-5', topK: 5, temperature: 0.4 },
+    };
+    const onChange = vi.fn();
+    renderSpecs({ list: [claude] }, { onChange });
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>('[data-entry-card] button[aria-expanded]')!,
+    );
+    const endpoint = document.getElementById(
+      'modelSpecs-list-0-preset-endpoint',
+    ) as HTMLSelectElement;
+    fireEvent.change(endpoint, { target: { value: 'openAI' } });
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('com_config_specs_switch_body');
+    expect(dialog.textContent).toContain('"params":"topK"');
+    expect(dialog.textContent).not.toContain('temperature');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'com_config_specs_switch_remove' }));
+    const last = onChange.mock.calls[onChange.mock.calls.length - 1];
+    expect(last[1]).toEqual(
+      expect.objectContaining({
+        preset: { endpoint: 'openAI', model: 'claude-sonnet-4-5', temperature: 0.4 },
+      }),
+    );
   });
 
   it('moves the default to the spec it is set on (one default per list)', () => {
@@ -267,7 +338,7 @@ describe('ModelSpecsRenderer', () => {
     renderSpecs({ list: SPECS }, { data });
     expect(screen.queryByRole('button', { name: 'com_config_specs_add' })).not.toBeInTheDocument();
     expect(screen.queryAllByRole('button', { name: /com_config_ctl_entry_move/ })).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: /com_config_specs_customize/ }));
+    fireEvent.click(screen.getByRole('button', { name: /com_config_ce_override_for/ }));
     expect(screen.getByRole('button', { name: 'com_config_specs_add' })).toHaveFocus();
     expect(screen.getByText(/com_config_specs_customizing/)).toBeInTheDocument();
   });
@@ -479,6 +550,9 @@ describe('spec helpers', () => {
     );
     expect(previewText(localize, { items: [], mode: 'enforce', menuOn: true, added: [] })).toBe(
       'com_config_specs_preview_none',
+    );
+    expect(previewText(localize, { items: [], mode: 'enforce', menuOn: false, added: [] })).toBe(
+      'com_config_specs_preview_none_menu_off',
     );
     expect(previewText(localize, { items, mode: 'enforce', menuOn: true, added: [] })).toMatch(
       /^com_config_specs_preview_enforce/,

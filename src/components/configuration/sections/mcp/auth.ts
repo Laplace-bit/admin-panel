@@ -1,12 +1,11 @@
 import type * as t from '@/types';
-import { isConfigRecord } from '@/utils';
-import { hasValue } from './values';
+import { isConfigRecord, hasConfigValue } from '@/utils';
 
 /** Methods in the order the selector lists them. */
 export const AUTH_METHODS: readonly t.McpAuthMethod[] = ['none', 'apiKey', 'oauth', 'obo'];
 
 /** The entry keys each method writes; choosing another method removes them. */
-export const AUTH_METHOD_KEYS: Readonly<Record<t.McpAuthMethod, readonly string[]>> = {
+const AUTH_METHOD_KEYS: Readonly<Record<t.McpAuthMethod, readonly string[]>> = {
   none: [],
   apiKey: ['apiKey'],
   oauth: ['oauth', 'oauth_headers', 'requiresOAuth'],
@@ -14,7 +13,7 @@ export const AUTH_METHOD_KEYS: Readonly<Record<t.McpAuthMethod, readonly string[
 };
 
 /** An API key starts as one the admin enters for everyone, sent as a Bearer token (MCP-4). */
-export const API_KEY_DEFAULTS: t.ConfigRecord = { source: 'admin', authorization_type: 'bearer' };
+const API_KEY_DEFAULTS: t.ConfigRecord = { source: 'admin', authorization_type: 'bearer' };
 
 /**
  * The method an entry uses: On-behalf-of, an API key or OAuth when their
@@ -23,9 +22,13 @@ export const API_KEY_DEFAULTS: t.ConfigRecord = { source: 'admin', authorization
  */
 export function authMethodOf(entry: t.ConfigValue): t.McpAuthMethod {
   if (!isConfigRecord(entry)) return 'none';
-  if (hasValue(entry.obo)) return 'obo';
-  if (hasValue(entry.apiKey)) return 'apiKey';
-  if (hasValue(entry.oauth) || hasValue(entry.oauth_headers) || entry.requiresOAuth === true) {
+  if (hasConfigValue(entry.obo)) return 'obo';
+  if (hasConfigValue(entry.apiKey)) return 'apiKey';
+  if (
+    hasConfigValue(entry.oauth) ||
+    hasConfigValue(entry.oauth_headers) ||
+    entry.requiresOAuth === true
+  ) {
     return 'oauth';
   }
   return 'none';
@@ -37,7 +40,7 @@ export function authMethodOf(entry: t.ConfigValue): t.McpAuthMethod {
  */
 function holdsMethodKey(record: t.ConfigRecord | undefined, key: string): boolean {
   if (!record) return false;
-  return key === 'requiresOAuth' ? record[key] === true : hasValue(record[key]);
+  return key === 'requiresOAuth' ? record[key] === true : hasConfigValue(record[key]);
 }
 
 /**
@@ -55,7 +58,7 @@ export function planAuthSwitch(
     .filter((key) => holdsMethodKey(entry, key));
   const locked = prune.filter((key) => holdsMethodKey(lower, key));
   const set: Array<[string, t.ConfigValue]> =
-    next === 'apiKey' && !hasValue(entry.apiKey) ? [['apiKey', { ...API_KEY_DEFAULTS }]] : [];
+    next === 'apiKey' && !hasConfigValue(entry.apiKey) ? [['apiKey', { ...API_KEY_DEFAULTS }]] : [];
   return { prune, set, locked };
 }
 

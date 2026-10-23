@@ -94,12 +94,12 @@ describe('useTabBadges', () => {
     expect(result.features.overrides).toBe(3);
   });
 
-  it('in a profile, adds the entries it overrides on collection tabs only (its settings are the count)', () => {
+  it('in a profile, counts only what the profile sets: on collection tabs, the entries it changes', () => {
     const result = badges({}, new Set(['balance.startBalance', 'endpoints.custom']), {
       isEditingScope: true,
       listOverrideCounts: new Map([['endpoints.custom', 2]]),
     });
-    expect(result.custom).toMatchObject({ count: 2, overrides: 2, scope: true });
+    expect(result.custom).toMatchObject({ count: 2, overrides: 0, scope: true });
     expect(result.system).toMatchObject({ count: 2, overrides: 0 });
   });
 

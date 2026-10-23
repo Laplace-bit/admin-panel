@@ -11,11 +11,11 @@ import type {
 import type * as t from '@/types';
 import { collectOverridePaths, scopeOverrideEntries, stripSecretPreviewValues } from '@/utils';
 import { normalizeAppServiceKeys } from '../config/normalize';
+import { apiErrorMessage, apiFetch } from '../utils/api';
 import { BASE_CONFIG_PRINCIPAL_ID } from '../constants';
 import { requireAnyCapability } from '../capabilities';
 import { DEFAULT_SCOPE_PRIORITY } from '@/constants';
 import { getSchemaPathSet } from '../config/schema';
-import { apiFetch } from '../utils/api';
 import { deepGet } from './paths';
 
 /** The admin list endpoints return at most this many items per page. */
@@ -309,10 +309,7 @@ export const createScopeFn = createServerFn({ method: 'POST' })
       });
 
       if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(
-          (err as { error?: string }).error ?? `Failed to create scope: ${response.status}`,
-        );
+        throw new Error(await apiErrorMessage(response, 'Failed to create scope'));
       }
 
       const body = (await response.json()) as AdminConfigResponse | { message?: string };
@@ -361,10 +358,7 @@ export const toggleScopeActiveFn = createServerFn({ method: 'POST' })
       );
 
       if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(
-          (err as { error?: string }).error ?? `Failed to toggle scope: ${response.status}`,
-        );
+        throw new Error(await apiErrorMessage(response, 'Failed to toggle scope'));
       }
       return { success: true };
     },
@@ -400,10 +394,7 @@ export const deleteScopeFn = createServerFn({ method: 'POST' })
       );
 
       if (!response.ok && response.status !== 404) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(
-          (err as { error?: string }).error ?? `Failed to delete scope: ${response.status}`,
-        );
+        throw new Error(await apiErrorMessage(response, 'Failed to delete scope'));
       }
       return { success: true };
     },

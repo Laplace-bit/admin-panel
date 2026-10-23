@@ -1,14 +1,12 @@
 import type { AdminGroup } from '@librechat/data-schemas';
 import type { Role, RolePermissions } from './role';
 
-
 export interface AccessPageProps {
   activeTab: 'groups' | 'roles';
   onTabChange: (tab: string) => void;
   canReadRoles: boolean;
   canReadGroups: boolean;
 }
-
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -51,7 +49,6 @@ export interface EditRoleDialogProps {
 export interface GroupsTabProps {
   onCreateGroup: () => void;
 }
-
 
 export interface RolePermissionsPanelProps {
   permissions: RolePermissions;

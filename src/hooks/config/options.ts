@@ -1,4 +1,5 @@
 import { useContext, useMemo } from 'react';
+import { normalizeEndpointName } from 'librechat-data-provider';
 import { QueryClient, QueryClientContext, useQuery } from '@tanstack/react-query';
 import type * as t from '@/types';
 import {
@@ -8,14 +9,18 @@ import {
   endpointModelsOptions,
 } from '@/server';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
+import { MODEL_PROVIDERS, BUILT_IN_PROVIDERS } from '@/constants';
 import { getValueAtPath, isConfigRecord } from '@/utils';
-import { BUILT_IN_PROVIDERS } from '@/constants';
 import { useLocalize } from '../useLocalize';
 import { useFieldState } from './field';
 
 const NO_OPTIONS: t.SelectOption[] = [];
 const MODELS_PREFIX = 'models:';
 const BUILT_IN_SET: ReadonlySet<string> = new Set(BUILT_IN_PROVIDERS);
+/** Built-in endpoints that delegate to a provider (agents, Assistants) rather than run models. */
+const NON_PROVIDERS: ReadonlySet<string> = new Set(
+  BUILT_IN_PROVIDERS.filter((name) => !MODEL_PROVIDERS.includes(name)),
+);
 
 let inertClient: QueryClient | null = null;
 
@@ -69,41 +74,75 @@ export function useEndpointModels(enabled = true): t.QueryState<t.EndpointModels
   };
 }
 
-/** Custom endpoint names in the shown configuration (pending edits included). */
-function customEndpointNames(root: t.ConfigValue): string[] {
-  const list = getValueAtPath(root, 'endpoints.custom');
+/** Distinct names of an `endpoints.custom` list. */
+function customEndpointNames(list: t.ConfigValue | undefined): string[] {
   if (!Array.isArray(list)) return [];
-  const names: string[] = [];
+  const names = new Set<string>();
   for (const entry of list) {
     const name = isConfigRecord(entry) ? entry.name : undefined;
-    if (typeof name === 'string' && name.trim() !== '') names.push(name);
+    if (typeof name === 'string' && name.trim() !== '') names.add(name);
   }
-  return names;
+  return [...names];
+}
+
+/** The configuration shown on the page (pending edits included), or the effective one. */
+function useShownConfig(): t.ConfigValue {
+  const values = useContext(ConfigValuesContext);
+  return values?.configValues ?? values?.layers?.effective ?? null;
+}
+
+/** Custom endpoint names in the shown configuration (pending edits included). */
+export function useCustomEndpointNames(): string[] {
+  const root = useShownConfig();
+  const list = getValueAtPath(root, 'endpoints.custom');
+  return useMemo(() => customEndpointNames(list), [list]);
 }
 
 /**
  * Endpoint choices: the endpoints LibreChat serves (built-in providers named
  * "OpenAI (openAI)"), then built-in providers and custom endpoints the
  * configuration defines but LibreChat does not serve (not enabled, or not
- * saved yet), so a reference to any of them is recognized.
+ * saved yet), so a reference to any of them is recognized. Each value is the
+ * name LibreChat serves the endpoint under, since `addedEndpoints` and
+ * `allowedProviders` are matched against it exactly: a custom endpoint
+ * written "Ollama" is offered as "Ollama (ollama)". Names that differ only
+ * in letter case are distinct endpoints and are both offered. With
+ * `providersOnly`, endpoints that delegate to a provider (agents, Assistants)
+ * are left out.
  */
 export function buildEndpointOptions(
   status: t.EndpointStatusMap | undefined,
   root: t.ConfigValue,
   localize: t.LocalizeFn,
+  providersOnly = false,
 ): t.SelectOption[] {
+  const configured = customEndpointNames(getValueAtPath(root, 'endpoints.custom'));
+  const spelling = new Map<string, string>();
+  for (const name of configured) {
+    const served = normalizeEndpointName(name);
+    if (!spelling.has(served)) spelling.set(served, name);
+  }
   const seen = new Set<string>();
   const options: t.SelectOption[] = [];
   const add = (name: string) => {
-    if (seen.has(name)) return;
-    seen.add(name);
-    const label = BUILT_IN_SET.has(name) ? localize(`com_config_field_${name}`) : name;
-    options.push({ value: name, label: label === name ? name : `${label} (${name})` });
+    const served = BUILT_IN_SET.has(name) ? name : normalizeEndpointName(name);
+    if (seen.has(served) || (providersOnly && NON_PROVIDERS.has(served))) return;
+    seen.add(served);
+    const label = BUILT_IN_SET.has(served)
+      ? localize(`com_config_field_${served}`)
+      : (spelling.get(served) ?? served);
+    options.push({ value: served, label: label === served ? served : `${label} (${served})` });
   };
   for (const name of Object.keys(status ?? {})) add(name);
   for (const name of BUILT_IN_PROVIDERS) add(name);
-  for (const name of customEndpointNames(root)) add(name);
+  for (const name of configured) add(name);
   return options;
+}
+
+/** An endpoint's models, matching LibreChat's normalized names (`Ollama` is served as `ollama`). */
+function modelsOf(models: t.EndpointModelsMap | undefined, endpoint: string): string[] | undefined {
+  if (!models) return undefined;
+  return models[endpoint] ?? models[normalizeEndpointName(endpoint)];
 }
 
 function recordKeys(root: t.ConfigValue, path: string): string[] {
@@ -131,6 +170,7 @@ function toOptions(values: string[]): t.SelectOption[] {
  * Options for a reference select (WS9; consumed by WS3's RefSelectField and
  * the area editors):
  * - `endpoints`: endpoints LibreChat serves, plus every configured one;
+ * - `providers`: the same without agents and the Assistants endpoints;
  * - `models:<endpoint>`: that endpoint's models from `/api/models`;
  * - `mcpServers`: MCP server names in the shown configuration;
  * - `specGroups`: group names used by the model specs list;
@@ -141,11 +181,10 @@ function toOptions(values: string[]): t.SelectOption[] {
  */
 export function useOptionSources(source?: t.OptionSource): t.OptionSourceResult {
   const localize = useLocalize();
-  const values = useContext(ConfigValuesContext);
-  const root = values?.configValues ?? values?.layers?.effective ?? null;
+  const root = useShownConfig();
   const { client, live } = useClient();
   const version = useConfigVersion(client, live);
-  const wantsStatus = source === 'endpoints';
+  const wantsStatus = source === 'endpoints' || source === 'providers';
   const wantsModels = source?.startsWith(MODELS_PREFIX) ?? false;
   const wantsTools = source === 'tools';
   const status = useQuery(
@@ -168,12 +207,14 @@ export function useOptionSources(source?: t.OptionSource): t.OptionSourceResult 
 
   const options = useMemo((): t.SelectOption[] => {
     if (!source) return NO_OPTIONS;
-    if (source === 'endpoints') return buildEndpointOptions(status.data, root, localize);
+    if (source === 'endpoints' || source === 'providers') {
+      return buildEndpointOptions(status.data, root, localize, source === 'providers');
+    }
     if (source === 'mcpServers') return toOptions(recordKeys(root, 'mcpServers'));
     if (source === 'specGroups') return toOptions(specGroups(root));
     if (source === 'tools') return tools.data ?? NO_OPTIONS;
     const endpoint = source.slice(MODELS_PREFIX.length);
-    return toOptions(models.data?.[endpoint] ?? []);
+    return toOptions(modelsOf(models.data, endpoint) ?? []);
   }, [source, status.data, models.data, tools.data, root, localize]);
 
   const isLoading =
@@ -198,7 +239,7 @@ export function useModelListDefaults(
   const models = useEndpointModels(endpoint != null);
   const state = useFieldState(path);
   return useMemo(() => {
-    const list = endpoint ? models.data?.[endpoint] : undefined;
+    const list = endpoint ? modelsOf(models.data, endpoint) : undefined;
     if (!list) return { suggestions: [] };
     const savedList = state.isOverride || Array.isArray(state.effective);
     return savedList ? { suggestions: list } : { defaults: list, suggestions: list };
@@ -222,8 +263,7 @@ export function useModelSource(
   source: t.OptionSource | undefined,
   path: string | undefined,
 ): t.OptionSource | undefined {
-  const values = useContext(ConfigValuesContext);
-  const root = values?.configValues ?? values?.layers?.effective ?? null;
+  const root = useShownConfig();
   if (!path || !source?.startsWith(MODELS_PREFIX)) return source;
   const dot = path.lastIndexOf('.');
   const siblings = MODEL_ENDPOINT_FIELDS[path.slice(dot + 1)] ?? [];

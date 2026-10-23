@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { fireEvent, screen } from '@testing-library/react';
-import { WebSearchRenderer, otherServices, selectedServices } from '../WebSearch';
+import { otherServices, selectedServices, webSearchTocItems } from '../services';
+import { WebSearchRenderer } from '../WebSearch';
 import { renderSection } from './harness';
 import '@/locales/i18n';
 
@@ -136,5 +137,21 @@ describe('WebSearchRenderer', () => {
     });
     expect(screen.getByLabelText('Firecrawl API key')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /^Cohere/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('webSearchTocItems', () => {
+  it('lists the services the section shows, not the ones behind "Show all services"', () => {
+    const items = webSearchTocItems(
+      {
+        webSearch: { searchProvider: 'tavily', scraperProvider: 'tavily', rerankerType: 'cohere' },
+      },
+      'webSearch',
+      (key) => key,
+    );
+    expect(items.map((item) => item.id)).toEqual([
+      'section-webSearch-service-tavily',
+      'section-webSearch-service-cohere',
+    ]);
   });
 });

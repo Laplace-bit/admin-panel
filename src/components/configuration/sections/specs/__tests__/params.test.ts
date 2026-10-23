@@ -8,6 +8,8 @@ import {
   promptKeyFor,
   specPromptKeys,
   specSearchFields,
+  isForeignPresetKey,
+  isMisplacedId,
 } from '../params';
 import { extractSchemaTree } from '@/server/config';
 
@@ -95,8 +97,8 @@ describe('specPromptKeys', () => {
     ]);
     expect(specPromptKeys({ model: 'gpt-4o', system: 'old' }, 'openAI')).toEqual([
       'promptPrefix',
-      'greeting',
       'system',
+      'greeting',
     ]);
   });
 });
@@ -196,5 +198,29 @@ describe('specSearchFields', () => {
     expect(presetKeysFor({ preset: { endpoint: 'Proxy', model: 'x' } }, root)).toContain(
       'thinkingBudget',
     );
+  });
+});
+
+describe('preset keys that do not apply to an endpoint', () => {
+  const anthropic = new Set(['topP', 'topK', 'maxOutputTokens', 'thinking']);
+  it("treats another endpoint's parameter as foreign, never the endpoint's own", () => {
+    expect(isForeignPresetKey('top_p', 'anthropic', anthropic)).toBe(true);
+    expect(isForeignPresetKey('max_tokens', 'anthropic', anthropic)).toBe(true);
+    expect(isForeignPresetKey('topP', 'anthropic', anthropic)).toBe(false);
+    expect(isForeignPresetKey('thinkingBudget', 'openAI', new Set(['top_p']))).toBe(true);
+    expect(isForeignPresetKey('examples', 'anthropic', anthropic)).toBe(true);
+    expect(isForeignPresetKey('examples', 'google', new Set())).toBe(false);
+    expect(isForeignPresetKey('additionalModelRequestFields', 'openAI', new Set())).toBe(true);
+    expect(isForeignPresetKey('additionalModelRequestFields', 'bedrock', new Set())).toBe(false);
+    expect(isForeignPresetKey('assistant_id', 'assistants', new Set())).toBe(true);
+    expect(isForeignPresetKey('zzNewSetting', 'openAI', new Set())).toBe(false);
+  });
+
+  it('keeps assistant and agent ids to the endpoints that run them', () => {
+    expect(isMisplacedId('assistant_id', 'anthropic')).toBe(true);
+    expect(isMisplacedId('assistant_id', 'assistants')).toBe(false);
+    expect(isMisplacedId('agent_id', 'Azure Foundry')).toBe(true);
+    expect(isMisplacedId('agent_id', 'agents')).toBe(false);
+    expect(isMisplacedId('temperature', 'anthropic')).toBe(false);
   });
 });

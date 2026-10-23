@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PrincipalType } from 'librechat-data-provider';
-import { render, screen, renderHook } from '@testing-library/react';
+import { render, screen, renderHook, fireEvent } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { baseLayersFixture, scopeLayersFixture, valuesDataFixture } from '@/test/layers';
@@ -95,6 +95,22 @@ describe('ProvenanceChip', () => {
     expect(screen.getByText(/com_config_providers_shadow_label/)).toBeTruthy();
     expect(container.querySelectorAll('.state-chip')).toHaveLength(1);
     expect(container.querySelector('[data-provenance]')).toBeNull();
+  });
+
+  it("opens why a shadowed value is ignored, naming the value's own source", () => {
+    const shadowed = deriveFieldState(
+      'endpoints.anthropic.activityModel',
+      valuesDataFixture(baseLayersFixture()),
+    );
+    const { container } = render(<ProvenanceChip state={shadowed} />);
+    const chip = screen.getByRole('button', { name: /com_config_providers_shadow_label/ });
+    const reason = container.querySelector('.state-chip-reason') as HTMLElement;
+    expect(chip).toHaveAttribute('aria-expanded', 'false');
+    expect(reason).not.toBeVisible();
+    expect(reason.textContent).not.toContain('com_config_ui_state_edited');
+    fireEvent.click(chip);
+    expect(chip).toHaveAttribute('aria-expanded', 'true');
+    expect(reason).toBeVisible();
   });
 
   it('renders nothing for a plain default when asked to', () => {

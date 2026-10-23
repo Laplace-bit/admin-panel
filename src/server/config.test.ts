@@ -1247,6 +1247,21 @@ describe('parseConfigYaml (import)', () => {
     });
   });
 
+  it('accepts a sparse MCP server override as written, leaving completeness to the chosen target', () => {
+    const result = parseConfigYaml('mcpServers:\n  github:\n    timeout: 120000\n');
+    expect(result.success).toBe(true);
+    expect(result.appConfig).toEqual({ mcpServers: { github: { timeout: 120000 } } });
+  });
+
+  it('rejects an MCP block that is not servers by name', () => {
+    expect(parseConfigYaml('mcpServers:\n  - github\n').validationErrors).toEqual([
+      { path: 'mcpServers', message: 'Expected object, received array' },
+    ]);
+    expect(parseConfigYaml('mcpServers:\n  github: true\n').validationErrors).toEqual([
+      { path: 'mcpServers.github', message: 'Expected object, received boolean' },
+    ]);
+  });
+
   it('does not require a version key', () => {
     expect(parseConfigYaml('balance:\n  enabled: true\n').success).toBe(true);
   });

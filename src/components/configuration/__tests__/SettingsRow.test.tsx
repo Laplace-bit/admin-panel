@@ -9,6 +9,40 @@ vi.mock('@/hooks/useLocalize', () => ({
 }));
 
 describe('SettingsRow', () => {
+  it("keeps the control's own description current as the row error comes and goes", () => {
+    const control = (warning: boolean) => (
+      <input id="name" aria-label="Name" aria-describedby={warning ? 'name-rename' : undefined} />
+    );
+    const { rerender } = render(
+      <SettingsRow label="Name" htmlFor="name" control={control(true)} />,
+    );
+    const input = screen.getByRole('textbox');
+    rerender(<SettingsRow label="Name" htmlFor="name" control={control(true)} error="Required" />);
+    expect(input.getAttribute('aria-describedby')).toBe('name-rename name-error');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    rerender(<SettingsRow label="Name" htmlFor="name" control={control(false)} />);
+    expect(input).not.toHaveAttribute('aria-describedby');
+    expect(input).not.toHaveAttribute('aria-invalid');
+  });
+
+  it('leaves aria-invalid to the control once its own error replaces the row error', () => {
+    const control = (invalid: boolean) => (
+      <input id="name" aria-label="Name" aria-invalid={invalid ? true : undefined} />
+    );
+    const { rerender } = render(
+      <SettingsRow label="Name" htmlFor="name" control={control(false)} error="Taken" />,
+    );
+    const input = screen.getByRole('textbox');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    rerender(<SettingsRow label="Name" htmlFor="name" control={control(true)} />);
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    rerender(<SettingsRow label="Name" htmlFor="name" control={control(true)} error="Taken" />);
+    rerender(<SettingsRow label="Name" htmlFor="name" control={control(false)} error="Taken" />);
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    rerender(<SettingsRow label="Name" htmlFor="name" control={control(false)} />);
+    expect(input).not.toHaveAttribute('aria-invalid');
+  });
+
   it('renders every slot in its grid cell', () => {
     const { container } = render(
       <SettingsRow

@@ -24,7 +24,7 @@ describe('CreditsRenderer', () => {
     expect(screen.getByText('Worth about $1.00 of model usage')).toBeInTheDocument();
     expect(screen.getByLabelText('Credits per refill')).toHaveValue('1,000,000');
     expect(screen.getByLabelText('Refill interval')).toHaveValue(4);
-    expect(screen.getByLabelText('Refill interval unit')).toHaveDisplayValue('Hours');
+    expect(screen.getByLabelText('Refill interval unit')).toHaveDisplayValue('hours');
   });
 
   it('reads separators in typed credits and stages the number', async () => {

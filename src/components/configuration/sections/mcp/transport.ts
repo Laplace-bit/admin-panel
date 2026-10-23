@@ -1,6 +1,5 @@
 import type * as t from '@/types';
-import { isConfigRecord } from '@/utils';
-import { hasValue } from './values';
+import { isConfigRecord, hasConfigValue } from '@/utils';
 
 /** Transports in the order the type choice lists them: Streamable HTTP is the default and recommended. */
 export const TRANSPORTS = ['streamable-http', 'sse', 'websocket', 'stdio'] as const;
@@ -39,7 +38,7 @@ const TRANSPORT_KEYS: ReadonlySet<string> = new Set(
 );
 
 /** Authentication and its tuning: LibreChat uses them for SSE and Streamable HTTP connections only. */
-export const HTTP_AUTH_FIELDS: ReadonlySet<string> = new Set([
+const HTTP_AUTH_FIELDS: ReadonlySet<string> = new Set([
   'requiresOAuth',
   'apiKey',
   'oauth',
@@ -93,9 +92,9 @@ export function planTransportSwitch(
   lower: t.ConfigRecord | undefined,
 ): t.McpSwitchPlan {
   const prune = Object.keys(entry).filter(
-    (key) => key !== 'type' && hasValue(entry[key]) && !isMcpFieldShown(key, next),
+    (key) => key !== 'type' && hasConfigValue(entry[key]) && !isMcpFieldShown(key, next),
   );
-  const locked = prune.filter((key) => lower != null && hasValue(lower[key]));
+  const locked = prune.filter((key) => lower != null && hasConfigValue(lower[key]));
   return { prune, set: [['type', next]], locked };
 }
 

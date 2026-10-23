@@ -186,6 +186,46 @@ describe('summarizeChanges: keyed lists', () => {
   });
 });
 
+describe('summarizeChanges: emptied allowlists', () => {
+  const warningsFor = (fieldPath: string) =>
+    summarizeChanges(
+      makeInput({
+        baseline: {},
+        saves: [{ fieldPath, value: [] }],
+        lowerAt: (path) => (path === fieldPath ? { value: ['x'], source: 'yaml' } : undefined),
+      }),
+    )[0]?.warnings;
+
+  it('says what an empty list means for each list', () => {
+    expect(warningsFor('fileConfig.text.supportedMimeTypes')).toEqual(['emptyAllowlist']);
+    expect(warningsFor('mcpSettings.allowedAddresses')).toEqual(['emptyAllowlist']);
+    expect(warningsFor('actions.allowedDomains')).toEqual(['openAllowlist']);
+    expect(warningsFor('modelSpecs.addedEndpoints')).toEqual(['openAllowlist']);
+    expect(warningsFor('endpoints.agents.allowedProviders')).toEqual(['openAllowlist']);
+    expect(warningsFor('registration.allowedDomains')).toEqual(['openRegistration']);
+    expect(warningsFor('modelSpecs.list')).toContain('emptySpecs');
+  });
+});
+
+describe('summarizeChanges: required acceptance of the terms', () => {
+  const warningsFor = (value: boolean, before?: boolean) =>
+    summarizeChanges(
+      makeInput({
+        baseline:
+          before === undefined
+            ? {}
+            : { interface: { termsOfService: { modalAcceptance: before } } },
+        saves: [{ fieldPath: 'interface.termsOfService.modalAcceptance', value }],
+      }),
+    )[0]?.warnings;
+
+  it('warns when the change turns it on, which also gates the admin', () => {
+    expect(warningsFor(true)).toEqual(['requireTerms']);
+    expect(warningsFor(true, false)).toEqual(['requireTerms']);
+    expect(warningsFor(false, true)).toBeUndefined();
+  });
+});
+
 describe('summarizeChanges: plain values', () => {
   it('warns that a reset lifting the sign-up domain restriction opens registration', () => {
     const own = { registration: { allowedDomains: ['example.com'] } };

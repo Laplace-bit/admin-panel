@@ -20,13 +20,14 @@ import {
   requireAnyCapability,
   requireAllSectionCapabilities,
 } from '../capabilities';
+import { getConfigSection, TERMS_NOT_ACCEPTED_CODE, TERMS_NOT_ACCEPTED_ISSUE } from '@/constants';
+import { apiErrorMessage, apiFetch } from '../utils/api';
 import { BASE_CONFIG_PRINCIPAL_ID } from '../constants';
 import { MISSING_SCOPE_MESSAGE } from '../scopes/read';
 import { normalizeAppServiceKeys } from './normalize';
 import { safeFieldPath } from '../utils/validation';
-import { getConfigSection } from '@/constants';
+import { getApiBaseUrl } from '../utils/url';
 import { getSchemaPathSet } from './schema';
-import { apiFetch } from '../utils/api';
 
 export { parseIndexedArrayPath } from '@/utils';
 
@@ -161,7 +162,18 @@ async function failureIssues(
   if (Array.isArray(body.issues) && body.issues.length > 0) {
     return body.issues.map((issue) => attributeBackendIssue(issue.path, issue.code, batch));
   }
-  const message = body.error ?? `The admin API rejected the change (${response.status})`;
+  if (body.code === TERMS_NOT_ACCEPTED_CODE) {
+    return [
+      {
+        path: '',
+        code: TERMS_NOT_ACCEPTED_ISSUE,
+        message: body.message ?? 'Terms of service must be accepted',
+        params: { url: getApiBaseUrl() },
+      },
+    ];
+  }
+  const message =
+    body.error ?? body.message ?? `The admin API rejected the change (${response.status})`;
   return [{ path, code: 'WRITE_FAILED', message }];
 }
 
@@ -444,10 +456,7 @@ export const resetBaseConfigFn = createServerFn({ method: 'POST' }).handler(asyn
   });
 
   if (!response.ok && response.status !== 404) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(
-      (err as { error?: string }).error ?? `Failed to reset base config: ${response.status}`,
-    );
+    throw new Error(await apiErrorMessage(response, 'Failed to reset base config'));
   }
 
   return { success: true };

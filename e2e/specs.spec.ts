@@ -46,16 +46,16 @@ async function revertList(page: Page) {
   await saveAndWait(page);
 }
 
-/** Adds a spec with the four required fields, and returns its card. */
+/** Adds a spec with the four required fields (it opens on Endpoint, then Model), and returns its card. */
 async function addSpec(page: Page, label: string, endpoint: string, model: string) {
   await page.getByRole('button', { name: 'Add spec' }).click();
   const card = cards(page).last();
-  await expect(card.getByLabel(/^Label\*?$/)).toBeFocused();
-  await card.getByLabel(/^Label\*?$/).fill(label);
-  await card.getByLabel(/^Label\*?$/).press('Tab');
+  await expect(card.getByLabel(/^Endpoint\*?$/)).toBeFocused();
   await card.getByLabel(/^Endpoint\*?$/).selectOption(endpoint);
   await card.getByRole('combobox', { name: /^Model\*?$/ }).fill(model);
   await card.getByRole('combobox', { name: /^Model\*?$/ }).press('Tab');
+  await card.getByLabel(/^Label\*?$/).fill(label);
+  await card.getByLabel(/^Label\*?$/).press('Tab');
   return card;
 }
 
@@ -180,13 +180,15 @@ test.describe('Model specs', () => {
     page,
   }) => {
     await openSpecs(page, '&scope=role:USER');
-    const customize = page.getByRole('button', { name: /^Customize list for/ });
+    const customize = page.getByRole('button', { name: /^Override for Role: USER/ });
     test.skip((await customize.count()) === 0, 'Needs a USER role profile without its own list');
     await expect(page.getByRole('button', { name: 'Add spec' })).toHaveCount(0);
     await expect(cards(page).first()).toBeVisible();
     await customize.click();
     await expect(page.getByRole('button', { name: 'Add spec' })).toBeVisible();
     await expect(page.getByText(/replaces Base's list/)).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByRole('button', { name: 'Add spec' })).toHaveCount(0);
   });
 
   test('the tab filter finds spec fields and phone width has no sideways scroll', async ({

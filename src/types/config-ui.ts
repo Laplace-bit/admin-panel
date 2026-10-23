@@ -282,6 +282,8 @@ export interface ResetBaseConfigDialogProps {
   open: boolean;
   resetting: boolean;
   error?: string | null;
+  /** Where to accept LibreChat's terms, when it refused the reset until the admin does. */
+  termsUrl?: string | null;
   /** The overrides the reset removes, listed with what each setting reverts to (WS7). */
   overrides?: BaseOverridesState;
   onConfirm: () => void;

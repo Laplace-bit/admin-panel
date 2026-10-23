@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { ConfigRecord, SchemaField, OptionSource, FieldMetaGroup } from './config';
 import type { FieldRendererProps } from './config-ui';
 import type { FieldControlProps } from './controls';
-import type { ProvenanceSource } from './values';
+import type { ProvenanceSource, SettingRow } from './values';
 
 /** What an allowlist entry may look like, and the copy its control shows (WS13 FX-16). */
 export interface DomainListPolicy {
@@ -167,7 +167,7 @@ export interface FilterSurfaceSummary {
   /** Custom patterns, by label. */
   customPatterns: string[];
   /** Surface settings outside `pii` (`unattributedAssistantContent`), as label/value. */
-  extras: Array<{ label: string; value: string }>;
+  extras: SettingRow[];
 }
 
 /** The summarization trigger as the editor reads it (WS13 FX-4). */

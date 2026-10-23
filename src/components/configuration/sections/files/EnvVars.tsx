@@ -20,7 +20,7 @@ export function EnvVars({ backend, id }: { backend: t.StorageBackend; id?: strin
       <ul className="m-0 flex list-none flex-wrap gap-1 p-0">
         {info.envVars.map((name) => (
           <li key={name}>
-            <code className="rounded bg-(--cui-color-background-muted) px-1.5 py-0.5 font-mono text-[11px] text-(--cui-color-text-default)">
+            <code className="rounded bg-(--cui-color-background-muted) px-1.5 py-0.5 font-mono text-xs text-(--cui-color-text-default)">
               {name}
             </code>
           </li>

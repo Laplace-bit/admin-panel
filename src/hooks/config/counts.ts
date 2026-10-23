@@ -20,6 +20,9 @@ const ENTRY_TABS: Readonly<Record<string, { path: string; labelKey: string }>> =
   mcp: { path: 'mcpServers', labelKey: 'com_config_values_count_servers' },
 };
 
+/** In a profile, every tab counts what the profile itself sets: on collection tabs, the entries it changes. */
+const SCOPE_ENTRIES_LABEL_KEY = 'com_config_values_count_scope_entries';
+
 const SET_LABEL_KEY = 'com_config_values_count_set';
 
 const NO_PATHS: ReadonlySet<string> = new Set();
@@ -75,9 +78,10 @@ function countTabSettings(
  * Badge per visible tab (EV-3): collection tabs count their entries (custom
  * endpoints, model specs, MCP servers, pending edits included), every other
  * tab counts its customized settings with the same rule as section badges.
- * Badges render in profile mode too (counting the profile's own settings, and
- * on collection tabs the entries it overrides, adds or hides), and `pending`
- * counts the tab's unsaved edits.
+ * In a profile every badge counts what the profile itself sets (on
+ * collection tabs, the entries it overrides, adds or hides), so a profile
+ * with no overrides reads 0 throughout. `pending` counts the tab's unsaved
+ * edits.
  */
 export function useTabBadges({
   schemaTree,
@@ -103,17 +107,26 @@ export function useTabBadges({
     for (const tab of visibleTabs) {
       const entries = ENTRY_TABS[tab.id];
       if (entries) {
-        result[tab.id] = {
-          kind: 'entries',
-          count: countEntries(getValueAtPath(activeConfigValues, entries.path)),
-          labelKey: entries.labelKey,
-          overrides: countOverriddenEntries(
-            entries.path,
-            isEditingScope ? activeConfiguredPaths : overridePaths,
-            listOverrideCounts,
-          ),
-          scope: isEditingScope,
-        };
+        const overridden = countOverriddenEntries(
+          entries.path,
+          isEditingScope ? activeConfiguredPaths : overridePaths,
+          listOverrideCounts,
+        );
+        result[tab.id] = isEditingScope
+          ? {
+              kind: 'entries',
+              count: overridden,
+              labelKey: SCOPE_ENTRIES_LABEL_KEY,
+              overrides: 0,
+              scope: true,
+            }
+          : {
+              kind: 'entries',
+              count: countEntries(getValueAtPath(activeConfigValues, entries.path)),
+              labelKey: entries.labelKey,
+              overrides: overridden,
+              scope: false,
+            };
         continue;
       }
       result[tab.id] = {

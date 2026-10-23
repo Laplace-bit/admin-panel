@@ -2,9 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import type * as t from '@/types';
 import { DecorativeIcon, KebabMenu, StateChip } from '@/components/shared';
 import { useExpandableState, useLocalize, useValuesScope } from '@/hooks';
+import { RegionNameContext } from '@/contexts/RegionNameContext';
 import { transportLabelKey, transportOf } from './transport';
 import { sourceLabel } from '../../values';
 import { cn } from '@/utils';
+
+/** Row-menu icons, the same as the custom endpoint rows'. */
+const ACTION_ICONS: Readonly<Record<t.McpServerAction['id'], t.MenuIconName>> = {
+  override: 'pencil',
+  rename: 'pencil',
+  duplicate: 'copy',
+  revert: 'history',
+  hide: 'eye-closed',
+  delete: 'trash',
+};
 
 function toDomId(value: string): string {
   return value.replace(/[^\w-]+/g, '-');
@@ -34,7 +45,7 @@ function SourceChips({ badges }: { badges: t.McpServerBadges }) {
       case 'inherited':
         return {
           kind: 'inherited',
-          label: localize('com_config_ui_state_inherited'),
+          label: localize('com_config_values_source_inherited'),
           description: localize('com_config_mcp_source_inherited_desc'),
         };
       case 'scope':
@@ -204,6 +215,7 @@ export function McpServerCard({
 
   const menuItems: t.KebabMenuItem[] = actions.map((action) => ({
     label: action.label,
+    icon: ACTION_ICONS[action.id],
     danger: action.danger,
     disabled: action.disabled,
     title: action.reason,
@@ -220,7 +232,7 @@ export function McpServerCard({
     >
       <div
         className={cn(
-          'flex w-full items-start gap-1 pr-2',
+          'flex w-full items-start gap-1 rounded-lg pr-2 transition-colors hover:bg-(--cui-color-background-hover)',
           isExpanded && 'sticky top-0 z-5 rounded-t-lg bg-(--cui-color-background-default)',
         )}
       >
@@ -238,7 +250,7 @@ export function McpServerCard({
               userToggled.current = true;
               setIsExpanded((prev) => !prev);
             }}
-            className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-lg border-none bg-transparent px-3 py-2.5 text-left transition-colors select-none hover:bg-(--cui-color-background-hover) focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--cui-color-outline)"
+            className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-lg border-none bg-transparent px-3 py-2.5 text-left select-none focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--cui-color-outline)"
           >
             <span
               aria-hidden="true"
@@ -310,9 +322,11 @@ export function McpServerCard({
         inert={!isExpanded ? true : undefined}
       >
         <div className="config-section-inner">
-          <div className="flex flex-col gap-2 border-t border-(--cui-color-stroke-default) px-2 py-3">
+          <div className="settings-card-body flex flex-col gap-2 border-t border-(--cui-color-stroke-default) px-2 py-3">
             {readOnlyNote}
-            {hasEverExpanded && children}
+            <RegionNameContext.Provider value={serverKey}>
+              {hasEverExpanded && children}
+            </RegionNameContext.Provider>
           </div>
         </div>
       </div>

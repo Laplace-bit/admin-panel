@@ -3,7 +3,7 @@ import { maskCredential, toAzureGroups } from '../azure';
 import { createField } from '@/test/fixtures';
 import { providerTocItems } from '../layout';
 import { providerStatus } from '../status';
-import { addressIssue } from '../network';
+import { addressIssue } from '@/utils';
 
 describe('toAzureGroups', () => {
   it('reads groups as LibreChat serves them, blank values as unset', () => {
@@ -15,7 +15,11 @@ describe('toAzureGroups', () => {
         deploymentName: '',
         baseURL: '',
         serverless: false,
-        models: { 'gpt-4.1': { deploymentName: 'd', version: 'v' }, 'gpt-4o': true },
+        models: {
+          'gpt-4.1': { deploymentName: 'd', version: 'v', assistants: true },
+          'gpt-4o': true,
+        },
+        region: 'eastus',
         additionalHeaders: { 'api-key': 'secret', n: 3 },
         dropParams: ['stop', 4],
       },
@@ -31,10 +35,11 @@ describe('toAzureGroups', () => {
       assistants: false,
       additionalHeaders: { 'api-key': 'secret' },
       dropParams: ['stop'],
+      others: { region: 'eastus' },
     });
     expect(row.models).toEqual([
-      { name: 'gpt-4.1', deploymentName: 'd', version: 'v', assistants: undefined },
-      { name: 'gpt-4o' },
+      { name: 'gpt-4.1', deploymentName: 'd', version: 'v', others: { assistants: true } },
+      { name: 'gpt-4o', others: {} },
     ]);
     expect(toAzureGroups(null)).toEqual([]);
   });

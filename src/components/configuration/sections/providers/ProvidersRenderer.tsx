@@ -1,23 +1,20 @@
 import { useContext } from 'react';
 import type * as t from '@/types';
 import { isPathSet, countConfigured, hasPendingValue } from '../../counts';
-import { GlobalRevealContext } from '@/contexts/GlobalRevealContext';
 import { CUSTOM_KEY, NETWORK_KEY, providerFields } from './layout';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { revealConfigPath } from '../../review/reveal';
+import { UnknownSettings } from '../../UnknownSettings';
 import { NetworkAccessCard } from './NetworkAccess';
 import { FieldRenderer } from '../../renderer';
-import { ProviderCard } from './ProviderCard';
 import { isRowVisible } from '@/utils';
-
-/** "Overridden by Global" chips on this tab scroll to the Global value. */
-const revealGlobal = (path: string) => revealConfigPath(path);
+import { ProviderCard } from './Card';
 
 /**
  * AI providers tab (WS9): Global overrides pinned first (AP-3), one card per
  * built-in provider grouped by purpose (AP-4), then the Network access card
  * (AP-7). Endpoint-wide settings the panel does not know yet render as plain
- * rows below, so the tab stays schema-driven.
+ * rows below, so the tab stays schema-driven; keys the schema doesn't know
+ * are listed read-only (D8).
  */
 export function ProvidersRenderer(props: t.FieldRendererProps) {
   const { fields, ...shared } = props;
@@ -49,14 +46,15 @@ export function ProvidersRenderer(props: t.FieldRendererProps) {
   );
 
   return (
-    <GlobalRevealContext.Provider value={revealGlobal}>
-      <div className="flex flex-col gap-4">
-        {visibleProviders.map((field) => (
-          <ProviderCard key={field.key} field={field} {...shared} />
-        ))}
-        {network && <NetworkAccessCard field={network} {...shared} />}
-        {others.length > 0 && <FieldRenderer {...shared} fields={others} />}
-      </div>
-    </GlobalRevealContext.Provider>
+    <div className="flex flex-col gap-4">
+      {visibleProviders.map((field) => (
+        <ProviderCard key={field.key} field={field} {...shared} />
+      ))}
+      {network && <NetworkAccessCard field={network} {...shared} />}
+      {others.length > 0 && <FieldRenderer {...shared} fields={others} />}
+      {!rowFilter && (
+        <UnknownSettings fields={fields} value={shared.parentValue} path={parentPath} />
+      )}
+    </div>
   );
 }

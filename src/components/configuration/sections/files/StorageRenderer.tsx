@@ -1,12 +1,10 @@
-import { useContext, useState } from 'react';
+import { useState } from 'react';
 import type * as t from '@/types';
 import { backendName, backendsInUse, isCloudFrontReady, resolveStorage } from './storage';
 import { STORAGE_FILE_TYPES } from '@/constants';
 import { useLocalize, useYamlConfig, useStorageStates } from '@/hooks';
-import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { FieldRenderer, NestedGroup } from '../../renderer';
+import { NestedGroup, OtherSettings } from '../../renderer';
 import { getValueAtPath, isConfigRecord } from '@/utils';
-import { UnknownSettings } from '../../UnknownSettings';
 import { DecorativeIcon } from '@/components/shared';
 import { ConfigSection } from '../../ConfigSection';
 import { StorageConfirm } from './StorageConfirm';
@@ -47,7 +45,6 @@ export function StorageRenderer({
 }: t.SectionGroupRendererProps) {
   const localize = useLocalize();
   const yaml = useYamlConfig();
-  const rowFilter = useContext(RowFilterContext);
   const states = useStorageStates();
   const [pending, setPending] = useState<t.StorageChangeRequest | null>(null);
   const byId = new Map(sections.map((section) => [section.id, section]));
@@ -105,9 +102,6 @@ export function StorageRenderer({
     ? countConfigured(perType.fields, PER_TYPE, propsFor(perType).configuredPaths)
     : undefined;
   const typesOverridingPrimary = resolved.default !== resolved.primary;
-  const perTypeProps = perType ? propsFor(perType) : undefined;
-  /** File types a newer schema adds: generic rows after the purpose-built ones. */
-  const otherTypes = perType?.fields.filter((field) => !FILE_TYPES.has(field.key)) ?? [];
 
   return (
     <ConfigSection
@@ -143,7 +137,7 @@ export function StorageRenderer({
           )}
         </BackendRow>
       )}
-      {perType && perTypeProps && (
+      {perType && (
         <NestedGroup
           label={localize('com_config_storage_per_type')}
           sectionId={`section-${PER_TYPE}`}
@@ -163,18 +157,11 @@ export function StorageRenderer({
               inheritLabel={inheritLabel(type)}
               cloudFrontReady={cloudFrontReady}
               field={perType.fields.find((field) => field.key === type)}
-              fieldProps={perTypeProps}
+              fieldProps={propsFor(perType)}
               onRequestChange={requestChange}
             />
           ))}
-          {otherTypes.length > 0 && <FieldRenderer {...perTypeProps} fields={otherTypes} />}
-          {!rowFilter && (
-            <UnknownSettings
-              fields={perType.fields}
-              value={perTypeProps.parentValue}
-              path={PER_TYPE}
-            />
-          )}
+          <OtherSettings {...propsFor(perType)} placed={FILE_TYPES} />
         </NestedGroup>
       )}
       {cloudfront &&

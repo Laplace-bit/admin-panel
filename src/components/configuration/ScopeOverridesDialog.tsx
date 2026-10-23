@@ -15,10 +15,10 @@ import {
 } from '@/utils';
 import { CONFIG_TABS, SECTION_META, splitCamelCase, tabForPath } from './configMeta';
 import { findSchemaField, formatFieldValue } from './controls';
+import { useReturnFocus, useLocalize } from '@/hooks';
 import { getConfigSection } from '@/constants';
 import { fieldLabel } from './review/group';
 import { sourceLabel } from './values';
-import { useLocalize } from '@/hooks';
 
 /**
  * A value as the page shows it: units and option labels from its field,
@@ -111,6 +111,7 @@ export function ScopeOverridesDialog({
   isEntryPending,
 }: t.ScopeOverridesDialogProps) {
   const localize = useLocalize();
+  const returnFocus = useReturnFocus(open);
   const navigate = useNavigate();
 
   const sections = useMemo(() => {
@@ -177,6 +178,7 @@ export function ScopeOverridesDialog({
         })}
         showClose
         onClose={onClose}
+        onCloseAutoFocus={returnFocus}
         className="modal-frost"
       >
         {sections.length === 0 ? (

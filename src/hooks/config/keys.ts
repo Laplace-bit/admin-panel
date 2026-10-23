@@ -2,39 +2,42 @@ import { useRef } from 'react';
 import type * as t from '@/types';
 
 /**
- * Keys for a list of unchanged length: by position (in-place edits and
- * renames make new items), unless the changed positions only hold previous
- * items moved there (a reorder), which take their keys with them.
+ * Keys of a reordered list: when every item of `next` is an item of `prev`
+ * moved elsewhere (same identity, or the same reference where it has none),
+ * each keeps its key; otherwise `null`.
  */
-function keysOfSameLength<T>(
+function reorderedKeys<T>(
   prev: readonly T[],
   prevKeys: readonly string[],
   next: readonly T[],
-): string[] {
-  const changed = next.flatMap((item, i) => (Object.is(item, prev[i]) ? [] : [i]));
-  if (changed.length < 2) return [...prevKeys];
-  const slots = new Map<T, number[]>();
-  for (const j of changed) {
-    const list = slots.get(prev[j]);
-    if (list) list.push(j);
-    else slots.set(prev[j], [j]);
+  identity: (item: T) => string | null,
+): string[] | null {
+  const slots = new Map<string | T, number[]>();
+  for (let i = 0; i < prev.length; i++) {
+    const slot = identity(prev[i]) ?? prev[i];
+    const list = slots.get(slot);
+    if (list) list.push(i);
+    else slots.set(slot, [i]);
   }
-  const keys = [...prevKeys];
-  for (const i of changed) {
-    const from = slots.get(next[i])?.shift();
-    if (from === undefined) return [...prevKeys];
-    keys[i] = prevKeys[from];
+  let moved = false;
+  const keys: string[] = [];
+  for (let i = 0; i < next.length; i++) {
+    const match = slots.get(identity(next[i]) ?? next[i])?.shift();
+    if (match === undefined) return null;
+    if (match !== i) moved = true;
+    keys.push(prevKeys[match]);
   }
-  return keys;
+  return moved ? keys : null;
 }
 
 /**
- * Carries React keys from `prev` to `next` items: same length keeps keys by
- * position (in-place edits, renames) or, for a reorder, moves them with
- * their items; otherwise an item reuses the key of an unused previous item
- * that is the same reference or has the same identity, and anything else
- * gets a fresh key. Removing, appending, moving or reloading entries
- * therefore never remounts (or collapses) the entries that stayed.
+ * Carries React keys from `prev` to `next` items: a reorder moves each key
+ * with its item; otherwise the same length keeps keys by position (in-place
+ * edits, renames); otherwise an item reuses the key of an unused previous
+ * item that is the same reference or has the same identity, and anything
+ * else gets a fresh key. Reordering, removing, appending or reloading a list
+ * therefore never remounts (or collapses, or swaps the state of) the entries
+ * that stayed.
  */
 export function reconcileKeys<T>(
   prev: readonly T[],
@@ -44,7 +47,7 @@ export function reconcileKeys<T>(
   createKey: () => string,
 ): string[] {
   if (prev.length === next.length && prevKeys.length === prev.length) {
-    return keysOfSameLength(prev, prevKeys, next);
+    return reorderedKeys(prev, prevKeys, next, identity) ?? [...prevKeys];
   }
   const used = new Set<number>();
   const byIdentity = new Map<string, number[]>();

@@ -1,5 +1,5 @@
 import type * as t from '@/types';
-import { stripInterfacePermissionFields } from '@/utils';
+import { stripInterfacePermissionFields, isConfigRecord } from '@/utils';
 import { APP_SERVICE_KEY_ALIASES } from '@/constants';
 
 /** Keys LibreChat's `azureConfigSetup` derives from `groups`; they are not settings. */
@@ -19,10 +19,6 @@ const AZURE_OPENAI_DERIVED_KEYS = new Set([
 /** Keys LibreChat's endpoint setup adds to the Anthropic block (`vertexConfig` from `vertex`). */
 const ANTHROPIC_DERIVED_KEYS = new Set(['vertexConfig']);
 
-function isRecord(value: t.ConfigValue): value is t.ConfigRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function withoutKeys(value: t.ConfigRecord, keys: ReadonlySet<string>): t.ConfigRecord {
   const cleaned: t.ConfigRecord = {};
   for (const [key, child] of Object.entries(value)) {
@@ -41,10 +37,10 @@ function withoutKeys(value: t.ConfigRecord, keys: ReadonlySet<string>): t.Config
 function normalizeAzureOpenAI(value: t.ConfigRecord): t.ConfigRecord {
   const cleaned = withoutKeys(value, AZURE_OPENAI_DERIVED_KEYS);
   const { groupMap } = value;
-  if (!isRecord(groupMap)) return cleaned;
+  if (!isConfigRecord(groupMap)) return cleaned;
   cleaned.groups = Object.entries(groupMap).map(([group, config]) => ({
     group,
-    ...(isRecord(config) ? config : {}),
+    ...(isConfigRecord(config) ? config : {}),
   }));
   return cleaned;
 }
@@ -55,7 +51,7 @@ function normalizeAzureOpenAI(value: t.ConfigRecord): t.ConfigRecord {
  * and `isValid` present) and the Anthropic block's `vertexConfig`.
  */
 export function normalizeEndpointValue(value: t.ConfigValue, key?: string): t.ConfigValue {
-  if (!isRecord(value)) return value;
+  if (!isConfigRecord(value)) return value;
   if ('groupMap' in value && 'isValid' in value) return normalizeAzureOpenAI(value);
   if (key === 'anthropic' && 'vertexConfig' in value) {
     return withoutKeys(value, ANTHROPIC_DERIVED_KEYS);
@@ -71,12 +67,12 @@ export function normalizeAppServiceKeys(
   for (const [key, value] of Object.entries(raw)) {
     result[APP_SERVICE_KEY_ALIASES[key] ?? key] = value;
   }
-  if (isRecord(result.interface)) {
+  if (isConfigRecord(result.interface)) {
     result.interface = stripInterfacePermissionFields(
       result.interface as Record<string, unknown>,
     ) as t.ConfigValue;
   }
-  if (isRecord(result.endpoints)) {
+  if (isConfigRecord(result.endpoints)) {
     const endpoints = { ...result.endpoints };
     result.endpoints = endpoints;
     for (const [epKey, epValue] of Object.entries(endpoints)) {

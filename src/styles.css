@@ -251,6 +251,17 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
 
+/* click-ui stacks a menu item's icon above its label on narrow screens; keep them on one line. */
+[role='menuitem'] > [data-testid='container'] {
+  flex-direction: row;
+}
+
+/* An unavailable row action stays focusable (so its reason is read) but looks unavailable. */
+[role='menuitem'][aria-disabled='true'] {
+  color: var(--cui-color-text-muted);
+  cursor: not-allowed;
+}
+
 .user-dropdown [role='menuitem'] {
   width: 100%;
   box-sizing: border-box;
@@ -374,6 +385,14 @@ summary:focus-visible,
   z-index: 1;
 }
 
+/* A row's name button stretched over the whole row (its ::after): the ring
+   goes around the row, not the name, and the button stays unpositioned so
+   the stretched area keeps covering the row while focused. */
+button.row-link:focus-visible {
+  outline-color: transparent !important;
+  position: static;
+}
+
 /* click-ui DatePicker: round the PopoverTrigger button so the global
    focus-visible outline matches the input wrapper's border-radius. */
 .audit-date-cell button {
@@ -398,6 +417,13 @@ select:focus-visible {
 .cui-field :has(> textarea:focus-visible) {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: 1px;
+}
+
+/* A field whose value is invalid (its own check or its row's) draws the
+   danger border on the wrapper, like an invalid select. */
+.cui-field :has(> input[aria-invalid='true']),
+.cui-field :has(> textarea[aria-invalid='true']) {
+  border-color: var(--cui-color-text-danger) !important;
 }
 
 .select-field-a11y button:focus-visible {
@@ -580,6 +606,30 @@ select:focus-visible {
   border-radius: 9999px;
   font-size: 0.8125rem;
   line-height: 1.25rem;
+  color: var(--cui-color-text-default);
+}
+
+/* An editable list item shown as a chip (model lists, tags, domains, pickers). */
+.settings-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.25rem 0.125rem 0.625rem;
+  border: 1px solid var(--cui-color-stroke-default);
+  border-radius: 9999px;
+  background-color: var(--cui-color-background-muted);
+  font-size: 0.75rem;
+  line-height: 1rem;
   color: var(--cui-color-text-default);
 }
 
@@ -1313,6 +1363,11 @@ body > div:has(+ .modal-frost) {
   grid-column: 2 / -1;
 }
 
+/* A single-field section's read-only notice spans the card, like every other section's. */
+.settings-section-sole > .settings-row > [role='note'][data-read-only] {
+  grid-column: 1 / -1;
+}
+
 /* Narrow containers and phones: label above a full-width control. */
 @container (max-width: 559.98px) {
   .settings-section-sole > .settings-row > :not(.settings-row-label, .settings-row-sole) {
@@ -1367,6 +1422,72 @@ body > div:has(+ .modal-frost) {
 
   .settings-row-control[data-width] > :is(.cui-field, .select-field-a11y) {
     max-width: 100%;
+  }
+}
+
+/* Narrow rows: a chip's opened explanation gets the row's width, under the label. */
+@container (max-width: 559.98px) {
+  .settings-row:has(> .settings-row-trailing > .state-chip-reason:not([hidden])) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'label'
+      'trailing'
+      'control';
+  }
+
+  .settings-row:has(> .settings-row-trailing > .state-chip-reason:not([hidden]))
+    > .settings-row-trailing {
+    justify-content: flex-start;
+    max-width: none;
+    margin-left: var(--settings-indent, 0px);
+  }
+}
+
+/* Phones: a row with chips stacks label, chips and control, so the label's help
+   text gets the row's width instead of a column squeezed beside the chips. */
+@media (max-width: 479.98px) {
+  .settings-row:has(> .settings-row-trailing) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'label'
+      'trailing'
+      'control';
+    row-gap: 6px;
+  }
+
+  .settings-row:has(> .settings-row-trailing) > .settings-row-trailing {
+    justify-content: flex-start;
+    max-width: none;
+    margin-left: var(--settings-indent, 0px);
+  }
+}
+
+/* A card nested in a section (an MCP server): its rows lay out by the card's
+   own width. In a very narrow one (a phone), the chips move under the label,
+   so the label keeps its width and nothing overflows the card. */
+.settings-card-body {
+  container-type: inline-size;
+}
+
+@container (max-width: 299.98px) {
+  .settings-row {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'label'
+      'trailing'
+      'control';
+    row-gap: 0;
+  }
+
+  .settings-row-trailing {
+    justify-content: flex-start;
+    max-width: none;
+    margin-left: var(--settings-indent, 0px);
+  }
+
+  .settings-row-trailing,
+  .settings-row-control {
+    margin-top: 6px;
   }
 }
 
@@ -1543,6 +1664,15 @@ body > div:has(+ .modal-frost) {
   width: 1px;
   background: var(--cui-color-stroke-default);
   pointer-events: none;
+}
+
+/* On a phone the spec editor sits four levels deep (section, spec card, group,
+   row): its groups step in less and its rows keep less side padding. */
+@media (max-width: 639.98px) {
+  .spec-editor {
+    --settings-nest-step: 8px;
+    --settings-row-px: 4px;
+  }
 }
 
 .settings-group-desc {
@@ -1762,7 +1892,7 @@ body > div:has(+ .modal-frost) {
   overflow: hidden;
 }
 
-.form-dialog-content[role='dialog'] > :not(form) {
+.form-dialog-content[role='dialog'] > :not(form, .form-dialog-form) {
   flex-shrink: 0;
 }
 
@@ -1851,15 +1981,22 @@ body > div:has(+ .modal-frost) {
 }
 
 /* A collapsed group's header names what it sets, on one line. */
+/* A collapsed group's summary wraps to a second line before it is cut off,
+   so statements such as Global's title rule read in full. */
 .provider-group-summary {
+  display: -webkit-box;
   min-width: 0;
   flex: 1;
   overflow: hidden;
   font-size: var(--settings-fs-help);
   font-weight: 400;
+  line-height: 1.35;
   color: var(--cui-color-text-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-align: left;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .provider-card-summary {
@@ -1975,6 +2112,21 @@ body > div:has(+ .modal-frost) {
   text-decoration: underline;
 }
 
+/* The pill's own shape for its controls' focus ring, instead of a box inside it. */
+.state-chip-link:focus-visible {
+  border-radius: 9999px;
+  outline-offset: 1px !important;
+}
+
+/* The reason a shadowed value is ignored, opened from its chip on its own line. */
+.state-chip-reason {
+  flex-basis: 100%;
+  font-size: var(--settings-fs-meta);
+  line-height: 1.4;
+  color: var(--settings-muted-fg);
+  white-space: normal;
+}
+
 .azure-groups {
   container-type: inline-size;
   overflow-x: auto;
@@ -2013,8 +2165,30 @@ body > div:has(+ .modal-frost) {
   font-weight: 600;
 }
 
+/* Names wrap between words and the column keeps a minimum width wherever the
+   target column shows, so it never collapses to a letter per line; only on a
+   phone (target hidden, names alone with the count) may they break anywhere. */
 .azure-group-name {
   overflow-wrap: anywhere;
+}
+
+@container (min-width: 420px) {
+  .azure-group-name {
+    min-width: 7rem;
+    overflow-wrap: break-word;
+  }
+}
+
+@container (min-width: 640px) {
+  .azure-group-name {
+    min-width: 9rem;
+  }
+}
+
+/* The target column takes the width left over and truncates, instead of widening the table. */
+.azure-groups-table td.azure-col-wide {
+  width: 100%;
+  max-width: 0;
 }
 
 .azure-target {

@@ -20,7 +20,14 @@ function localize(key: string, options?: Record<string, string | number>): strin
 vi.mock('@/hooks', async () => {
   const { useScopeActions } =
     await vi.importActual<typeof import('@/hooks/config/scope')>('@/hooks/config/scope');
-  return { useLocalize: () => localize, useScopeActions, useExpandSignal: () => undefined };
+  const { useReturnFocus } =
+    await vi.importActual<typeof import('@/hooks/dialogs')>('@/hooks/dialogs');
+  return {
+    useLocalize: () => localize,
+    useScopeActions,
+    useReturnFocus,
+    useExpandSignal: () => undefined,
+  };
 });
 
 vi.mock('@/server', () => ({

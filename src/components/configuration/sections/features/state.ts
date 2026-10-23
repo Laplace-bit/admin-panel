@@ -1,6 +1,6 @@
 import type * as t from '@/types';
 import { MEMORY_AGENT_KEYS, TRIGGER_RULES } from '@/constants';
-import { lowerLayerValue } from '../../renderer/defaults';
+import { layerValueBeneath } from '../../renderer/defaults';
 import { isEnvReference } from '@/utils';
 
 const ENV_NAME = /^\$\{([A-Za-z0-9_]+)\}$/;
@@ -41,9 +41,7 @@ export function credentialState({
 
 /** Whether the layer beneath the edit target (librechat.yaml in Base, Base in a profile) sets a field. */
 function lowerSets(state: t.FieldState): boolean {
-  if (!state.isOverride) return lowerLayerValue(state) !== undefined;
-  const target = state.revertTarget;
-  return target?.value !== undefined && (target.source === 'yaml' || target.source === 'inherited');
+  return layerValueBeneath(state) !== undefined;
 }
 
 /** Whether a memory agent key is hidden (stored tombstone) or queued to be hidden. */

@@ -17,10 +17,11 @@ import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { ArrayObjectField, ListField, NumberField, SelectField, TextField } from '../../fields';
 import { renderInlineField, toFieldId } from '../../renderer';
-import { getEntryKey, isConfigRecord, isConfigValueEqual } from '@/utils';
+import { describeField, labelForPath } from '../../meta';
+import { UnknownSettings } from '../../UnknownSettings';
+import { getEntryKey, asConfigRecord, isConfigValueEqual } from '@/utils';
 import { DecorativeIcon } from '@/components/shared';
 import { SettingsRow } from '../../SettingsRow';
-import { describeField, labelForPath } from '../../meta';
 import { useLocalize } from '@/hooks';
 
 /** Components that can show each type of parameter. */
@@ -34,13 +35,19 @@ const TYPE_COMPONENTS: Readonly<Record<string, string[]>> = {
 
 /** Fields each component reads. */
 const COMPONENT_FIELDS: Readonly<Record<string, string[]>> = {
-  input: ['placeholder', 'minText', 'maxText'],
-  textarea: ['placeholder', 'minText', 'maxText'],
+  input: ['placeholder', 'placeholderCode', 'minText', 'maxText'],
+  textarea: ['placeholder', 'placeholderCode', 'minText', 'maxText'],
   slider: ['range', 'includeInput'],
   checkbox: [],
   switch: [],
   dropdown: ['options', 'enumMappings'],
-  combobox: ['options', 'searchPlaceholder', 'selectPlaceholder'],
+  combobox: [
+    'options',
+    'searchPlaceholder',
+    'searchPlaceholderCode',
+    'selectPlaceholder',
+    'selectPlaceholderCode',
+  ],
   tags: ['minTags', 'maxTags'],
 };
 
@@ -48,7 +55,14 @@ const COMPONENT_FIELDS: Readonly<Record<string, string[]>> = {
 const OPTION_COMPONENTS: ReadonlySet<string> = new Set(['dropdown', 'combobox', 'slider']);
 
 /** How the definition is laid out, after key, type, component and default. */
-const LAYOUT_FIELDS = ['optionType', 'showLabel', 'showDefault', 'columnSpan', 'columns'];
+const LAYOUT_FIELDS = [
+  'optionType',
+  'showLabel',
+  'showDefault',
+  'descriptionSide',
+  'columnSpan',
+  'columns',
+];
 
 /** Fields a built-in definition may differ in and still read as "the built-in, with its default changed". */
 const OVERRIDE_FIELDS: ReadonlySet<string> = new Set(['default', 'optionType']);
@@ -65,9 +79,12 @@ const HANDLED: ReadonlySet<string> = new Set([
   'descriptionCode',
 ]);
 
-function asRecord(value: t.ConfigValue): t.ConfigRecord {
-  return isConfigRecord(value) ? value : {};
-}
+/** Every key this editor places somewhere; a key outside it (a newer schema's) is always shown. */
+const KNOWN: ReadonlySet<string> = new Set([
+  ...HANDLED,
+  ...Object.values(COMPONENT_FIELDS).flat(),
+  ...LAYOUT_FIELDS,
+]);
 
 function text(value: t.ConfigValue): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -86,7 +103,7 @@ function displayValue(value: t.ConfigValue): string {
  */
 export function builtInDefinition(builtIn: SettingDefinition): t.ConfigRecord {
   const definition: t.ConfigValue = JSON.parse(JSON.stringify(builtIn));
-  return { ...asRecord(definition), optionType: 'custom' };
+  return { ...asConfigRecord(definition), optionType: 'custom' };
 }
 
 /** Whether a definition is the built-in one with at most its default changed (or only `{ key, default }`). */
@@ -398,7 +415,7 @@ function ParamDefinitionEntry({
   const options = Array.isArray(value.options)
     ? value.options.filter((option): option is string => typeof option === 'string')
     : (builtIn?.options ?? []);
-  const range = asRecord(value.range ?? (builtIn?.range as t.ConfigValue | undefined));
+  const range = asConfigRecord(value.range ?? (builtIn?.range as t.ConfigValue | undefined));
   const effectiveType = type ?? builtIn?.type;
 
   const keyRow = (
@@ -480,7 +497,9 @@ function ParamDefinitionEntry({
     ...LAYOUT_FIELDS,
   ]);
   const rest = fields.filter(
-    (field) => !HANDLED.has(field.key) && (extra.has(field.key) || value[field.key] !== undefined),
+    (field) =>
+      !HANDLED.has(field.key) &&
+      (extra.has(field.key) || !KNOWN.has(field.key) || value[field.key] !== undefined),
   );
   const staticText = (shown: string) => (
     <span data-static-value className="static-value self-start">
@@ -556,13 +575,14 @@ function ParamDefinitionEntry({
         wide
       />
       {rest.map((field) => renderInlineField(field, value, path, onChange, localize, disabled))}
+      <UnknownSettings fields={fields} value={value} path={path} />
     </div>
   );
 }
 
 /** One-line summary of a definition in its collapsed card: type and default. */
 function summarize(item: t.ConfigValue, localize: t.LocalizeFn): string | null {
-  const record = asRecord(item);
+  const record = asConfigRecord(item);
   const type = text(record.type);
   const parts: string[] = [];
   if (type) parts.push(localize(`com_config_ce_param_type_${type}`));
@@ -602,7 +622,7 @@ export function ParamDefinitionsRow({
       (entryFields, parentValue, parentPath, entryChange, _addRef, _session, entryDisabled) => (
         <ParamDefinitionEntry
           fields={entryFields}
-          value={asRecord(parentValue)}
+          value={asConfigRecord(parentValue)}
           path={parentPath}
           onChange={entryChange}
           disabled={entryDisabled ?? disabled}

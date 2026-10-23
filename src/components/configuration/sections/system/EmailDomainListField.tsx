@@ -17,7 +17,7 @@ function normalizeDomain(text: string): string {
  * reason. Removing the last chip is the caller's to confirm (anyone can sign
  * up with an empty list).
  */
-export function DomainListField({
+export function EmailDomainListField({
   id,
   domains,
   onChange,
@@ -67,12 +67,9 @@ export function DomainListField({
   return (
     <div id={id} className="flex w-full max-w-150 flex-col gap-2">
       {domains.length > 0 && (
-        <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0" aria-label={ariaLabel}>
+        <ul className="settings-chip-list" aria-label={ariaLabel}>
           {domains.map((domain) => (
-            <li
-              key={domain}
-              className="inline-flex items-center gap-1 rounded-md border border-(--cui-color-stroke-default) bg-(--cui-color-background-muted) py-0.5 pr-0.5 pl-2 text-sm text-(--cui-color-text-default)"
-            >
+            <li key={domain} className="settings-chip font-mono">
               {domain}
               <button
                 type="button"

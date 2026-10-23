@@ -344,6 +344,60 @@ function desiredEntry(op: UpsertEntryOp, fresh: t.ConfigValue, state: ResolveSta
   return fresh === undefined ? value : mergeConfigLayers(fresh, value);
 }
 
+/**
+ * Why `name` can't be given to an entry although no entry has it exactly: a
+ * name with a leading or trailing space (Create trims it; LibreChat would
+ * serve it as typed), a name LibreChat reserves, or one it serves as the same entry as another
+ * (`ollama` next to `Ollama`), which would replace that entry at runtime.
+ * `self` is the entry being renamed, which doesn't collide with itself.
+ */
+function nameConflict(
+  state: ResolveState,
+  lowerEntries: t.ConfigValue[],
+  name: string,
+  self?: string,
+): t.ConfigIssue | undefined {
+  const { collection } = state.input;
+  const identity = self ?? name;
+  if (collection.servedName && name.trim() !== name) {
+    return {
+      ...entryIssue(
+        collection,
+        'ENTRY_NAME_WHITESPACE',
+        identity,
+        `"${name}" starts or ends with a space`,
+        { name },
+      ),
+      entryPath: collection.key,
+    };
+  }
+  if (collection.reservedNames?.has(name)) {
+    return {
+      ...entryIssue(collection, 'RESERVED_ENTRY_NAME', identity, `"${name}" is reserved`, {
+        name,
+      }),
+      entryPath: collection.key,
+    };
+  }
+  const served = collection.servedName;
+  if (!served) return undefined;
+  const target = served(name);
+  const other = [...state.entries, ...lowerEntries]
+    .map((entry) => getEntryKey(entry, collection.key))
+    .find((key) => key !== undefined && key !== name && key !== self && served(key) === target);
+  if (other === undefined) return undefined;
+  return {
+    ...entryIssue(
+      collection,
+      'MERGED_ENTRY_NAME',
+      identity,
+      `"${name}" and "${other}" are the same entry to LibreChat`,
+      { name, other },
+    ),
+    entryPath: collection.key,
+  };
+}
+
 function hasKey(state: ResolveState, lowerEntries: t.ConfigValue[], name: string): boolean {
   const { key } = state.input.collection;
   return indexOfKey(state.entries, key, name) >= 0 || indexOfKey(lowerEntries, key, name) >= 0;
@@ -365,6 +419,11 @@ function upsertByKey(
       );
       return;
     }
+    const conflict = nameConflict(state, lowerEntries, op.key);
+    if (conflict) {
+      state.issues.push(conflict);
+      return;
+    }
     state.entries = [...state.entries, withKey(withoutPreview(op.value, collection), key, op.key)];
     state.effective++;
     return;
@@ -384,6 +443,11 @@ function upsertByKey(
     moveAside(state, op.key, lowerEntries);
     if (hasKey(state, lowerEntries, op.key)) {
       state.issues.push(renameTakenIssue(collection, identity, op.key));
+      return;
+    }
+    const conflict = nameConflict(state, lowerEntries, op.key, identity);
+    if (conflict) {
+      state.issues.push(conflict);
       return;
     }
     if (hiddenSecrets.has(identity) && !suppliesSecret(op.value, collection)) {

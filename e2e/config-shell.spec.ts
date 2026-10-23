@@ -14,8 +14,9 @@ test.skip(!LIVE, LIVE_SKIP_REASON);
 
 const TABS = ['providers', 'custom', 'specs', 'mcp', 'features', 'files', 'system'];
 /** Collapsed sections, groups and cards (not a model chip's inline editor or a select). */
+/** Collapsed sections, groups and cards (not menus, selects, tabs, or a chip's "why" disclosure). */
 const COLLAPSED =
-  'form [aria-expanded="false"]:not([aria-haspopup]):not([role=combobox]):not([role=tab]):not(.icon-btn)';
+  'form [aria-expanded="false"]:not([aria-haspopup]):not([role=combobox]):not([role=tab]):not(.icon-btn):not(.state-chip-link)';
 
 async function openTab(page: Page, tab: string, extra = '') {
   await page.goto(`/configuration?tab=${tab}${extra}`);

@@ -2,15 +2,17 @@ import { useId, useState } from 'react';
 import { TextField as CUITextField } from '@clickhouse/click-ui';
 import type * as t from '@/types';
 import { useDraftValue, useLocalize } from '@/hooks';
+import { cn, isFilledText } from '@/utils';
 import { FieldNotice } from './Notice';
 import { widthClass } from './display';
-import { cn, isFilledText } from '@/utils';
 
 /**
  * Single-line text control. Typing commits after a short pause (and on blur
  * or Enter). Clearing an optional field calls `onClear` (remove the own
  * value) instead of saving `''`; clearing a required field shows an error and
- * keeps the previous value.
+ * keeps the previous value. With `hasRowError`, the row shows the field's
+ * problem (and marks the control invalid while it does), so this control
+ * keeps its own message to itself.
  */
 export function TextField({
   id,
@@ -81,7 +83,7 @@ export function TextField({
         }}
         placeholder={placeholder ?? localize('com_ui_enter_value')}
         disabled={disabled}
-        aria-invalid={error ? true : undefined}
+        aria-invalid={shownError ? true : undefined}
         aria-describedby={describedBy || undefined}
         {...ariaProps}
       />

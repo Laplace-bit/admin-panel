@@ -13,8 +13,8 @@ import {
   pendingCollectionItems,
 } from './edits';
 import { getKeyedCollection, getValueAtPath, planConfigChanges } from '@/utils';
-import { extractSchemaTree, getSchemaPathSet } from '@/server/config';
 import { issueDisplayPath, formatIssue, describeIssues } from './issues';
+import { extractSchemaTree, getSchemaPathSet } from '@/server/config';
 import { summarizeChanges } from './summary';
 import { findSchemaField } from './controls';
 
@@ -461,6 +461,31 @@ describe('issue display and summary', () => {
     });
   });
 
+  it('names an entry without a name as such, not with an empty identity', () => {
+    const issue: t.ConfigIssue = {
+      path: 'endpoints.custom',
+      code: 'BLANK_VALUE',
+      message: 'is blank',
+      entryIdentity: '   ',
+      entryPath: 'name',
+    };
+    expect(formatIssue(issue, 'endpoints.custom', localize).summary).toMatch(
+      /^com_config_issue_unnamed_entry › /,
+    );
+  });
+
+  it('names the field of an entry the page does not list (an imported one)', () => {
+    const issue: t.ConfigIssue = {
+      path: 'endpoints.custom',
+      code: 'MERGED_ENTRY_NAME',
+      message: 'fallback',
+      params: { name: 'ollama', other: 'Ollama' },
+      entryIdentity: 'ollama',
+      entryPath: 'name',
+    };
+    expect(formatIssue(issue, 'endpoints.custom', localize).summary).toMatch(/^ollama › name: /i);
+  });
+
   it('shows entry-level problems as sentences', () => {
     const issue: t.ConfigIssue = {
       path: 'endpoints.custom',
@@ -473,6 +498,42 @@ describe('issue display and summary', () => {
     expect(formatIssue(issue, 'endpoints.custom', localize).summary).toBe(
       '"Zai 2" is defined in librechat.yaml, so it can\'t be removed here',
     );
+  });
+
+  it('warns on the last removed spec when the save empties the spec list', () => {
+    const specsRoot: t.ConfigRecord = {
+      modelSpecs: {
+        list: [
+          { name: 'a', label: 'A' },
+          { name: 'b', label: 'B' },
+        ],
+      },
+    };
+    const collections = trackCollectionEdit({}, {}, 'modelSpecs.list', [], specsRoot);
+    const values = applyConfigEdit({}, 'modelSpecs.list', [], {}, new Set(), new Set());
+    const ctx: t.ChangeContext = {
+      fields: tree,
+      baselineAt: (path) => getValueAtPath(specsRoot, path),
+      hasOverride: () => true,
+      root: specsRoot,
+      collections,
+    };
+    const changeSet = buildConfigChanges(new Set(Object.keys(values)), values, schemaPaths, ctx);
+    const plan = planConfigChanges(changeSet.ops, {
+      stored: specsRoot,
+      lower: {},
+      lowerKind: 'yaml',
+    });
+    const items = summarizeChanges(changeSet, plan, {
+      baselineAt: ctx.baselineAt,
+      ownAt: () => undefined,
+      revertAt: () => ({ value: undefined, source: 'default' }),
+      editBaselines: {},
+    });
+    expect(items.map((item) => [item.kind, item.entryIdentity, item.warnings])).toEqual([
+      ['removed', 'a', undefined],
+      ['removed', 'b', ['emptySpecs']],
+    ]);
   });
 
   it('summarizes entry edits per field and leaves out resets that send nothing', () => {

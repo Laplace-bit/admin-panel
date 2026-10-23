@@ -1,7 +1,7 @@
 import type { ReactNode, RefObject } from 'react';
-import type { ConfigValue, FlatConfigMap, SchemaField, SelectOption } from './config';
-import type { ShadowedBy } from './values';
+import type { ConfigValue, ConfigRecord, FlatConfigMap, SchemaField, SelectOption } from './config';
 import type { FieldRendererProps } from './config-ui';
+import type { ShadowedBy } from './values';
 
 /** One endpoint LibreChat serves to the signed-in admin (`GET /api/endpoints`). */
 export interface EndpointStatus {
@@ -105,6 +105,8 @@ export interface ProviderStatusRowProps {
 
 /** One Azure OpenAI group as the read-only table shows it. */
 export interface AzureGroupRow {
+  /** Its position in `endpoints.azureOpenAI.groups`. */
+  index: number;
   group: string;
   apiKey?: string;
   instanceName?: string;
@@ -117,6 +119,8 @@ export interface AzureGroupRow {
   additionalHeaders?: Record<string, string>;
   addParams?: Record<string, ConfigValue>;
   dropParams?: string[];
+  /** Settings the table and drawer have no place of their own for (a newer schema, unknown keys). */
+  others: ConfigRecord;
 }
 
 /** A model of an Azure group: its deployment and API version overrides. */
@@ -124,16 +128,22 @@ export interface AzureGroupModel {
   name: string;
   deploymentName?: string;
   version?: string;
-  assistants?: boolean;
+  /** Its other settings (`assistants`, a newer schema's, unknown keys). */
+  others: ConfigRecord;
 }
 
 export interface AzureGroupsTableProps {
   path: string;
   value: ConfigValue;
+  /** The schema of `endpoints.azureOpenAI.groups`, which names the other settings. */
+  field?: SchemaField;
 }
 
 export interface AzureGroupDrawerProps {
   group: AzureGroupRow | null;
+  /** The data path of the groups list. */
+  path: string;
+  field?: SchemaField;
   onClose: () => void;
   /** The Details button that opened it, focused again on close. */
   returnFocus?: RefObject<HTMLButtonElement | null>;
@@ -200,8 +210,8 @@ export interface SetBadgeProps {
 
 export interface ShadowBadgeProps {
   shadowedBy: ShadowedBy;
-  /** Where the overridden value comes from ("librechat.yaml"), named in the reason. */
-  source?: string;
+  /** Where the overridden value comes from ("librechat.yaml", "Edited"), named in the reason. */
+  source: string;
 }
 
 /** How a summary reads a provider's values. */
@@ -209,8 +219,12 @@ export interface SummaryReader {
   /** The path holds a value (librechat.yaml, an override or a pending edit). */
   isSet: (path: string) => boolean;
   valueAt: (path: string) => ConfigValue;
-  /** Global overrides take precedence over the value (D11). */
-  isShadowed?: (path: string) => boolean;
+  /**
+   * How Global overrides shadow the value (D11): `wins` when Global sets the
+   * key, `ignored` when its title block exists without it (LibreChat's
+   * default applies), else null.
+   */
+  shadowOf?: (path: string) => 'wins' | 'ignored' | null;
 }
 
 export interface SummaryReaderInput {
@@ -226,4 +240,19 @@ export interface StaleOverrideProps {
   pendingRemoval: boolean;
   /** Queues the override's removal; absent when the target cannot be edited. */
   onRemove?: () => void;
+}
+
+/** One entry of LibreChat's `GET /api/endpoints` payload (only the keys the panel reads). */
+export interface RawEndpointConfig {
+  type?: string;
+  userProvide?: boolean;
+  userProvideURL?: boolean;
+  modelDisplayLabel?: string;
+}
+
+/** One entry of LibreChat's `GET /api/agents/tools` payload. */
+export interface RawTool {
+  name?: string;
+  pluginKey?: string;
+  description?: string;
 }

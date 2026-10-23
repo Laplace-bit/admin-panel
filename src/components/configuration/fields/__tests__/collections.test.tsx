@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react';
 import type * as t from '@/types';
 import { matchVariant, switchVariant, VariantField } from '../VariantField';
+import { RowProblemsContext } from '@/contexts/RowProblemsContext';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { RecordObjectField } from '../RecordObjectField';
 import { ArrayObjectField } from '../ArrayObjectField';
@@ -37,10 +38,12 @@ function StatefulList({
   initial,
   onEmit,
   editSessionId = 0,
+  reorderable,
 }: {
   initial: t.ConfigValue[];
   onEmit: (value: t.ConfigValue) => void;
   editSessionId?: number;
+  reorderable?: boolean;
 }) {
   const [value, setValue] = useState<t.ConfigValue>(initial);
   return (
@@ -62,6 +65,7 @@ function StatefulList({
         }}
         renderFields={renderNameFields}
         editSessionId={editSessionId}
+        reorderable={reorderable}
       />
     </>
   );
@@ -179,6 +183,17 @@ describe('ArrayObjectField', () => {
     expect(screen.queryByText('com_config_ctl_entry_pending_delete')).not.toBeInTheDocument();
   });
 
+  it('gives focus to the restored entry after Undo', async () => {
+    render(
+      <StatefulList initial={[{ name: 'a' }, { name: 'b' }, { name: 'c' }]} onEmit={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_delete b' }));
+    fireEvent.click(screen.getByRole('button', { name: /com_config_ctl_entry_undo_a11y/ }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^b/, expanded: false })).toHaveFocus(),
+    );
+  });
+
   it('keeps an entry expanded while another one is deleted (stable keys)', () => {
     render(
       <StatefulList initial={[{ name: 'a' }, { name: 'b' }, { name: 'c' }]} onEmit={vi.fn()} />,
@@ -186,6 +201,27 @@ describe('ArrayObjectField', () => {
     fireEvent.click(screen.getByRole('button', { name: /^c/, expanded: false }));
     fireEvent.click(screen.getByRole('button', { name: 'com_ui_delete a' }));
     expect(screen.getByRole('button', { name: /^c/, expanded: true })).toBeInTheDocument();
+  });
+
+  it('moves an open entry with its state and keeps focus on its move button', async () => {
+    render(
+      <StatefulList
+        initial={[{ name: 'a' }, { name: 'b' }, { name: 'c' }]}
+        onEmit={vi.fn()}
+        reorderable
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^b/, expanded: false }));
+    const up = screen.getByRole('button', { name: 'com_config_ctl_entry_move_up:{"name":"b"}' });
+    up.focus();
+    fireEvent.click(up);
+    expect(screen.getByRole('button', { name: /^b/, expanded: true })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^a/, expanded: false })).toBeInTheDocument();
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(document.activeElement).toHaveAttribute(
+      'aria-label',
+      'com_config_ctl_entry_move_down:{"name":"b"}',
+    );
   });
 
   it('shows an empty state even when the add button lives elsewhere', () => {
@@ -492,7 +528,7 @@ describe('KeyValueField', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('com_config_ctl_kv_blank_key');
   });
 
-  it('removes a row whose key is changed to spaces, as when it is cleared', () => {
+  it('keeps a saved row whose key is cleared or made blank, flagging it until fixed', () => {
     const onChange = vi.fn();
     render(
       <KeyValueField
@@ -506,9 +542,66 @@ describe('KeyValueField', () => {
       />,
     );
     const key = screen.getByRole('textbox', { name: 'com_ui_key 1' });
+    fireEvent.change(key, { target: { value: '' } });
+    fireEvent.blur(key);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(key).toHaveValue('');
+    expect(key).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('alert')).toHaveTextContent('com_config_ctl_kv_key_cleared');
     fireEvent.change(key, { target: { value: '   ' } });
     fireEvent.blur(key);
-    expect(onChange).toHaveBeenLastCalledWith([{ key: 'X-B', value: '2' }]);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('com_config_ctl_kv_blank_key');
+    fireEvent.change(key, { target: { value: 'X-C' } });
+    fireEvent.blur(key);
+    expect(onChange).toHaveBeenLastCalledWith([
+      { key: 'X-C', value: '1' },
+      { key: 'X-B', value: '2' },
+    ]);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('refuses renaming a saved key to one already in the list, keeping the text with an error', () => {
+    const onChange = vi.fn();
+    const report = vi.fn();
+    render(
+      <RowProblemsContext.Provider value={report}>
+        <KeyValueField
+          id="kv"
+          pairs={[
+            { key: 'X-A', value: 'a' },
+            { key: 'X-B', value: 'b' },
+          ]}
+          onChange={onChange}
+        />
+      </RowProblemsContext.Provider>,
+    );
+    const key = screen.getByRole('textbox', { name: 'com_ui_key 2' });
+    fireEvent.change(key, { target: { value: 'X-A' } });
+    fireEvent.blur(key);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(key).toHaveValue('X-A');
+    expect(screen.getByRole('alert')).toHaveTextContent('com_config_ctl_kv_duplicate');
+    expect(report).toHaveBeenLastCalledWith('kv', 1);
+  });
+
+  it('renames a saved key on blur or Enter only, never on a pause while typing', () => {
+    vi.useFakeTimers();
+    try {
+      const onChange = vi.fn();
+      render(<KeyValueField id="kv" pairs={[{ key: 'X-B', value: 'b' }]} onChange={onChange} />);
+      const key = screen.getByRole('textbox', { name: 'com_ui_key 1' });
+      fireEvent.change(key, { target: { value: 'X-' } });
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(onChange).not.toHaveBeenCalled();
+      fireEvent.change(key, { target: { value: 'X-Z' } });
+      fireEvent.keyDown(key, { key: 'Enter' });
+      expect(onChange).toHaveBeenLastCalledWith([{ key: 'X-Z', value: 'b' }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('offers only text in string-only mode', () => {

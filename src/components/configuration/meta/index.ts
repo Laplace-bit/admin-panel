@@ -1,14 +1,14 @@
 import type * as t from '@/types';
 import { buildFieldMetaRegistry, resolveFieldMeta } from './registry';
 import { PROVIDER_FIELD_META } from './providers';
+import { ENDPOINT_FIELD_META } from './endpoints';
 import { SECRET_CONFIG_KEYS } from '@/constants';
 import { FEATURES_FIELD_META } from './features';
-import { ENDPOINT_FIELD_META } from './endpoints';
 import { GENERIC_FIELD_META } from './generic';
-import { SPEC_FIELD_META } from './specs';
-import { MCP_FIELD_META } from './mcp';
 import { SYSTEM_FIELD_META } from './system';
 import { FILES_FIELD_META } from './files';
+import { SPEC_FIELD_META } from './specs';
+import { MCP_FIELD_META } from './mcp';
 
 /** Registries merged in order; area files are appended here (WS2 owns, WS9–13 contribute). */
 const META_SOURCES: t.FieldMetaRegistry[] = [

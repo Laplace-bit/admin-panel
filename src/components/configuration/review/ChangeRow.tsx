@@ -3,8 +3,8 @@ import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { diffList, formatReviewValue, isListChange, isShowableSecret } from './format';
+import { cn, isConfigRecord } from '@/utils';
 import { useLocalize } from '@/hooks';
-import { cn } from '@/utils';
 
 /** The row's enum option labels, so values read as the page's options ("Remaining tokens"). */
 const ValueLabelsContext = createContext<Readonly<Record<string, string>> | undefined>(undefined);
@@ -62,7 +62,9 @@ const SOURCE_KEYS: Record<t.ProvenanceSource, string> = {
 /** Row-level warnings; `yamlEntry` is reported as a blocking problem on the row instead. */
 const WARNING_KEYS: Partial<Record<t.ChangeWarning, string>> = {
   emptyAllowlist: 'com_config_review_warning_empty_allowlist',
+  openAllowlist: 'com_config_review_warning_open_allowlist',
   openRegistration: 'com_config_review_warning_open_registration',
+  emptySpecs: 'com_config_review_warning_empty_specs',
   shadowed: 'com_config_review_warning_shadowed',
   shadowedBlock: 'com_config_review_warning_shadowed_block',
 };
@@ -128,6 +130,18 @@ function Arrow() {
 function LowerValue({ target, secret }: { target: t.RevertTarget; secret?: boolean }) {
   const localize = useLocalize();
   const format = useFormatValue();
+  /** A whole entry (an MCP server) is named by where it comes from, not dumped. */
+  if (isConfigRecord(target.value)) {
+    return (
+      <Value muted>
+        {target.source === 'inherited'
+          ? localize('com_config_review_entry_from_base')
+          : localize('com_config_review_entry_from', {
+              source: localize(SOURCE_KEYS[target.source]),
+            })}
+      </Value>
+    );
+  }
   const value =
     secret && !isShowableSecret(target.value)
       ? localize('com_config_review_secret_set')
@@ -304,8 +318,8 @@ function ValueChange({ item, isScope }: { item: t.ChangeSummaryItem; isScope: bo
 
 function Warning({ children }: { children: ReactNode }) {
   return (
-    <span className="flex items-center gap-1 text-xs text-(--cui-color-accent-warning)">
-      <span aria-hidden="true" className="flex">
+    <span className="flex items-center gap-1 text-xs text-(--settings-warn-fg)">
+      <span aria-hidden="true" className="flex text-(--settings-warn-mark)">
         <Icon name="warning" size="xs" />
       </span>
       {children}
@@ -313,12 +327,22 @@ function Warning({ children }: { children: ReactNode }) {
   );
 }
 
+/** Warnings worded for the target: turning on required terms reads differently in a profile. */
+function warningKey(warning: t.ChangeWarning, isScope: boolean): string | undefined {
+  if (warning === 'requireTerms') {
+    return isScope
+      ? 'com_config_terms_acceptance_import_scope'
+      : 'com_config_terms_acceptance_import';
+  }
+  return WARNING_KEYS[warning];
+}
+
 /** Row warnings, and the value saved meanwhile when someone else changed it since the edit (SV-8). */
-function RowWarnings({ item }: { item: t.ChangeSummaryItem }) {
+function RowWarnings({ item, isScope }: { item: t.ChangeSummaryItem; isScope: boolean }) {
   const localize = useLocalize();
   const format = useFormatValue();
   const keys = (item.warnings ?? [])
-    .map((warning) => WARNING_KEYS[warning])
+    .map((warning) => warningKey(warning, isScope))
     .filter((key): key is string => key != null);
   const drift = item.drift;
   if (keys.length === 0 && !drift) return null;
@@ -369,6 +393,8 @@ export function ChangeRow({
   const entryTitleKey = ENTRY_TITLE_KEYS[item.kind];
   const badge = badgeOf(item);
   const hasIssue = (row.issues?.length ?? 0) > 0;
+  /** A rename to no name names the entry by its old name. */
+  const nameCleared = item.kind === 'renamed' && !item.entryIdentity && !!item.previousIdentity;
 
   return (
     <li
@@ -378,7 +404,7 @@ export function ChangeRow({
       )}
       data-review-path={item.path}
     >
-      <div className="flex min-w-0 items-start gap-2">
+      <div className="flex min-w-0 items-start gap-2 max-sm:flex-wrap">
         {leading}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -387,11 +413,15 @@ export function ChangeRow({
                 <span className="text-(--cui-color-text-muted)">
                   {localize(entryTitleKey, { noun: row.noun ?? '' })}
                 </span>{' '}
-                <span className="font-medium wrap-anywhere">{row.label}</span>
+                <span className="font-medium wrap-anywhere">
+                  {nameCleared ? item.previousIdentity : row.label}
+                </span>
                 {item.kind === 'renamed' && item.previousIdentity && (
                   <span className="text-(--cui-color-text-muted)">
                     {' '}
-                    ({item.previousIdentity} → {row.label})
+                    {nameCleared
+                      ? `(${localize('com_config_review_name_cleared')})`
+                      : `(${item.previousIdentity} → ${row.label})`}
                   </span>
                 )}
               </span>
@@ -406,7 +436,7 @@ export function ChangeRow({
           </div>
           <ValueLabelsContext.Provider value={row.valueLabels}>
             {!isEntry && <ValueChange item={item} isScope={isScope} />}
-            <RowWarnings item={item} />
+            <RowWarnings item={item} isScope={isScope} />
           </ValueLabelsContext.Provider>
           <RowIssues issues={row.issues} />
           {row.details && row.details.length > 0 && (
@@ -417,7 +447,7 @@ export function ChangeRow({
                   <dd className="m-0 min-w-0 font-mono wrap-anywhere text-(--cui-color-text-default)">
                     {detail.item.secret && !isShowableSecret(detail.item.after)
                       ? localize('com_config_review_secret_set')
-                      : formatReviewValue(detail.item.after, localize)}
+                      : formatReviewValue(detail.item.after, localize, detail.valueLabels)}
                   </dd>
                 </div>
               ))}
@@ -425,7 +455,7 @@ export function ChangeRow({
           )}
         </div>
         {!compact && (onRevert || onGoTo) && (
-          <div className="flex shrink-0 items-center gap-0.5">
+          <div className="flex shrink-0 items-center gap-0.5 max-sm:w-full max-sm:justify-end">
             {onRevert && (
               <ActionButton
                 icon="history"

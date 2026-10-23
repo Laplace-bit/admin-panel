@@ -170,7 +170,7 @@ describe('summaries', () => {
       {
         isSet: (path) => path in values,
         valueAt: (path) => values[path],
-        isShadowed: (path) => path === 'p.titleModel',
+        shadowOf: (path) => (path === 'p.titleModel' ? 'wins' : null),
       },
       localize,
     );
@@ -178,6 +178,20 @@ describe('summaries', () => {
       'com_config_providers_summary_shadowed(gpt-5-mini)',
       'com_config_providers_summary_more(a, b|1)',
     ]);
+  });
+
+  it('says a value Global leaves unset is ignored, not that Global wins', () => {
+    const items = summarizeFields(
+      [titleModel],
+      'p',
+      {
+        isSet: () => true,
+        valueAt: () => 'gpt-5-mini',
+        shadowOf: () => 'ignored',
+      },
+      localize,
+    );
+    expect(items[0].value).toBe('com_config_providers_summary_shadowed_ignored(gpt-5-mini)');
   });
 
   it('masks secret values (even a pending plaintext key) but shows env references', () => {

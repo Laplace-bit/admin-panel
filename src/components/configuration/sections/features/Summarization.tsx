@@ -19,7 +19,7 @@ export function SummarizationRenderer(props: t.FieldRendererProps) {
     typeof provider === 'string' && provider !== '' ? `models:${provider}` : undefined;
   const controls: t.FeatureControls = {
     trigger: (control) => <TriggerControl {...control} />,
-    provider: (control) => <RefPicker {...control} source="endpoints" />,
+    provider: (control) => <RefPicker {...control} source="providers" />,
     model: (control) => <RefPicker {...control} source={modelSource} />,
   };
   return (

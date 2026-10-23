@@ -148,11 +148,13 @@ export function describeStack(
   localize: t.LocalizeFn,
   path = '',
   scope?: Pick<t.ScopeLayer, 'principalType' | 'name'> | null,
+  formatLayer?: (layer: t.FieldLayer) => string,
 ): string {
   return (state.stack ?? [])
     .map((layer) => {
       const label = sourceLabel(layer.source, localize, scope);
-      return `${label} ${formatLayerValue(layer, localize, path)}`;
+      const value = formatLayer?.(layer) ?? formatLayerValue(layer, localize, path);
+      return localize('com_config_values_stack_item', { source: label, value });
     })
     .join(' · ');
 }

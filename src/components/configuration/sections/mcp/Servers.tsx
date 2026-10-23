@@ -1,23 +1,21 @@
-import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@clickhouse/click-ui';
 import { isProcessMCPServerConfig } from 'librechat-data-provider';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type * as t from '@/types';
+import { getValueAtPath, isConfigRecord, isRowVisible, asConfigRecord } from '@/utils';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
 import { previewedSecret, storedSecrets, usesSecret } from './validation';
-import { getValueAtPath, isConfigRecord, isRowVisible } from '@/utils';
 import { McpDeletedRow, McpHiddenRow, McpServerCard } from './Card';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { INSPECTOR_DERIVED, transportOf } from './transport';
 import { copyName, serverNameProblem } from './names';
-import { DecorativeIcon } from '@/components/shared';
 import { buildServerList, leafEntries } from './list';
 import { useLocalize, useValuesScope } from '@/hooks';
 import { CreateMcpServerDialog } from './Create';
 import { sourceLabel } from '../../values';
 import { McpServerEditor } from './Editor';
 import { labelForPath } from '../../meta';
-import { asRecord } from './values';
 import { McpNote } from './Note';
 
 const EMPTY_RECORD: t.ConfigRecord = Object.freeze({}) as t.ConfigRecord;
@@ -30,14 +28,6 @@ const SOURCES: Readonly<
   base: { lower: 'yaml', own: 'admin' },
   scope: { lower: 'inherited', own: 'scope' },
 };
-
-/** Why a server's fields can't be edited here. */
-type ReadOnlyReason = 'dotted' | 'process' | 'inherited';
-
-type Row =
-  | { kind: 'server'; key: string; value: t.ConfigRecord }
-  | { kind: 'deleted'; key: string }
-  | { kind: 'hidden'; key: string; pending: boolean };
 
 /**
  * Leaves worth copying into a new server: values, not empty objects,
@@ -115,16 +105,18 @@ export function McpServersRenderer({
   const prefix = `${path}.`;
   const edits = editedValues ?? EMPTY_RECORD;
   /** The saved servers: the page's values already show pending edits, which the list applies itself. */
-  const saved = asRecord(
+  const saved = asConfigRecord(
     layers ? getValueAtPath(layers.effective, path) : getValue(path, parentValue ?? EMPTY_RECORD),
   );
   const lower = useMemo(
-    () => asRecord(getValueAtPath(inScope ? layers?.base : layers?.yamlEffective, path)),
+    () => asConfigRecord(getValueAtPath(inScope ? layers?.base : layers?.yamlEffective, path)),
     [inScope, layers, path],
   );
   const stored = useMemo(
     () =>
-      asRecord(getValueAtPath(inScope ? layers?.scope?.overrides : layers?.baseOverrides, path)),
+      asConfigRecord(
+        getValueAtPath(inScope ? layers?.scope?.overrides : layers?.baseOverrides, path),
+      ),
     [inScope, layers, path],
   );
   const lowerKeys = useMemo<ReadonlySet<string>>(
@@ -146,23 +138,41 @@ export function McpServersRenderer({
   /** Duplicates and renamed servers whose source stored secrets the copy left out: they must be entered again. */
   const [reenter, setReenter] = useState<Readonly<Record<string, readonly string[]>>>({});
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [focusHiddenKey, setFocusHiddenKey] = useState<string | null>(null);
   const stash = useRef(new Map<string, Array<[string, t.ConfigValue]>>());
   /** A deleted server's pending rename (original → new name), restored with Undo. */
   const renameStash = useRef(new Map<string, string>());
+  const createRef = useRef<HTMLSpanElement>(null);
 
-  /** Keyboard focus follows a server whose control went away (a rename, an undone delete, a new server). */
+  /**
+   * Keyboard focus follows a server whose control went away (a rename, an
+   * undone delete, a new or unhidden server); with no server left to focus
+   * (the last unsaved one deleted), it goes to Create MCP server.
+   */
   useEffect(() => {
     if (focusKey == null) return;
     const frame = requestAnimationFrame(() => {
-      document
-        .querySelector<HTMLElement>(
-          `[data-mcp-server="${CSS.escape(focusKey)}"] button[aria-expanded]`,
-        )
-        ?.focus({ preventScroll: true });
+      const card = document.querySelector<HTMLElement>(
+        `[data-mcp-server="${CSS.escape(focusKey)}"] button[aria-expanded]`,
+      );
+      const target = card ?? createRef.current?.querySelector<HTMLElement>('button');
+      target?.focus({ preventScroll: true });
       setFocusKey(null);
     });
     return () => cancelAnimationFrame(frame);
   }, [focusKey]);
+
+  /** A server hidden from its menu leaves focus on its Unhide (Undo) button. */
+  useEffect(() => {
+    if (focusHiddenKey == null) return;
+    const frame = requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(`[data-mcp-hidden="${CSS.escape(focusHiddenKey)}"] button`)
+        ?.focus({ preventScroll: true });
+      setFocusHiddenKey(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusHiddenKey]);
 
   /** A new edit session (Save, Discard) starts clean: no Undo of an earlier session's deletion survives. */
   useEffect(() => {
@@ -264,10 +274,18 @@ export function McpServersRenderer({
     if (Object.hasOwn(saved, key)) onChange(entryPath, undefined);
   };
 
+  /** The server listed next to `key` (after it, else before it), for focus once it goes. */
+  const neighbourOf = (key: string): string | null => {
+    const keys = rows.flatMap((row) => (row.kind === 'server' ? [row.key] : []));
+    const at = keys.indexOf(key);
+    return keys[at + 1] ?? keys[at - 1] ?? null;
+  };
+
   /**
    * Deletes a server (D9). A saved one stays listed with Undo. A server
    * renamed in this session is deleted under its saved name, so the saved
-   * server's row (and its Undo, which brings the rename back) shows.
+   * server's row (and its Undo, which brings the rename back) shows. An
+   * unsaved one is simply gone, and focus moves to its neighbour.
    */
   const handleDelete = (key: string) => {
     if (key.includes('.')) return;
@@ -285,6 +303,7 @@ export function McpServersRenderer({
       setLastDeleted(original);
       return;
     }
+    if (!Object.hasOwn(saved, key)) setFocusKey(neighbourOf(key) ?? '');
     removeServer(key, true);
     setLastDeleted(key);
   };
@@ -312,7 +331,7 @@ export function McpServersRenderer({
     const others = [...allKeys].filter((name) => name !== key);
     const problem = serverNameProblem(next, others);
     if (problem) return localize(problem);
-    const value = asRecord(list.record[key]);
+    const value = asConfigRecord(list.record[key]);
     /** The saved server this one is (a rename of): its stored secrets stay behind with its name. */
     const original = renamedFrom[key] ?? (Object.hasOwn(saved, key) ? key : undefined);
     const secrets = [...new Set([...(reenter[key] ?? []), ...storedSecrets(value)])];
@@ -332,7 +351,7 @@ export function McpServersRenderer({
   };
 
   const handleDuplicate = (key: string) => {
-    const value = asRecord(list.record[key]);
+    const value = asConfigRecord(list.record[key]);
     const name = copyName(key, allKeys);
     const title = typeof value.title === 'string' ? `${value.title} copy` : undefined;
     writeLeaves(name, title ? { ...value, title } : value);
@@ -355,6 +374,16 @@ export function McpServersRenderer({
     setFocusKey(name);
   };
 
+  /** Back to the read-only inherited card, before anything was changed. */
+  const handleCancelOverride = (key: string) => {
+    setUnlocked((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+    setFocusKey(key);
+  };
+
   const handleOverride = (key: string) => {
     setUnlocked((prev) => new Set(prev).add(key));
     setJustAdded(key);
@@ -369,10 +398,15 @@ export function McpServersRenderer({
     if (disabled || key.includes('.')) return actions;
     const isLower = lowerKeys.has(key);
     const isYaml = yamlKeys.has(key);
-    const ownerReason = localize(
-      inScope ? 'com_config_mcp_defined_in_base' : 'com_config_mcp_locked_yaml',
-    );
+    const ownerReason = (() => {
+      if (!inScope) return localize('com_config_mcp_locked_yaml');
+      return localize(
+        isYaml ? 'com_config_mcp_defined_in_base_yaml' : 'com_config_mcp_defined_in_base',
+      );
+    })();
     const isStdio = transportOf(value) === 'stdio';
+    /** A stdio server from the layer beneath has nothing to offer: its read-only note says why. */
+    if (isStdio && isLower) return actions;
     const isInheritedLocked =
       inScope && isLower && overrides === 0 && !unlocked.has(key) && !pendingByServer.has(key);
     if (isInheritedLocked && !isStdio) {
@@ -411,7 +445,10 @@ export function McpServersRenderer({
       actions.push({
         id: 'hide',
         label: localize('com_config_mcp_action_hide', { scope: scopeName }),
-        onSelect: () => onHideField?.(`${prefix}${key}`),
+        onSelect: () => {
+          onHideField?.(`${prefix}${key}`);
+          setFocusHiddenKey(key);
+        },
         disabled: isYaml || !onHideField,
         reason: isYaml ? localize('com_config_mcp_hide_yaml_unsupported') : undefined,
       });
@@ -445,9 +482,9 @@ export function McpServersRenderer({
     !pendingByServer.has(key) &&
     !unhiding.has(key);
 
-  const rows = useMemo((): Row[] => {
+  const rows = useMemo((): t.McpListRow[] => {
     const isShown = (key: string) => !rowFilter || isRowVisible(rowFilter, `${prefix}${key}`);
-    const result: Row[] = [];
+    const result: t.McpListRow[] = [];
     const deletedAt = new Map(list.deleted.map((ghost) => [ghost.index, ghost.key]));
     Object.keys(saved).forEach((key, index) => {
       const ghost = deletedAt.get(index);
@@ -456,15 +493,15 @@ export function McpServersRenderer({
       }
       const value = list.record[key];
       if (value === undefined || hidden.has(key) || !isShown(key)) return;
-      result.push({ kind: 'server', key, value: asRecord(value) });
+      result.push({ kind: 'server', key, value: asConfigRecord(value) });
     });
     for (const [key, value] of Object.entries(list.record)) {
       if (Object.hasOwn(saved, key) || hidden.has(key) || !isShown(key)) continue;
-      result.push({ kind: 'server', key, value: asRecord(value) });
+      result.push({ kind: 'server', key, value: asConfigRecord(value) });
     }
     for (const key of unhiding) {
       if (!Object.hasOwn(list.record, key) && isShown(key)) {
-        result.push({ kind: 'server', key, value: asRecord(lower[key]) });
+        result.push({ kind: 'server', key, value: asConfigRecord(lower[key]) });
       }
     }
     if (rowFilter) {
@@ -495,7 +532,7 @@ export function McpServersRenderer({
 
   /** The server keys the open profile stores or edits (top-level keys of its override and edits). */
   const ownKeysOf = (key: string): ReadonlySet<string> => {
-    const keys = new Set(Object.keys(asRecord(stored[key])));
+    const keys = new Set(Object.keys(asConfigRecord(stored[key])));
     const entryPrefix = `${prefix}${key}.`;
     for (const editPath of Object.keys(edits)) {
       if (editPath.startsWith(entryPrefix))
@@ -504,10 +541,14 @@ export function McpServersRenderer({
     return keys;
   };
 
-  /** Unhide a saved hide, or drop a pending one. */
-  const unhideFor = (hidePath: string, pending: boolean) => {
-    if (pending) return () => discard(hidePath);
-    return onUnhideField ? () => onUnhideField(hidePath) : undefined;
+  /** Unhide a saved hide, or drop a pending one; focus moves to the server's card. */
+  const unhideFor = (key: string, hidePath: string, pending: boolean) => {
+    if (!pending && !onUnhideField) return undefined;
+    return () => {
+      if (pending) discard(hidePath);
+      else onUnhideField?.(hidePath);
+      setFocusKey(key);
+    };
   };
 
   /**
@@ -515,7 +556,7 @@ export function McpServersRenderer({
    * stdio server (LibreChat applies no override to it, so overrides stored
    * anyway can only be removed), or an inherited server not overridden yet.
    */
-  const readOnlyNoteFor = (key: string, reason: ReadOnlyReason | null, overrides: number) => {
+  const readOnlyNoteFor = (key: string, reason: t.McpReadOnlyReason | null, overrides: number) => {
     if (reason === 'dotted') {
       return <McpNote tone="lock">{localize('com_config_mcp_dotted_name')}</McpNote>;
     }
@@ -543,20 +584,41 @@ export function McpServersRenderer({
         </McpNote>
       );
     }
-    if (reason !== 'inherited' || disabled) return undefined;
+    if (disabled || !inScope || !lowerKeys.has(key)) return undefined;
+    if (reason === 'inherited') {
+      return (
+        <McpNote
+          tone="info"
+          actions={
+            <Button
+              htmlType="button"
+              type="primary"
+              label={localize('com_config_mcp_override_fields', { scope: scopeName })}
+              onClick={() => handleOverride(key)}
+            />
+          }
+        >
+          {localize('com_config_mcp_inherited_note', { scope: scopeName })}
+        </McpNote>
+      );
+    }
+    if (reason != null) return undefined;
+    const canCancel = overrides === 0 && !pendingByServer.has(key) && unlocked.has(key);
     return (
       <McpNote
         tone="info"
         actions={
-          <Button
-            htmlType="button"
-            type="secondary"
-            label={localize('com_config_mcp_override_fields', { scope: scopeName })}
-            onClick={() => handleOverride(key)}
-          />
+          canCancel ? (
+            <Button
+              htmlType="button"
+              type="secondary"
+              label={localize('com_ui_cancel')}
+              onClick={() => handleCancelOverride(key)}
+            />
+          ) : undefined
         }
       >
-        {localize('com_config_mcp_inherited_note', { scope: scopeName })}
+        {localize('com_config_mcp_override_note', { scope: scopeName })}
       </McpNote>
     );
   };
@@ -571,11 +633,16 @@ export function McpServersRenderer({
     <ConfiguredOnlyContext.Provider value={Boolean(showConfiguredOnly)}>
       <div className="flex flex-col gap-2">
         {!disabled && (
-          <div className="flex flex-wrap items-center gap-3 py-2">
-            <button type="button" onClick={() => setCreateOpen(true)} className="config-add-btn">
-              <DecorativeIcon name="plus" size="sm" />
-              <span>{localize('com_config_create_mcp_server')}</span>
-            </button>
+          <div className="flex flex-wrap items-center gap-2 py-1">
+            <span ref={createRef} className="ml-auto">
+              <Button
+                type="secondary"
+                htmlType="button"
+                iconLeft="plus"
+                label={localize('com_config_create_mcp_server')}
+                onClick={() => setCreateOpen(true)}
+              />
+            </span>
           </div>
         )}
         {isEmpty && (
@@ -606,7 +673,7 @@ export function McpServersRenderer({
                 key={`hidden-${row.key}`}
                 serverKey={row.key}
                 pending={row.pending}
-                onUnhide={disabled ? undefined : unhideFor(hidePath, row.pending)}
+                onUnhide={disabled ? undefined : unhideFor(row.key, hidePath, row.pending)}
               />
             );
           }

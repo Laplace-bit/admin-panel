@@ -3,11 +3,10 @@ import { ButtonGroup } from '@clickhouse/click-ui';
 import type * as t from '@/types';
 import { TextareaField } from '../../fields/TextareaField';
 import { defaultChoiceLabel } from '../../fields/display';
-import { useLocalize } from '@/hooks';
+import { SelectField } from '../../fields/SelectField';
+import { useLocalize, useInlineFit } from '@/hooks';
 
-type Mode = 'default' | 'off' | 'server' | 'custom';
-
-function modeOf(value: t.ConfigValue): Mode {
+function modeOf(value: t.ConfigValue): t.McpInstructionsMode {
   if (value === true) return 'server';
   if (value === false) return 'off';
   if (typeof value === 'string') return 'custom';
@@ -20,7 +19,8 @@ const MODE_VALUE: Readonly<Record<'off' | 'server', boolean>> = { off: false, se
  * Server instructions (MCP-7): none, the instructions the server provides
  * (`true`), or the admin's own text, with a "Default (…)" choice that keeps
  * no value of its own. Custom text gets a textarea; switching to Custom
- * waits for text before anything is stored.
+ * waits for text before anything is stored. Where the four choices don't fit
+ * on one line (a phone, a narrow card), they become a select.
  */
 export function InstructionsField({
   id,
@@ -46,14 +46,18 @@ export function InstructionsField({
     true: localize('com_config_mcp_instructions_server'),
     false: localize('com_config_ctl_off'),
   });
-  const options: Array<{ value: Mode; label: string }> = [
+  const options: Array<{ value: t.McpInstructionsMode; label: string }> = [
     { value: 'default', label: defaultLabel },
     { value: 'off', label: localize('com_config_ctl_off') },
     { value: 'server', label: localize('com_config_mcp_instructions_server') },
     { value: 'custom', label: localize('com_config_mcp_instructions_custom') },
   ];
 
-  const choose = (next: Mode) => {
+  const { containerRef, fits } = useInlineFit<HTMLDivElement>(
+    options.map((option) => option.label).join('|'),
+  );
+
+  const choose = (next: t.McpInstructionsMode) => {
     if (next === mode) return;
     setPendingCustom(next === 'custom');
     if (next === 'default') onClear();
@@ -61,15 +65,25 @@ export function InstructionsField({
   };
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-2">
-      <ButtonGroup
-        id={id}
-        aria-label={ariaLabel}
-        className="max-w-full self-start"
-        options={options}
-        selected={mode}
-        onClick={(next) => choose(next as Mode)}
-      />
+    <div ref={containerRef} className="flex w-full min-w-0 flex-col gap-2">
+      {fits ? (
+        <ButtonGroup
+          id={id}
+          aria-label={ariaLabel}
+          className="self-start [&>button]:whitespace-nowrap"
+          options={options}
+          selected={mode}
+          onClick={(next) => choose(next as t.McpInstructionsMode)}
+        />
+      ) : (
+        <SelectField
+          id={id}
+          value={mode}
+          options={options}
+          onChange={(next) => choose(next as t.McpInstructionsMode)}
+          aria-label={ariaLabel}
+        />
+      )}
       {mode === 'custom' && (
         <TextareaField
           id={`${id}-text`}

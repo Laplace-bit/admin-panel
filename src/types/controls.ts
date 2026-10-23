@@ -276,6 +276,11 @@ export interface InlineFieldRendererProps {
   editSessionId?: number;
   /** Mark non-optional fields as required (*). */
   showRequired?: boolean;
+  /**
+   * The keys the object may hold, for listing the others read-only (D8):
+   * every variant's fields when `fields` are one variant's. Defaults to `fields`.
+   */
+  knownFields?: SchemaField[];
 }
 
 /** Props of one inline entry field row. */

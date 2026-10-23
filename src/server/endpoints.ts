@@ -2,26 +2,8 @@ import { queryOptions } from '@tanstack/react-query';
 import { createServerFn } from '@tanstack/react-start';
 import { getRequestHeader } from '@tanstack/react-start/server';
 import type * as t from '@/types';
+import { isConfigRecord } from '@/utils';
 import { apiFetch } from './utils/api';
-
-/** One entry of LibreChat's `GET /api/endpoints` payload (only the keys the panel reads). */
-interface RawEndpointConfig {
-  type?: string;
-  userProvide?: boolean;
-  userProvideURL?: boolean;
-  modelDisplayLabel?: string;
-}
-
-/** One entry of LibreChat's `GET /api/agents/tools` payload. */
-interface RawTool {
-  name?: string;
-  pluginKey?: string;
-  description?: string;
-}
-
-function isRecord(value: t.ConfigValue): value is t.ConfigRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * Enabled endpoints from `GET /api/endpoints` (as LibreChat serves them to the
@@ -30,10 +12,10 @@ function isRecord(value: t.ConfigValue): value is t.ConfigRecord {
  */
 export function toEndpointStatusMap(payload: t.ConfigValue): t.EndpointStatusMap {
   const result: t.EndpointStatusMap = {};
-  if (!isRecord(payload)) return result;
+  if (!isConfigRecord(payload)) return result;
   for (const [name, raw] of Object.entries(payload)) {
-    if (!isRecord(raw)) continue;
-    const entry = raw as RawEndpointConfig;
+    if (!isConfigRecord(raw)) continue;
+    const entry = raw as t.RawEndpointConfig;
     result[name] = {
       name,
       custom: entry.type === 'custom',
@@ -47,7 +29,7 @@ export function toEndpointStatusMap(payload: t.ConfigValue): t.EndpointStatusMap
 /** Model names per endpoint from `GET /api/models`: blank and duplicate names dropped. */
 export function toEndpointModelsMap(payload: t.ConfigValue): t.EndpointModelsMap {
   const result: t.EndpointModelsMap = {};
-  if (!isRecord(payload)) return result;
+  if (!isConfigRecord(payload)) return result;
   for (const [endpoint, models] of Object.entries(payload)) {
     if (!Array.isArray(models)) continue;
     const names = new Set<string>();
@@ -65,8 +47,8 @@ export function toToolOptions(payload: t.ConfigValue): t.ToolOption[] {
   const options: t.ToolOption[] = [];
   const seen = new Set<string>();
   for (const item of payload) {
-    if (!isRecord(item)) continue;
-    const raw = item as RawTool;
+    if (!isConfigRecord(item)) continue;
+    const raw = item as t.RawTool;
     const value = raw.pluginKey;
     if (typeof value !== 'string' || value === '' || seen.has(value)) continue;
     seen.add(value);

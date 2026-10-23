@@ -1,17 +1,26 @@
-import { useMemo, useState, useEffect, useRef, useContext } from 'react';
 import { Icon } from '@clickhouse/click-ui';
+import { useMemo, useState, useEffect, useRef, useContext } from 'react';
 import type * as t from '@/types';
-import { MODEL_KEYS, PROMPT_KEYS, PRESET_DENYLIST, paramField } from './params';
+import {
+  MODEL_KEYS,
+  PROMPT_KEYS,
+  PRESET_DENYLIST,
+  paramField,
+  isMisplacedId,
+  isForeignPresetKey,
+} from './params';
+import { useFieldError, useLocalize, useExpandableState } from '@/hooks';
 import { INPUT_CLASSES, widthClass } from '../../fields/display';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { renderInlineField, toFieldId } from '../../renderer';
 import { FieldControl } from '../../renderer/FieldControl';
 import { cn, isConfigRecord, isRowVisible } from '@/utils';
 import { describeField, labelForPath } from '../../meta';
-import { useFieldError, useLocalize } from '@/hooks';
 import { CodeField } from '../../fields/CodeField';
+import { FieldNotice } from '../../fields/Notice';
 import { SettingsRow } from '../../SettingsRow';
 import { specEndpoint } from './validation';
+import { endpointLabelOf } from './options';
 import { useSpecList } from './context';
 
 const PICK = '\u0000pick';
@@ -95,17 +104,19 @@ export function PresetEditor({
   const { options, configuredOnly } = useSpecList();
   const rowFilter = useContext(RowFilterContext);
   const [addedKeys, setAddedKeys] = useState<string[]>([]);
-  const [rawOpen, setRawOpen] = useState(false);
+  const [droppedKeys, setDroppedKeys] = useState<string[]>([]);
+  const [misplacedKeys, setMisplacedKeys] = useState<string[]>([]);
+  const [rawOpen, setRawOpen] = useExpandableState(false);
   const focusKeyRef = useRef<string | null>(null);
   const endpoint = specEndpoint({ preset });
   const children = presetField.children ?? [];
   const byKey = useMemo(() => new Map(children.map((field) => [field.key, field])), [children]);
   const isShown = (key: string) => isRowVisible(rowFilter, `${path}.${key}`);
   const showsNotes = !configuredOnly && !rowFilter;
-  const endpointLabel =
-    options.endpoints.find((option) => option.value === endpoint)?.label ?? endpoint;
+  const endpointLabel = endpointLabelOf(options, endpoint);
 
-  const handled = new Set([...MODEL_KEYS, ...PROMPT_KEYS, ...params.map((param) => param.key)]);
+  const ownParams = new Set(params.map((param) => param.key));
+  const handled = new Set([...MODEL_KEYS, ...PROMPT_KEYS, ...ownParams]);
   const others = children.filter(
     (field) =>
       !handled.has(field.key) &&
@@ -117,6 +128,7 @@ export function PresetEditor({
       (field) =>
         !handled.has(field.key) &&
         !PRESET_DENYLIST.has(field.key) &&
+        !isForeignPresetKey(field.key, endpoint, ownParams) &&
         preset[field.key] === undefined &&
         !addedKeys.includes(field.key),
     )
@@ -250,8 +262,38 @@ export function PresetEditor({
                 <CodeField
                   id={`${toFieldId(path)}-yaml`}
                   value={preset}
-                  onChange={(next) => onReplace(isConfigRecord(next) ? next : {})}
+                  onChange={(next) => {
+                    const record = isConfigRecord(next) ? next : {};
+                    const recordEndpoint = specEndpoint({ preset: record });
+                    const isNew = (key: string) => preset[key] === undefined;
+                    const internal = Object.keys(record).filter(
+                      (key) => PRESET_DENYLIST.has(key) && isNew(key),
+                    );
+                    const elsewhere = Object.keys(record).filter(
+                      (key) => isNew(key) && isMisplacedId(key, recordEndpoint),
+                    );
+                    const dropped = new Set([...internal, ...elsewhere]);
+                    setDroppedKeys(internal);
+                    setMisplacedKeys(elsewhere);
+                    onReplace(
+                      dropped.size === 0
+                        ? record
+                        : Object.fromEntries(
+                            Object.entries(record).filter(([key]) => !dropped.has(key)),
+                          ),
+                    );
+                  }}
                 />
+                {droppedKeys.length > 0 && (
+                  <FieldNotice>
+                    {localize('com_config_specs_raw_dropped', { keys: droppedKeys.join(', ') })}
+                  </FieldNotice>
+                )}
+                {misplacedKeys.length > 0 && (
+                  <FieldNotice>
+                    {localize('com_config_specs_raw_misplaced', { keys: misplacedKeys.join(', ') })}
+                  </FieldNotice>
+                )}
               </div>
             </div>
           )}

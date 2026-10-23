@@ -1,7 +1,6 @@
-import { useContext, useMemo } from 'react';
+import { useContext } from 'react';
 import type * as t from '@/types';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
-import { getValueAtPath, isConfigRecord } from '@/utils';
 import { useFieldState } from './field';
 
 /** librechat.yaml as LibreChat loaded it (no admin overrides), or null outside the page. */
@@ -19,20 +18,4 @@ export function useStorageStates(): t.StorageFieldStates {
     document: useFieldState('fileStrategies.document'),
     skills: useFieldState('fileStrategies.skills'),
   };
-}
-
-/** Names of the custom endpoints the page shows (pending edits included), for `fileConfig.endpoints` keys. */
-export function useCustomEndpointNames(): string[] {
-  const values = useContext(ConfigValuesContext);
-  const root = values?.configValues ?? values?.layers?.effective ?? null;
-  const list = getValueAtPath(root, 'endpoints.custom');
-  return useMemo(() => {
-    if (!Array.isArray(list)) return [];
-    const names = new Set<string>();
-    for (const entry of list) {
-      const name = isConfigRecord(entry) ? entry.name : undefined;
-      if (typeof name === 'string' && name.trim() !== '') names.add(name);
-    }
-    return [...names];
-  }, [list]);
 }

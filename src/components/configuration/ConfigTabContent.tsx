@@ -20,10 +20,10 @@ import { RevealTargetContext } from '@/contexts/RevealTargetContext';
 import { FieldRenderer, SingleFieldRenderer } from './renderer';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { deriveFieldValue, isSectionDisabled } from '@/utils';
+import { SECTION_META, isPathInSection } from './configMeta';
 import { ReadOnlySection } from './ReadOnlySection';
 import { UnknownSettings } from './UnknownSettings';
 import { ConfigSection } from './ConfigSection';
-import { SECTION_META, isPathInSection } from './configMeta';
 import { CodeField } from './fields/CodeField';
 import { InfoBanner } from './InfoBanner';
 import { ScopeGate } from './ScopeGate';
@@ -371,7 +371,7 @@ export function ConfigTabContent({
     return (
       <ReadOnlySection
         reason={section.readOnlyReason}
-        detail={detailKey ? localize(detailKey) : undefined}
+        message={detailKey ? localize(detailKey) : undefined}
         isEmpty={isEmpty && !filterPaths}
         reveal={reveal}
       >

@@ -7,7 +7,7 @@ import type * as t from '@/types';
  * (`isDomainAllowedCore`). Actions only call http(s); MCP servers also use
  * WebSockets.
  */
-export const DOMAIN_LIST_POLICIES: Readonly<Record<string, t.DomainListPolicy>> = {
+const DOMAIN_LIST_POLICIES: Readonly<Record<string, t.DomainListPolicy>> = {
   'actions.allowedDomains': {
     protocols: ['http', 'https'],
     emptyKey: 'com_config_features_domains_empty_actions',

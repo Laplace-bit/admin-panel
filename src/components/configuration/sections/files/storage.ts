@@ -41,10 +41,7 @@ export function backendChoices(
 }
 
 /** The backend a field uses: its own value, else the one beneath it, else `fallback`. */
-export function effectiveBackend(
-  state: t.FieldState,
-  fallback: t.StorageBackend,
-): t.StorageBackend {
+function effectiveBackend(state: t.FieldState, fallback: t.StorageBackend): t.StorageBackend {
   const own = ownValue(state);
   if (isStorageBackend(own)) return own;
   const lower = lowerValue(state);

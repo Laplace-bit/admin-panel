@@ -1,20 +1,25 @@
 import { useContext } from 'react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
-import { entryFieldDefault, layerRevertTarget, lowerLayerValue } from '../../renderer/defaults';
+import { entryFieldDefault, layerValueBeneath, lowerLayerValue } from '../../renderer/defaults';
+import {
+  isRowVisible,
+  isConfigRecord,
+  hasConfigValue,
+  isConfigValueEqual,
+  getSecretPreviewValue,
+} from '@/utils';
 import { useFieldState, useLocalize, useValuesScope, useHasValueLayers } from '@/hooks';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
-import { FieldProvenance, getRevertLabels } from '../../values';
-import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { isRowVisible, isConfigRecord, isConfigValueEqual, getSecretPreviewValue } from '@/utils';
-import { DecorativeIcon, StateChip } from '@/components/shared';
-import { FieldControl } from '../../renderer/FieldControl';
-import { fieldDescription, toFieldId } from '../../renderer/paths';
-import { getFieldMeta, labelForPath } from '../../meta';
 import { fieldMetaFor, resolveControl } from '../../renderer/kinds';
+import { fieldDescription, toFieldId } from '../../renderer/paths';
+import { FieldProvenance, getRevertLabels } from '../../values';
+import { DecorativeIcon, StateChip } from '@/components/shared';
+import { RowFilterContext } from '@/contexts/RowFilterContext';
+import { FieldControl } from '../../renderer/FieldControl';
+import { getFieldMeta, labelForPath } from '../../meta';
 import { inferControlWidth } from '../../width';
 import { SettingsRow } from '../../SettingsRow';
-import { hasValue } from './values';
 
 function recordKeys(value: t.ConfigValue): ReadonlySet<string> | undefined {
   return isConfigRecord(value) ? new Set(Object.keys(value)) : undefined;
@@ -64,7 +69,7 @@ export function McpField(props: t.McpFieldRowProps) {
  * or an override); in a profile, only what the profile itself sets or edits.
  */
 function isSetHere(state: t.FieldState, value: t.ConfigValue, inScope: boolean): boolean {
-  if (!inScope) return hasValue(value);
+  if (!inScope) return hasConfigValue(value);
   return state.isConfigured || state.isEdited;
 }
 
@@ -95,7 +100,7 @@ function McpFieldRow({
   const description = fieldDescription(field, getFieldMeta(field.path), localize);
   const fieldDefault = entryFieldDefault(value, meta, state);
   const lower = lowerLayerValue(state);
-  const revertTo = state.isOverride ? layerRevertTarget(state.revertTarget) : lower;
+  const revertTo = layerValueBeneath(state);
   const readOnly = disabled === true || lockReason != null;
   /**
    * A secret the server stores (`apiKey.key`, `oauth.client_secret`) is read

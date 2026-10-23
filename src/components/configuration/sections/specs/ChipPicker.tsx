@@ -62,7 +62,7 @@ export function ChipPicker({
   return (
     <div id={id} className="flex w-full flex-col gap-2">
       {values.length > 0 && (
-        <ul aria-label={ariaLabel} className="m-0 flex list-none flex-wrap gap-1.5 p-0">
+        <ul aria-label={ariaLabel} className="settings-chip-list">
           {values.map((value) => {
             const label = labels.get(value);
             const known = label !== undefined;
@@ -71,10 +71,9 @@ export function ChipPicker({
                 key={value}
                 title={known ? value : unknownLabel(value)}
                 className={cn(
-                  'inline-flex max-w-full items-center gap-1 rounded-full border border-solid py-0.5 pr-1 pl-2.5 text-xs font-medium',
-                  known
-                    ? 'border-(--cui-color-stroke-default) bg-(--settings-neutral-bg) text-(--settings-neutral-fg)'
-                    : 'border-(--settings-warn-mark) bg-(--settings-warn-bg) text-(--settings-warn-fg)',
+                  'settings-chip',
+                  !known &&
+                    'border-(--settings-warn-mark) bg-(--settings-warn-bg) text-(--settings-warn-fg)',
                 )}
               >
                 {!known && <DecorativeIcon name="warning" size="xs" />}

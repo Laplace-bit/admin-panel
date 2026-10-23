@@ -46,8 +46,6 @@ export function parseModelNames(text: string, existing: readonly t.ModelItem[]):
   return names;
 }
 
-type Mode = 'defaults' | 'only';
-
 /**
  * Model list editor: chips for each model (bare ids or `{ name, description }`
  * objects, kept as they are), paste of comma- or newline-separated lists with
@@ -82,11 +80,11 @@ export function ModelListField({
   const [draft, setDraft] = useState('');
   const [editing, setEditing] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const mode: Mode = required || hasList || pendingOnly ? 'only' : 'defaults';
+  const mode: t.ModelListMode = required || hasList || pendingOnly ? 'only' : 'defaults';
 
   /** Back to the list's default; a list only the layer beneath sets cannot be cleared (D3). */
   const clear = () => {
-    setNotice(onClear() === false ? localize('com_config_ctl_clear_unavailable') : null);
+    setNotice(onClear() === false ? localize('com_config_ctl_models_keep_one') : null);
   };
   const emit = (next: t.ModelItem[]) => {
     setNotice(null);
@@ -121,7 +119,7 @@ export function ModelListField({
     onChange(next);
   };
 
-  const chooseMode = (next: Mode) => {
+  const chooseMode = (next: t.ModelListMode) => {
     if (disabled || next === mode) return;
     if (next === 'only') {
       setPendingOnly(true);
@@ -141,7 +139,7 @@ export function ModelListField({
           aria-label={ariaLabel}
           className="max-w-full self-start"
           selected={mode}
-          onClick={(next) => chooseMode(next as Mode)}
+          onClick={(next) => chooseMode(next as t.ModelListMode)}
           options={[
             { value: 'defaults', label: localize('com_config_ctl_models_defaults'), disabled },
             { value: 'only', label: localize('com_config_ctl_models_only'), disabled },
@@ -183,18 +181,14 @@ export function ModelListField({
       {mode === 'only' && (
         <>
           <ul
-            className="m-0 flex list-none flex-wrap gap-1.5 p-0"
+            className="settings-chip-list"
             aria-label={ariaLabel ?? localize('com_config_ctl_models_only')}
           >
             {items.map((item, index) => {
               const name = modelName(item);
               const description = typeof item === 'string' ? undefined : item.description;
               return (
-                <li
-                  key={`${name}-${index}`}
-                  className="flex max-w-full items-center gap-1 rounded-full border border-(--cui-color-stroke-default) bg-(--cui-color-background-muted) py-0.5 pr-1 pl-2.5 text-xs text-(--cui-color-text-default)"
-                  title={description}
-                >
+                <li key={`${name}-${index}`} className="settings-chip" title={description}>
                   <span className="truncate font-mono">{name}</span>
                   {description && (
                     <span className="max-w-40 truncate text-(--cui-color-text-muted)">

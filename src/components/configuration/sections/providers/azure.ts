@@ -1,9 +1,5 @@
 import type * as t from '@/types';
-import { isConfigRecord, isEnvReference } from '@/utils';
-
-function text(value: t.ConfigValue): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
-}
+import { filledText, isConfigRecord, isEnvReference } from '@/utils';
 
 function stringRecord(value: t.ConfigValue): Record<string, string> | undefined {
   if (!isConfigRecord(value)) return undefined;
@@ -13,16 +9,40 @@ function stringRecord(value: t.ConfigValue): Record<string, string> | undefined 
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
+/** The settings of a group the table and drawer place themselves; the rest are listed as they are. */
+const GROUP_KEYS: ReadonlySet<string> = new Set([
+  'group',
+  'apiKey',
+  'instanceName',
+  'baseURL',
+  'deploymentName',
+  'version',
+  'serverless',
+  'assistants',
+  'models',
+  'additionalHeaders',
+  'addParams',
+  'dropParams',
+]);
+const MODEL_KEYS: ReadonlySet<string> = new Set(['deploymentName', 'version']);
+
+/** The entries of `record` outside `placed`, blank text left out (LibreChat's unset). */
+function othersOf(record: t.ConfigRecord, placed: ReadonlySet<string>): t.ConfigRecord {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key, value]) => !placed.has(key) && value !== ''),
+  );
+}
+
 /** A group's models: `name: true` (deployed under its own name) or per-model overrides. */
 function toModels(value: t.ConfigValue): t.AzureGroupModel[] {
   if (!isConfigRecord(value)) return [];
   return Object.entries(value).map(([name, config]) => {
-    if (!isConfigRecord(config)) return { name };
+    if (!isConfigRecord(config)) return { name, others: {} };
     return {
       name,
-      deploymentName: text(config.deploymentName),
-      version: text(config.version),
-      assistants: config.assistants === true ? true : undefined,
+      deploymentName: filledText(config.deploymentName),
+      version: filledText(config.version),
+      others: othersOf(config, MODEL_KEYS),
     };
   });
 }
@@ -35,15 +55,16 @@ function toModels(value: t.ConfigValue): t.AzureGroupModel[] {
 export function toAzureGroups(value: t.ConfigValue): t.AzureGroupRow[] {
   if (!Array.isArray(value)) return [];
   const rows: t.AzureGroupRow[] = [];
-  for (const entry of value) {
+  for (const [index, entry] of value.entries()) {
     if (!isConfigRecord(entry) || typeof entry.group !== 'string') continue;
     rows.push({
+      index,
       group: entry.group,
-      apiKey: text(entry.apiKey),
-      instanceName: text(entry.instanceName),
-      baseURL: text(entry.baseURL),
-      deploymentName: text(entry.deploymentName),
-      version: text(entry.version),
+      apiKey: filledText(entry.apiKey),
+      instanceName: filledText(entry.instanceName),
+      baseURL: filledText(entry.baseURL),
+      deploymentName: filledText(entry.deploymentName),
+      version: filledText(entry.version),
       serverless: entry.serverless === true,
       assistants: entry.assistants === true,
       models: toModels(entry.models),
@@ -52,6 +73,7 @@ export function toAzureGroups(value: t.ConfigValue): t.AzureGroupRow[] {
       dropParams: Array.isArray(entry.dropParams)
         ? entry.dropParams.filter((param): param is string => typeof param === 'string')
         : undefined,
+      others: othersOf(entry, GROUP_KEYS),
     });
   }
   return rows;

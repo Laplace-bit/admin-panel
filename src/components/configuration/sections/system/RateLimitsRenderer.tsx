@@ -3,21 +3,34 @@ import type * as t from '@/types';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { isConfigRecord, getValueAtPath } from '@/utils';
 import { UnknownSettings } from '../../UnknownSettings';
+import { SettingList, settingRows } from '../../values';
 import { useLocalize, useYamlConfig } from '@/hooks';
 import { isRowShown } from '../files/FieldRow';
 import { RATE_LIMITERS } from '@/constants';
 import { toFieldId } from '../../renderer';
 import { labelForPath } from '../../meta';
-import { YamlRows } from './Yaml';
 
 const SECTION = 'rateLimits';
-/** The fields of a limiter the table shows; any other one (a newer schema's) is listed under it. */
-const PAIR_FIELDS: ReadonlySet<string> = new Set<t.RateLimitField>([
+/** The settings of a limiter the table shows; a limiter's other settings are listed under it. */
+const LIMIT_FIELDS: ReadonlySet<string> = new Set([
   'ipMax',
   'ipWindowInMinutes',
   'userMax',
   'userWindowInMinutes',
 ]);
+
+/** The entries of `value` the schema `fields` name, outside `skip` (unknown keys are listed apart). */
+function schemaEntries(
+  fields: readonly t.SchemaField[],
+  value: t.ConfigValue,
+  skip: ReadonlySet<string>,
+): t.ConfigRecord {
+  if (!isConfigRecord(value)) return {};
+  const keys = new Set(fields.map((field) => field.key));
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => keys.has(key) && !skip.has(key)),
+  );
+}
 
 /** Where a limit's two numbers come from, when librechat.yaml sets one, both or neither. */
 const SOURCE_KEYS = {
@@ -88,36 +101,45 @@ function LimitCell({ limiter, scope }: { limiter: t.RateLimiterInfo; scope: 'ip'
 }
 
 /**
- * What the table leaves out of the schema: a limiter it doesn't know, and a
- * field of a known one other than its requests and windows (a newer schema's).
- */
-function unmatchedFields(fields: t.SchemaField[]): t.SchemaField[] {
-  const tabled = new Set(RATE_LIMITERS.map((limiter) => limiter.key));
-  return fields.flatMap((field) => {
-    if (!tabled.has(field.key)) return [field];
-    const rest = (field.children ?? []).filter((child) => !PAIR_FIELDS.has(child.key));
-    return rest.length > 0 ? [{ ...field, children: rest }] : [];
-  });
-}
-
-/**
  * Rate limits as one read-only table (FX-12): for each limiter, the requests
  * allowed per IP address and per user, and their window, from librechat.yaml
  * or LibreChat's defaults (which `.env` variables can change). LibreChat sets
- * its limiters from librechat.yaml when it starts, so the panel only shows them.
- * Schema content the table doesn't place follows as read-only rows. With
- * "Set values only", a limiter librechat.yaml leaves unset is left out.
+ * its limiters from librechat.yaml when it starts, so the panel only shows them,
+ * read from librechat.yaml alone (an override, Base's in a profile, never applies).
+ * With "Set values only", a limiter librechat.yaml leaves unset is left out.
  */
 export function RateLimitsRenderer(props: t.FieldRendererProps) {
-  const { fields, parentValue, schemaDefaults } = props;
+  const { fields } = props;
   const localize = useLocalize();
+  const yaml = useYamlConfig();
   const rowFilter = useContext(RowFilterContext);
   const known = new Set(fields.map((field) => field.key));
   const limiters = RATE_LIMITERS.filter(
     (limiter) =>
       known.has(limiter.key) && isRowShown(rowFilter, `${SECTION}.${limiter.key}`, props),
   );
-  const unmatched = unmatchedFields(fields);
+  const yamlValue = getValueAtPath(yaml, SECTION);
+  const record = isConfigRecord(yamlValue) ? yamlValue : {};
+  const tabled = new Set(RATE_LIMITERS.map((limiter) => limiter.key));
+  const childrenOf = (key: string) => fields.find((field) => field.key === key)?.children ?? [];
+  /** What librechat.yaml sets that the table has no column for: a newer limiter or setting. */
+  const otherRows = rowFilter
+    ? []
+    : [
+        ...settingRows(fields, schemaEntries(fields, record, tabled), localize, {
+          path: SECTION,
+        }),
+        ...limiters.flatMap((limiter) => {
+          const path = `${SECTION}.${limiter.key}`;
+          const children = childrenOf(limiter.key);
+          return settingRows(
+            children,
+            schemaEntries(children, record[limiter.key], LIMIT_FIELDS),
+            localize,
+            { path, prefix: labelForPath(path, localize) },
+          );
+        }),
+      ];
   return (
     <>
       {limiters.length > 0 && (
@@ -166,11 +188,19 @@ export function RateLimitsRenderer(props: t.FieldRendererProps) {
           })}
         </div>
       )}
-      {unmatched.length > 0 && (
-        <YamlRows fields={unmatched} parentPath={SECTION} schemaDefaults={schemaDefaults} />
-      )}
-      {!rowFilter && isConfigRecord(parentValue) && (
-        <UnknownSettings fields={fields} value={parentValue} path={SECTION} />
+      <SettingList rows={otherRows} label={localize('com_config_ratelimits_other')} />
+      {!rowFilter && isConfigRecord(yamlValue) && (
+        <>
+          <UnknownSettings fields={fields} value={record} path={SECTION} />
+          {limiters.map((limiter) => (
+            <UnknownSettings
+              key={limiter.key}
+              fields={childrenOf(limiter.key)}
+              value={record[limiter.key]}
+              path={`${SECTION}.${limiter.key}`}
+            />
+          ))}
+        </>
       )}
       <p className="m-0 px-4 pb-1 text-xs text-(--cui-color-text-muted)">
         {localize('com_config_ratelimits_env_note')}

@@ -15,7 +15,9 @@ import {
   scalarUnionKinds,
   enumMemberOptions,
 } from './kinds';
+import { addressItemError, isAddressListPath, isWhitespaceSignificantPath } from '@/utils';
 import { defaultChoiceLabel, formatDefaultValue } from '../fields/display';
+import { useLocalize, useFieldError, useInheritedMimeList } from '@/hooks';
 import { SecretField, SecretInput } from '../fields/SecretField';
 import { ScalarUnionField } from '../fields/ScalarUnionField';
 import { BoolOrListField } from '../fields/BoolOrListField';
@@ -28,11 +30,9 @@ import { RefSelectField } from '../fields/RefSelectField';
 import { TriStateField } from '../fields/TriStateField';
 import { TextareaField } from '../fields/TextareaField';
 import { KeyValueField } from '../fields/KeyValueField';
+import { MimeListField } from '../fields/MimeListField';
 import { RefListField } from '../fields/RefListField';
 import { LiteralField } from '../fields/LiteralField';
-import { MimeListField } from '../fields/MimeListField';
-import { isWhitespaceSignificantPath } from '@/utils';
-import { useLocalize, useFieldError, useInheritedMimeList } from '@/hooks';
 import { NumberField } from '../fields/NumberField';
 import { SelectField } from '../fields/SelectField';
 import { ToggleField } from '../fields/ToggleField';
@@ -192,16 +192,18 @@ export function FieldControl({
   const optional = field.isOptional && !required;
   const clear = optional || revertible ? onClear : undefined;
   const { labels: optionLabels } = fieldOptions(field, localize);
-  const defaultLabelKey = fieldMetaFor(field, path)?.defaultLabelKey;
+  const meta = fieldMetaFor(field, path);
+  const defaultLabelKey = meta?.defaultLabelKey;
   const defaultLabel =
     defaultLabelKey && fieldDefault.value === undefined
       ? localize(defaultLabelKey)
       : defaultChoiceLabel(fieldDefault, localize, optionLabels);
   const shownDefault = formatDefaultValue(fieldDefault.value, localize, optionLabels);
   const showsDefault = shownDefault != null && shownDefault !== '' && !fieldDefault.hasOwnValue;
+  const example = meta?.placeholderKey ? localize(meta.placeholderKey) : undefined;
   const placeholder = showsDefault
     ? localize(placeholderKey(fieldDefault), { value: shownDefault })
-    : undefined;
+    : example;
   const common = { id, disabled, 'aria-label': label };
 
   if (disabled) {
@@ -424,7 +426,7 @@ export function FieldControl({
           namesOnly={getArrayItemType(field.type) === 'string'}
           onChange={onChange}
           onClear={onClear}
-          required={mustFill}
+          required={mustFill || !field.isOptional}
         />
       );
     case 'array': {
@@ -442,6 +444,7 @@ export function FieldControl({
           />
         );
       }
+      const addresses = isAddressListPath(path);
       return (
         <ListField
           {...common}
@@ -451,7 +454,9 @@ export function FieldControl({
           itemLabel={localize(`com_config_field_${field.key}_item`)}
           options={itemType.startsWith('enum(') ? getFieldOptions(field, localize) : undefined}
           keepsWhitespace={isWhitespaceSignificantPath(path)}
-          width={width ?? 'L'}
+          placeholder={addresses ? localize('com_config_providers_network_placeholder') : undefined}
+          validateItem={addresses ? (entry) => addressItemError(entry, localize) : undefined}
+          width={width ?? (addresses ? 'M' : 'L')}
         />
       );
     }

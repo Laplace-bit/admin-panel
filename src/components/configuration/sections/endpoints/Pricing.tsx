@@ -1,9 +1,10 @@
 import { useId, useState } from 'react';
 import { Button } from '@clickhouse/click-ui';
 import type * as t from '@/types';
+import { cn, asConfigRecord, getUnknownConfigEntries } from '@/utils';
+import { InlineFieldRenderer } from '../../renderer/InlineField';
 import { DecorativeIcon } from '@/components/shared';
 import { INPUT_CLASSES } from '../../fields/display';
-import { cn, isConfigRecord } from '@/utils';
 import { NumberField } from '../../fields';
 import { toFieldId } from '../../renderer';
 import { useLocalize } from '@/hooks';
@@ -18,9 +19,7 @@ const COLUMNS: ReadonlyArray<{ key: string; labelKey: string; required: boolean;
     { key: 'cacheWrite', labelKey: 'com_config_ce_pricing_cache_write', required: false },
   ];
 
-function asRecord(value: t.ConfigValue): t.ConfigRecord {
-  return isConfigRecord(value) ? value : {};
-}
+const COLUMN_KEYS: ReadonlySet<string> = new Set(COLUMNS.map((column) => column.key));
 
 /**
  * Token pricing of a custom endpoint as a table (WS10 CE-7): one row per
@@ -30,6 +29,7 @@ function asRecord(value: t.ConfigValue): t.ConfigRecord {
  */
 export function PricingRow({
   path,
+  field,
   value,
   models,
   lockedModels,
@@ -40,13 +40,16 @@ export function PricingRow({
   const localize = useLocalize();
   const listId = useId();
   const [draft, setDraft] = useState('');
-  const record = asRecord(value);
+  const record = asConfigRecord(value);
   const rows = Object.entries(record);
   const fieldId = toFieldId(path);
   const unpriced = models.filter((model) => model.trim() !== '' && !(model in record));
+  const rateFields = field?.children ?? [];
+  /** Rate settings the table has no column for (a newer schema's): listed under it, per model. */
+  const otherFields = rateFields.filter((child) => !COLUMN_KEYS.has(child.key));
 
-  const setCell = (model: string, key: string, cell: number | undefined) => {
-    const row = { ...asRecord(record[model]) };
+  const setCell = (model: string, key: string, cell: t.ConfigValue) => {
+    const row = { ...asConfigRecord(record[model]) };
     if (cell === undefined) delete row[key];
     else row[key] = cell;
     onChange({ ...record, [model]: row });
@@ -102,7 +105,7 @@ export function PricingRow({
             </thead>
             <tbody>
               {rows.map(([model, row]) => {
-                const cells = asRecord(row);
+                const cells = asConfigRecord(row);
                 const missing = COLUMNS.some(
                   (column) => column.required && typeof cells[column.key] !== 'number',
                 );
@@ -169,6 +172,32 @@ export function PricingRow({
           </table>
         </div>
       )}
+      {rateFields.length > 0 &&
+        rows.map(([model, row]) => {
+          const cells = asConfigRecord(row);
+          const unknown = getUnknownConfigEntries(rateFields, cells).length > 0;
+          if (otherFields.length === 0 && !unknown) return null;
+          const modelPath = `${path}.${model}`;
+          return (
+            <section
+              key={model}
+              aria-label={localize('com_config_ce_pricing_other', { model })}
+              className="flex flex-col gap-1"
+            >
+              <span className="text-xs font-medium text-(--cui-color-text-muted)">
+                {localize('com_config_ce_pricing_other', { model })}
+              </span>
+              <InlineFieldRenderer
+                fields={otherFields}
+                knownFields={rateFields}
+                parentValue={cells}
+                parentPath={modelPath}
+                onChange={(key, next) => setCell(model, key, next)}
+                disabled={disabled}
+              />
+            </section>
+          );
+        })}
       {!disabled && (
         <div className="flex flex-wrap items-center gap-2">
           <input

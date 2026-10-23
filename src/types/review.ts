@@ -196,6 +196,7 @@ export interface ChangeReviewOptions {
     | 'changes'
     | 'saving'
     | 'sessionExpired'
+    | 'termsUrl'
     | 'confirmSaveOpen'
     | 'openReview'
     | 'cancelReview'
@@ -212,6 +213,8 @@ export interface ChangeReviewState {
   saving: boolean;
   /** The last save failed because the admin session ended (offer to sign in again). */
   sessionExpired: boolean;
+  /** The last save was refused until the admin accepts LibreChat's terms: where to accept them, else `null`. */
+  termsUrl: string | null;
   /** Error from the last failed save, as labelled issues. */
   saveIssues: ReviewIssue[];
   /** Title naming the target: "Save 2 changes to Role: USER?". */

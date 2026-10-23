@@ -1,8 +1,8 @@
 import { EModelEndpoint, paramSettings, getSettingsKeys } from 'librechat-data-provider';
 import type { SettingDefinition } from 'librechat-data-provider';
 import type * as t from '@/types';
-import { isConfigRecord, getValueAtPath } from '@/utils';
-import { specEndpoint } from './validation';
+import { isConfigRecord, getValueAtPath, hasConfigValue } from '@/utils';
+import { ASSISTANT_ENDPOINTS, specEndpoint } from './validation';
 
 /**
  * Preset keys that are conversation state or internal plumbing, never
@@ -48,10 +48,50 @@ const ASSISTANT_PROMPT_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 const BUILT_IN: ReadonlySet<string> = new Set(Object.values(EModelEndpoint));
-export const ASSISTANT_ENDPOINTS: ReadonlySet<string> = new Set([
-  EModelEndpoint.assistants,
-  EModelEndpoint.azureAssistants,
-]);
+
+/** Every key some endpoint's parameter panel uses (`top_p` for OpenAI, `topP` for Anthropic, …). */
+const PARAM_KEYS: ReadonlySet<string> = new Set(
+  Object.values(paramSettings).flatMap((settings) =>
+    (settings ?? []).map((setting) => setting.key),
+  ),
+);
+
+/** Preset keys that only mean something on some endpoints: the assistant or agent a spec runs. */
+const ENDPOINT_ONLY_KEYS: Readonly<Record<string, ReadonlySet<string>>> = {
+  assistant_id: ASSISTANT_ENDPOINTS,
+  agent_id: new Set([EModelEndpoint.agents]),
+};
+
+/** Provider fields no parameter panel lists: Bedrock's extra request fields, Google's legacy context and examples. */
+const PROVIDER_ONLY_KEYS: Readonly<Record<string, ReadonlySet<string>>> = {
+  additionalModelRequestFields: new Set([EModelEndpoint.bedrock]),
+  context: new Set([EModelEndpoint.google]),
+  examples: new Set([EModelEndpoint.google]),
+};
+
+/** An assistant or agent id on a spec whose endpoint runs neither. */
+export function isMisplacedId(key: string, endpoint: string): boolean {
+  const only = ENDPOINT_ONLY_KEYS[key];
+  return only != null && !only.has(endpoint);
+}
+
+/**
+ * Whether the preset picker leaves a key out for a spec on `endpoint`:
+ * another endpoint's parameter (OpenAI's `top_p` next to Anthropic's
+ * `topP`) or provider field (Google's `examples`), and the assistant or agent
+ * id, which the Model group edits where it applies. `own` holds the keys the
+ * endpoint's own parameters use.
+ */
+export function isForeignPresetKey(
+  key: string,
+  endpoint: string,
+  own: ReadonlySet<string>,
+): boolean {
+  if (key in ENDPOINT_ONLY_KEYS) return true;
+  const provider = PROVIDER_ONLY_KEYS[key];
+  if (provider) return !provider.has(endpoint);
+  return PARAM_KEYS.has(key) && !own.has(key) && !GROUPED_KEYS.has(key);
+}
 
 function paramKind(setting: SettingDefinition): t.PresetParamKind | null {
   if (setting.type === 'boolean') return 'boolean';
@@ -130,10 +170,6 @@ export function promptKeyFor(endpoint: string, model: string, custom?: t.ConfigR
   return settings.some((setting) => setting.key === 'system') ? 'system' : 'promptPrefix';
 }
 
-function isSet(value: t.ConfigValue): boolean {
-  return value !== undefined && value !== null && value !== '';
-}
-
 /**
  * The Model group's fields for a spec's endpoint, in order: the endpoint, the
  * agent (an agents spec) or else the model, the assistant on an assistants
@@ -143,11 +179,11 @@ function isSet(value: t.ConfigValue): boolean {
 export function specModelKeys(preset: t.ConfigRecord, endpoint: string): string[] {
   const isAgent = endpoint === EModelEndpoint.agents;
   const [primary, secondary] = isAgent ? ['agent_id', 'model'] : ['model', 'agent_id'];
-  const usesAssistant = ASSISTANT_ENDPOINTS.has(endpoint) || isSet(preset.assistant_id);
+  const usesAssistant = ASSISTANT_ENDPOINTS.has(endpoint) || hasConfigValue(preset.assistant_id);
   return [
     'endpoint',
     primary,
-    ...(isSet(preset[secondary]) ? [secondary] : []),
+    ...(hasConfigValue(preset[secondary]) ? [secondary] : []),
     ...(usesAssistant ? ['assistant_id'] : []),
     'modelLabel',
   ];
@@ -164,9 +200,9 @@ export function paramGroupKeys(params: t.PresetParam[], preset: t.ConfigRecord):
 
 /**
  * The prompt fields a spec's editor shows, in order: the prompt field of its
- * endpoint's parameter panel (`promptKeyFor`), the greeting, the assistants'
- * instructions on an assistants endpoint, and any other prompt field the
- * preset already sets (so a stale value stays visible and removable).
+ * endpoint's parameter panel (`promptKeyFor`), the other one while the preset
+ * sets it (so it can be seen and removed), the greeting, and the assistants'
+ * instructions on an assistants endpoint or while set.
  */
 export function specPromptKeys(
   preset: t.ConfigRecord,
@@ -175,17 +211,15 @@ export function specPromptKeys(
 ): string[] {
   const model = typeof preset.model === 'string' ? preset.model : '';
   const promptKey = promptKeyFor(endpoint, model, custom);
+  const otherPromptKey = promptKey === 'system' ? 'promptPrefix' : 'system';
   const isAssistant = ASSISTANT_ENDPOINTS.has(endpoint);
-  return [
-    promptKey,
-    GREETING_KEY,
-    ...PROMPT_KEYS.filter(
-      (key) =>
-        key !== promptKey &&
-        key !== GREETING_KEY &&
-        ((isAssistant && ASSISTANT_PROMPT_KEYS.has(key)) || isSet(preset[key])),
-    ),
-  ];
+  return [promptKey, otherPromptKey, GREETING_KEY, ...ASSISTANT_PROMPT_KEYS].filter(
+    (key) =>
+      key === promptKey ||
+      key === GREETING_KEY ||
+      (isAssistant && ASSISTANT_PROMPT_KEYS.has(key)) ||
+      hasConfigValue(preset[key]),
+  );
 }
 
 /** A schema field with a parameter's range and choices, so the shared control enforces them. */

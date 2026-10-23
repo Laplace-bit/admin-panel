@@ -270,6 +270,8 @@ export interface ConfigSaveState {
   saving: boolean;
   /** The last save failed because the admin session ended; signing in again and saving keeps the edits. */
   sessionExpired: boolean;
+  /** The last save was refused until this admin accepts LibreChat's terms: where to accept them (`''` when unknown), else `null`. */
+  termsUrl: string | null;
   savePlan: SavePayload;
   unsafeKeys: UnsafeConfigKey[];
   /** One row per pending change, by entry identity for collections (WS7 renders them). */
@@ -302,6 +304,8 @@ export interface ResetBaseConfigState {
   resetBaseOpen: boolean;
   resettingBase: boolean;
   resetBaseError: string | null;
+  /** Where to accept LibreChat's terms, when it refused the reset until the admin does. */
+  resetBaseTermsUrl: string | null;
   openResetBase: () => void;
   cancelResetBase: () => void;
   handleResetBaseConfig: () => Promise<void>;

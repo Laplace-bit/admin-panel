@@ -1,17 +1,26 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { ButtonGroup } from '@clickhouse/click-ui';
 import type * as t from '@/types';
 import { useLocalize, useFieldStates, useValuesScope, usePendingVisibility } from '@/hooks';
 import { agentMode, isAgentKeyHidden, planAgentSwitch } from './state';
+import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { NestedGroup, toFieldId } from '../../renderer';
+import { UnknownSettings } from '../../UnknownSettings';
 import { MEMORY_AGENT_KEYS } from '@/constants';
 import { countConfigured } from '../../counts';
 import { ConfigRow } from '../../ConfigRow';
 import { labelForPath } from '../../meta';
+import { isConfigRecord } from '@/utils';
 import { FeatureFields } from './Fields';
 import { RefPicker } from './Picker';
 
 const MODES: readonly t.MemoryAgentMode[] = ['id', 'inline'];
+const ENABLED_KEY = 'enabled';
+/** The keys this editor places: the switch and each definition's own. */
+const PLACED_KEYS: ReadonlySet<string> = new Set([
+  ENABLED_KEY,
+  ...MODES.flatMap((mode) => MEMORY_AGENT_KEYS[mode]),
+]);
 /** No definition: nothing pressed. An undefined `selected` would leave the group tracking clicks itself. */
 const NO_MODE = '';
 
@@ -43,7 +52,12 @@ export function MemoryAgent({ field, ...props }: t.MemoryAgentProps) {
   const localize = useLocalize();
   const scope = useValuesScope();
   const visibility = usePendingVisibility();
+  const rowFilter = useContext(RowFilterContext);
   const path = `${props.parentPath}.${field.key}`;
+  const agentValue = props.getValue(
+    path,
+    isConfigRecord(props.parentValue) ? props.parentValue[field.key] : undefined,
+  );
   const children = field.children ?? [];
   const [paths] = useState(() => children.map((child) => `${path}.${child.key}`));
   const states = useFieldStates(paths);
@@ -103,10 +117,12 @@ export function MemoryAgent({ field, ...props }: t.MemoryAgentProps) {
   const modeFields = children.filter(
     (child) => mode !== undefined && MEMORY_AGENT_KEYS[mode].includes(child.key),
   );
-  const enabledField = children.filter((child) => child.key === 'enabled');
+  const enabledField = children.filter((child) => child.key === ENABLED_KEY);
+  /** Keys a newer schema adds to the agent: shown whatever the definition, so none is lost. */
+  const otherFields = children.filter((child) => !PLACED_KEYS.has(child.key));
   const provider = visibleValue.provider;
   const controls: t.FeatureControls = {
-    provider: (control) => <RefPicker {...control} source="endpoints" requiredHint />,
+    provider: (control) => <RefPicker {...control} source="providers" requiredHint />,
     model: (control) => (
       <RefPicker
         {...control}
@@ -195,6 +211,15 @@ export function MemoryAgent({ field, ...props }: t.MemoryAgentProps) {
           controls={mode === 'inline' ? controls : undefined}
         />
       )}
+      {otherFields.length > 0 && (
+        <FeatureFields
+          {...props}
+          fields={otherFields}
+          parentPath={path}
+          parentValue={visibleValue}
+        />
+      )}
+      {!rowFilter && <UnknownSettings fields={children} value={agentValue} path={path} />}
     </NestedGroup>
   );
 }

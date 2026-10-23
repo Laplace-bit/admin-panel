@@ -3,7 +3,14 @@ import type * as t from '@/types';
 import { specListIssues, validateSpecs, specEndpoint, problemsOf } from '../validation';
 import { getKeyedCollection } from '@/utils';
 
-const known = new Set(['openAI', 'anthropic', 'agents', 'Azure Foundry']);
+const known = new Set([
+  'openAI',
+  'anthropic',
+  'agents',
+  'assistants',
+  'azureAssistants',
+  'Azure Foundry',
+]);
 
 function spec(name: string, extra: t.ConfigRecord = {}): t.ConfigRecord {
   return {
@@ -45,6 +52,19 @@ describe('validateSpecs', () => {
     const missing = { name: 'b', label: 'B', preset: { endpoint: 'agents' } };
     expect(codes(validateSpecs([missing], { knownEndpoints: known }))).toEqual([
       '0:preset.agent_id:required',
+    ]);
+  });
+
+  it('asks an assistants spec for its assistant, not a model (LibreChat makes model optional)', () => {
+    const assistant = {
+      name: 'asst-spec',
+      label: 'Support assistant',
+      preset: { endpoint: 'assistants', assistant_id: 'asst_abc123' },
+    };
+    expect(validateSpecs([assistant], { knownEndpoints: known })).toEqual([]);
+    const missing = { name: 'b', label: 'B', preset: { endpoint: 'azureAssistants' } };
+    expect(codes(validateSpecs([missing], { knownEndpoints: known }))).toEqual([
+      '0:preset.assistant_id:required',
     ]);
   });
 
@@ -132,5 +152,23 @@ describe('specListIssues', () => {
     ).toEqual([]);
     expect(specListIssues(changeSet([spec('a'), spec('a')]))).toEqual([]);
     expect(specListIssues({ ...changeSet([]), collections: [] })).toEqual([]);
+  });
+
+  it('does not block an unrelated edit on a problem an untouched spec already had', () => {
+    const legacy = { name: 'legacy', label: 'Legacy', preset: { endpoint: 'openAI' } };
+    const second = spec('second');
+    const renamed = { ...second, label: 'Second Spec renamed' };
+    const origins = [
+      { identity: 'legacy', baseline: legacy },
+      { identity: 'second', baseline: second },
+    ];
+    const set = changeSet([legacy, renamed]);
+    set.collections[0].edit = { baseline: [legacy, second], origins };
+    expect(specListIssues(set)).toEqual([]);
+    const touched = changeSet([{ ...legacy, label: 'Legacy 2' }, renamed]);
+    touched.collections[0].edit = { baseline: [legacy, second], origins };
+    expect(specListIssues(touched)).toEqual([
+      expect.objectContaining({ path: 'modelSpecs.list.0.preset.model', code: 'required' }),
+    ]);
   });
 });

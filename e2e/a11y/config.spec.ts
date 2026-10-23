@@ -102,6 +102,21 @@ for (const theme of THEMES) {
       expect(await dialogViolations(page)).toEqual([]);
     });
 
+    test('the change review of a spec list taking over librechat.yaml (its warning text)', async ({
+      page,
+    }) => {
+      await openConfigTab(page, 'specs');
+      const card = page.locator('[data-entry-card]').first();
+      test.skip((await card.count()) === 0, 'No model specs');
+      await card.locator('button[aria-expanded]').first().click();
+      const label = page.locator('#modelSpecs-list-0-label');
+      await label.fill(`${await label.inputValue()} (review)`);
+      await label.press('Tab');
+      await page.getByRole('button', { name: 'Review & save' }).click();
+      await expect(page.getByRole('dialog')).toBeVisible();
+      expect(await dialogViolations(page)).toEqual([]);
+    });
+
     test('the import wizard', async ({ page }) => {
       await openConfigTab(page, 'system');
       await page.getByRole('button', { name: 'Import YAML' }).click();
@@ -110,6 +125,84 @@ for (const theme of THEMES) {
     });
   });
 }
+
+/** The Wave 2 editors' overlays at phone width, where their bodies scroll. */
+for (const theme of THEMES) {
+  test.describe(`axe on editor overlays: ${theme} 390px`, () => {
+    test.use({ colorScheme: theme, viewport: { width: 390, height: 844 } });
+
+    test('the Azure group details drawer', async ({ page }) => {
+      await openConfigTab(page, 'providers');
+      await page.locator('#section-endpoints\\.azureOpenAI .settings-section-trigger').click();
+      /** The group with the longest model list, so the drawer body scrolls at this height. */
+      const counts = await page
+        .locator('.azure-groups-table tbody tr .azure-col-number')
+        .allInnerTexts();
+      const longest = counts.reduce(
+        (best, text, i) => (Number(text) > Number(counts[best]) ? i : best),
+        0,
+      );
+      await page
+        .getByRole('button', { name: /^Details of Azure group/ })
+        .nth(longest)
+        .click();
+      await expect(page.getByRole('dialog')).toBeVisible();
+      expect(await dialogViolations(page)).toEqual([]);
+    });
+
+    test('the custom endpoint editor drawer', async ({ page }) => {
+      await openConfigTab(page, 'custom');
+      await page.locator('li[data-endpoint-row] button[aria-haspopup="dialog"]').first().click();
+      await expect(page.getByRole('dialog')).toBeVisible();
+      expect(await dialogViolations(page)).toEqual([]);
+    });
+
+    test('Create endpoint', async ({ page }) => {
+      await openConfigTab(page, 'custom');
+      await page.getByRole('button', { name: 'Create endpoint' }).click();
+      await expect(page.getByRole('dialog')).toBeVisible();
+      expect(await dialogViolations(page)).toEqual([]);
+    });
+
+    test('Create MCP server', async ({ page }) => {
+      await openConfigTab(page, 'mcp');
+      await page.getByRole('button', { name: 'Create MCP server' }).click();
+      await expect(page.getByRole('dialog')).toBeVisible();
+      expect(await dialogViolations(page)).toEqual([]);
+    });
+  });
+}
+
+test.describe('row action menus', () => {
+  test.use({ colorScheme: 'light', viewport: { width: 1440, height: 900 } });
+
+  test('custom: an action that opens the editor leaves focus in it', async ({ page }) => {
+    await openConfigTab(page, 'custom');
+    const trigger = page.getByRole('button', { name: /^Actions for / }).first();
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('menu')).toBeVisible();
+    await page.keyboard.press('Enter');
+    const drawer = page.getByRole('dialog');
+    await expect(drawer).toBeVisible();
+    await expect
+      .poll(() => drawer.evaluate((el) => el.contains(document.activeElement)))
+      .toBe(true);
+  });
+
+  for (const tab of ['custom', 'mcp'] as const) {
+    test(`${tab}: Escape returns focus to the menu button`, async ({ page }) => {
+      await openConfigTab(page, tab);
+      const trigger = page.getByRole('button', { name: /^Actions for / }).first();
+      await trigger.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('menu')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('menu')).toBeHidden();
+      await expect(trigger).toBeFocused();
+    });
+  }
+});
 
 test.describe('settings layout invariants (1440px, light)', () => {
   test.use({
@@ -218,3 +311,55 @@ for (const variant of VISUAL_VARIANTS) {
     }
   });
 }
+
+test.describe('dialogs give focus back to what opened them', () => {
+  test.use({ colorScheme: 'light', viewport: { width: 1440, height: 900 } });
+
+  test('Create MCP server, closed with Escape', async ({ page }) => {
+    await openConfigTab(page, 'mcp');
+    const create = page.getByRole('button', { name: 'Create MCP server' });
+    await create.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toBeHidden();
+    await expect(create).toBeFocused();
+  });
+
+  test('the change review, closed with Escape', async ({ page }) => {
+    await openConfigTab(page, 'system');
+    const field = page.locator('#balance-refillAmount');
+    await field.fill('12345');
+    await field.press('Tab');
+    const review = page.getByRole('button', { name: 'Review & save' });
+    await review.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toBeHidden();
+    await expect(review).toBeFocused();
+  });
+});
+
+test.describe('custom endpoint drawer', () => {
+  test.use({ colorScheme: 'light', viewport: { width: 1440, height: 900 } });
+
+  test('a section link scrolls the drawer to its section', async ({ page }) => {
+    await openConfigTab(page, 'custom');
+    await page.locator('li[data-endpoint-row] button[aria-haspopup="dialog"]').first().click();
+    const drawer = page.locator('[data-endpoint-drawer]');
+    await expect(drawer).toBeVisible();
+    const links = drawer.locator('nav a');
+    await links.last().click();
+    await expect(links.last()).toHaveAttribute('aria-current', 'location');
+    const scrolled = () =>
+      drawer.locator('nav').evaluate((nav) => {
+        let node = nav.parentElement;
+        while (node && !/(auto|scroll)/.test(getComputedStyle(node).overflowY)) {
+          node = node.parentElement;
+        }
+        return node?.scrollTop ?? 0;
+      });
+    await expect.poll(scrolled).toBeGreaterThan(0);
+  });
+});
