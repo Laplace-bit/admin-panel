@@ -148,17 +148,53 @@ describe('planImport on a server that keeps dotted keys', () => {
     ]);
   });
 
-  it('still leaves out a record holding a $ key, as reserved', () => {
+  it('leaves a $ key out of a record written whole and imports the rest', () => {
     const plan = planImport(
-      { endpoints: { bedrock: { inferenceProfiles: { 'us.a.b': 'arn', $where: 'x' } } } },
+      {
+        endpoints: {
+          bedrock: { inferenceProfiles: { 'us.a.b': 'arn', $where: 'x', plain: 'arn:y' } },
+        },
+      },
       tree,
       paths,
       false,
       DOTTED,
     );
-    expect(plan.entries).toEqual([]);
+    expect(plan.entries).toEqual([
+      {
+        fieldPath: 'endpoints.bedrock.inferenceProfiles',
+        value: { 'us.a.b': 'arn', plain: 'arn:y' },
+      },
+    ]);
     expect(plan.skipped).toEqual([
-      { fieldPath: 'endpoints.bedrock.inferenceProfiles', reason: 'reservedKey' },
+      { fieldPath: 'endpoints.bedrock.inferenceProfiles', reason: 'reservedKey', key: '$where' },
+    ]);
+  });
+
+  it('leaves the reserved keys out of MCP headers written whole, each with its reason', () => {
+    const headers = JSON.parse(
+      '{"x.api.version": "1", "$where": "bad", "__proto__": "p", "prototype": "q"}',
+    ) as t.ConfigRecord;
+    const plan = planImport({ mcpServers: { github: { headers } } }, tree, paths, false, DOTTED);
+    expect(plan.entries).toEqual([
+      { fieldPath: 'mcpServers.github.headers', value: { 'x.api.version': '1' } },
+    ]);
+    expect(Object.getPrototypeOf(plan.entries[0].value)).toBe(Object.prototype);
+    expect(plan.skipped).toEqual(
+      ['$where', '__proto__', 'prototype'].map((key) => ({
+        fieldPath: 'mcpServers.github.headers',
+        reason: 'reservedKey',
+        key,
+      })),
+    );
+  });
+
+  it('reports a prototype name where a setting name belongs, as reserved', () => {
+    const balance = JSON.parse('{"constructor": 1, "refillAmount": 2}') as t.ConfigRecord;
+    const plan = planImport({ balance }, tree, paths, false, DOTTED);
+    expect(plan.entries).toEqual([{ fieldPath: 'balance.refillAmount', value: 2 }]);
+    expect(plan.skipped).toEqual([
+      { fieldPath: 'balance', reason: 'reservedKey', key: 'constructor' },
     ]);
   });
 

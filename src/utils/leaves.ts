@@ -52,14 +52,33 @@ function holdsGroups(path: string, value: t.ConfigRecord): boolean {
 }
 
 /**
+ * Whether `key` of the object at `prefix` can be imported. A key the admin
+ * API can't store (`isUnsafeConfigKey`) is reported in `unsafe`; a prototype
+ * name it would store is dropped.
+ */
+function isImportableKey(
+  key: string,
+  prefix: string,
+  out: t.ImportLeaves,
+  allowDots: boolean,
+): boolean {
+  if (isUnsafeConfigKey(key, allowDots)) {
+    out.unsafe.push({ path: prefix, key });
+    return false;
+  }
+  return !DANGEROUS_KEYS.has(key);
+}
+
+/**
  * Leaves of `value` by dot-path, like `flattenObject`, except that a key the
  * admin API can't store (`isUnsafeConfigKey`) is never split into a nested
  * path: it is reported in `unsafe` and its value is left out. With
  * `allowDots` (the server's `dottedKeys`), a record of plain values that
  * holds a dotted key is one leaf at its own path (a dot-path can't address
- * the key); a dotted name in a record of setting groups is reported in
- * `dottedNames` (its fields are written one by one, by path), and a dotted
- * key where the schema expects a setting name in `dotted`.
+ * the key), without its reserved keys (reported in `unsafe`, so the rest
+ * is still imported); a dotted name in a record of setting groups is
+ * reported in `dottedNames` (its fields are written one by one, by path),
+ * and a dotted key where the schema expects a setting name in `dotted`.
  */
 function collectLeaves(
   value: t.ConfigRecord,
@@ -69,15 +88,13 @@ function collectLeaves(
 ): void {
   const freeKeys = allowDots && hasDottedKey(value) && holdsFreeKeys(prefix);
   if (freeKeys && !holdsGroups(prefix, value)) {
-    out.leaves[prefix] = value;
+    out.leaves[prefix] = Object.fromEntries(
+      Object.entries(value).filter(([key]) => isImportableKey(key, prefix, out, allowDots)),
+    );
     return;
   }
   for (const [key, child] of Object.entries(value)) {
-    if (DANGEROUS_KEYS.has(key)) continue;
-    if (isUnsafeConfigKey(key, allowDots)) {
-      out.unsafe.push({ path: prefix, key });
-      continue;
-    }
+    if (!isImportableKey(key, prefix, out, allowDots)) continue;
     if (key.includes('.')) {
       (freeKeys ? out.dottedNames : out.dotted).push({ path: prefix, key });
       continue;
