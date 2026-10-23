@@ -15,6 +15,17 @@ import { pathIndexOverlaps } from './paths';
 import { entryLocation } from './collections';
 import { getValueAtPath } from './format';
 
+/** Skipped changes without repeats (the client, the server and each PATCH can report the same path). */
+export function uniqueSkipped(skipped: t.SkippedChange[]): t.SkippedChange[] {
+  const seen = new Set<string>();
+  return skipped.filter(({ fieldPath, reason }) => {
+    const key = `${fieldPath}|${reason}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** English text for a skip reason, for server-side errors (the UI localizes `SKIP_REASON_KEYS`). */
 export function describeSkipReason(reason: t.SkipReason): string {
   const key = SKIP_REASON_KEYS[reason] as keyof typeof translation;

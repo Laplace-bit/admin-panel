@@ -100,7 +100,8 @@ function sameValue(a: t.ConfigValue, b: t.ConfigValue): boolean {
  * per-endpoint title setting is ignored, even one that `all` leaves unset;
  * on one that resolves them per field (`'field'`), only a title setting `all`
  * sets wins, and the title endpoint and model are one choice: both come from
- * `all` when it sets either.
+ * `all` when it sets either, so the half `all` leaves unset points to the
+ * half it sets.
  */
 export function resolveShadowedBy(
   path: string,
@@ -130,7 +131,7 @@ export function resolveShadowedBy(
   if (value !== undefined) return { path: allPath, value, precedence: 'field' };
   if (!isTitle || !TITLE_ROUTING_KEYS.includes(key)) return undefined;
   const other = TITLE_ROUTING_KEYS.find((name) => name !== key && valueOf(name) !== undefined);
-  return other ? { path: allPath, value, precedence: 'pair' } : undefined;
+  return other ? { path: `endpoints.all.${other}`, value, precedence: 'pair' } : undefined;
 }
 
 interface BaseReadout {

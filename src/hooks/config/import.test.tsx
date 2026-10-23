@@ -306,9 +306,9 @@ describe('useImportPreview', () => {
 });
 
 describe('useConfigImport', () => {
-  function renderImport(skipped: t.SkippedChange[]) {
+  function renderImport(skipped: t.SkippedChange[], reported: t.SkippedChange[] = []) {
     const client = new QueryClient();
-    const writeChanges = vi.fn<t.WriteChangesFn>().mockResolvedValue(skipped);
+    const writeChanges = vi.fn<t.WriteChangesFn>().mockResolvedValue({ skipped, reported });
     const describeSkipped = (items: t.SkippedChange[]) =>
       items.map((item) => item.fieldPath).join(', ');
     const wrapper = ({ children }: { children: ReactNode }) => (
@@ -345,6 +345,39 @@ describe('useConfigImport', () => {
       { fieldPath: 'mcpServers.github.headers.Authorization', reason: 'yamlMerged' },
       { fieldPath: 'balance.startBalance', reason: 'notStored' },
     ]);
+    await act(() => result.current.handleImport({ target: { type: 'base' }, entries }));
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'warning',
+        title: 'Imported 1 value into the base configuration',
+        description: 'balance.startBalance',
+      }),
+    );
+  });
+
+  it('counts an entry whose credential the server left out as imported, noting the credential', async () => {
+    const toast = vi.mocked(createToast);
+    toast.mockClear();
+    const credential = {
+      fieldPath: 'mcpServers.github.headers.Authorization',
+      reason: 'secretRebinding',
+    } as const;
+    const { result } = renderImport([], [credential]);
+    await act(() => result.current.handleImport({ target: { type: 'base' }, entries }));
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'warning',
+        title: 'Imported 2 values into the base configuration',
+        description: 'mcpServers.github.headers.Authorization',
+      }),
+    );
+  });
+
+  it('counts a change reported twice once', async () => {
+    const toast = vi.mocked(createToast);
+    toast.mockClear();
+    const notStored = { fieldPath: 'balance.startBalance', reason: 'notStored' } as const;
+    const { result } = renderImport([notStored, notStored]);
     await act(() => result.current.handleImport({ target: { type: 'base' }, entries }));
     expect(toast).toHaveBeenCalledWith(
       expect.objectContaining({

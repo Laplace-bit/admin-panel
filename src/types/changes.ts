@@ -143,6 +143,11 @@ export interface ApplyConfigChangesResult {
   issues: ConfigIssue[];
   /** Changes not sent (read-only, permission, …), not stored, or without effect, and why. */
   skipped: SkippedChange[];
+  /**
+   * Parts of written changes the server reported it did not store, or stores
+   * without effect (a credential it drops): the change itself is written.
+   */
+  reported: SkippedChange[];
   /** A failed write was rolled back to the overrides captured before it. */
   compensated?: boolean;
 }

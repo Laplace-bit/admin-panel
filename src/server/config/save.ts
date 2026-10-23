@@ -7,6 +7,7 @@ import {
   verifyWrite,
   getEntryKey,
   reportedPath,
+  uniqueSkipped,
   isConfigRecord,
   getValueAtPath,
   readWriteReport,
@@ -474,6 +475,7 @@ export async function applyConfigChanges(
     warnings: plan.warnings,
     issues: plan.issues,
     skipped: plan.skipped,
+    reported: [],
   };
   if (plan.issues.length > 0 || !hasWrites(plan)) return result;
   const outcome = await executePlan(target, plan, contract);
@@ -497,7 +499,8 @@ export async function applyConfigChanges(
   return {
     ...result,
     applied: Math.max(0, plan.effective - lost.size),
-    skipped: [...plan.skipped, ...notEffective, ...outcome.reported],
+    skipped: [...plan.skipped, ...notEffective],
+    reported: uniqueSkipped(outcome.reported),
   };
 }
 

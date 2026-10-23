@@ -1117,7 +1117,7 @@
   "com_config_providers_recursion_capped": "Max recursion limit ({{max}}) is below the recursion limit ({{limit}}), so agents get at most {{max}} steps per run.",
   "com_config_providers_shadow_block": "While Global overrides exist, LibreChat reads title settings only from them (Global {{field}}: {{value}}). This value ({{source}}) is ignored.",
   "com_config_providers_shadow_block_unset": "While Global overrides exist, LibreChat reads title settings only from them. Global doesn't set {{field}}, so LibreChat's default applies and this value ({{source}}) is ignored.",
-  "com_config_providers_shadow_pair": "Global overrides choose the title endpoint and model together. They set the other one and leave {{field}} unset, so LibreChat's default applies and this value ({{source}}) is ignored.",
+  "com_config_providers_shadow_pair": "Global overrides choose the title endpoint and model together. They set {{field}} and leave this one unset, so LibreChat's default applies and this value ({{source}}) is ignored.",
   "com_config_providers_shadow_field": "Global overrides set {{field}} to {{value}}, which takes precedence. This value ({{source}}) is ignored.",
   "com_config_providers_shadow_go": "Go to {{field}} in Global overrides",
   "com_config_providers_shadow_label": "Overridden by Global",

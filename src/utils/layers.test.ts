@@ -10,6 +10,7 @@ import {
 import { applyConfigEdit, buildSavePayload } from '@/components/configuration/edits';
 import { scopeLayersFixture, baseConfigFixture } from '@/test/layers';
 import { flattenObject, getValueAtPath } from './format';
+import { resolveWriteRules } from '@/constants';
 
 describe('mergeScopeLayer', () => {
   const base: t.ConfigRecord = {
@@ -66,6 +67,58 @@ describe('mergeScopeLayer', () => {
     expect(getValueAtPath(merged, 'filters.messages.enabled')).toBe(true);
     expect(Object.keys(merged.mcpServers as t.ConfigRecord)).toEqual(['github']);
     expect(base.mcpServers).toHaveProperty('docs');
+  });
+
+  it("keeps Base's value at the base-only and deployment-only paths a server reports, at any depth", () => {
+    const rules = resolveWriteRules(
+      {
+        baseOnlySections: [],
+        baseOnlyPaths: ['endpoints.agents.pullRequests.provider'],
+        deploymentOnlyPaths: {
+          'endpoints.agents.eventDriven': 'startup',
+          'mcpSettings.catalogRecovery.maxStateEntries': 'startup',
+        },
+      },
+      true,
+    );
+    const yaml: t.ConfigRecord = {
+      endpoints: {
+        agents: {
+          pullRequests: { provider: 'github', host: 'github.com' },
+          eventDriven: { enabled: true },
+        },
+      },
+      mcpSettings: { catalogRecovery: { maxStateEntries: 100, retryMs: 5 } },
+    };
+    const overridden = mergeScopeLayer(
+      yaml,
+      {
+        endpoints: { agents: { pullRequests: { provider: 'gitlab' }, eventDriven: { x: 1 } } },
+        mcpSettings: { catalogRecovery: { retryMs: 9 } },
+      },
+      ['mcpSettings.catalogRecovery.maxStateEntries'],
+      rules,
+    );
+    expect(overridden).toEqual({
+      endpoints: {
+        agents: {
+          pullRequests: { provider: 'github', host: 'github.com' },
+          eventDriven: { enabled: true },
+        },
+      },
+      mcpSettings: { catalogRecovery: { maxStateEntries: 100, retryMs: 9 } },
+    });
+    const hidden = mergeScopeLayer(yaml, {}, ['endpoints.agents'], rules);
+    expect(hidden.endpoints).toEqual({
+      agents: { pullRequests: { provider: 'github' }, eventDriven: { enabled: true } },
+    });
+    const added = mergeScopeLayer(
+      {},
+      { endpoints: { agents: { eventDriven: { x: 1 } } } },
+      [],
+      rules,
+    );
+    expect(getValueAtPath(added, 'endpoints.agents.eventDriven')).toBeUndefined();
   });
 });
 

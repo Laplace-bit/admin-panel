@@ -539,10 +539,8 @@ describe('applyConfigChanges — write reports, structured issues and codes', ()
       { op: 'set', path: 'balance.refillAmount', value: 6 },
     ]);
     expect(result).toMatchObject({ issues: [], failed: [], applied: 1 });
-    expect(result.skipped).toEqual([
-      { fieldPath: 'balance.refillAmount', reason: 'yamlOnly' },
-      { fieldPath: 'interface.prompts', reason: 'permission' },
-    ]);
+    expect(result.skipped).toEqual([{ fieldPath: 'balance.refillAmount', reason: 'yamlOnly' }]);
+    expect(result.reported).toEqual([{ fieldPath: 'interface.prompts', reason: 'permission' }]);
   });
 
   it('leaves the report alone on a server without writeReport', async () => {
@@ -596,19 +594,45 @@ describe('applyConfigChanges — write reports, structured issues and codes', ()
       { ...moonshot, baseURL: 'https://proxy.example.com/v1' },
       moonshot,
     );
-    expect((await applyConfigChanges(base, [change])).skipped).toEqual([]);
+    expect(await applyConfigChanges(base, [change])).toMatchObject({ skipped: [], reported: [] });
     api.current = createFakeAdminApi(yaml);
     api.current.reportMeta({ features: { secretRebinding: true } });
     api.current.reportWrites(() => ({ ignored }));
     const result = await applyConfigChanges(base, [change]);
-    expect(result).toMatchObject({ applied: 1, failed: [] });
-    expect(result.skipped).toEqual([
+    expect(result).toMatchObject({ applied: 1, failed: [], skipped: [] });
+    expect(result.reported).toEqual([
       { fieldPath: 'endpoints.custom.Moonshot.apiKey', reason: 'secretRebinding' },
     ]);
     const unrelated = await applyConfigChanges(base, [
       { op: 'set', path: 'balance.startBalance', value: 5 },
     ]);
-    expect(unrelated).toMatchObject({ applied: 1, skipped: [] });
+    expect(unrelated).toMatchObject({ applied: 1, skipped: [], reported: [] });
+  });
+
+  it('notes a dropped credential once, apart from the changes, however many PATCHes repeat it', async () => {
+    api.current!.reportMeta({
+      features: { secretRebinding: true },
+      limits: { maxPatchEntries: 1 },
+    });
+    api.current!.reportWrites(() => ({
+      ignored: [
+        {
+          path: 'endpoints.custom.Moonshot.apiKey',
+          segments: ['endpoints', 'custom', 'Moonshot', 'apiKey'],
+          reason: 'secret_rebinding',
+        },
+      ],
+    }));
+    const moonshot = customEntries[0];
+    const result = await applyConfigChanges(base, [
+      upsert('Moonshot', 'Moonshot', { ...moonshot, titleModel: 'kimi-k2' }, moonshot),
+      { op: 'set', path: 'balance.startBalance', value: 5 },
+    ]);
+    expect(api.current!.writes()).toHaveLength(2);
+    expect(result).toMatchObject({ applied: 2, failed: [], skipped: [] });
+    expect(result.reported).toEqual([
+      { fieldPath: 'endpoints.custom.Moonshot.apiKey', reason: 'secretRebinding' },
+    ]);
   });
 
   it("does not repeat a dropped credential on a later save of another endpoint's settings", async () => {
@@ -626,18 +650,18 @@ describe('applyConfigChanges — write reports, structured issues and codes', ()
     const title = await applyConfigChanges(base, [
       { op: 'set', path: 'endpoints.openAI.titleModel', value: 'gpt-5-nano' },
     ]);
-    expect(title).toMatchObject({ applied: 1, failed: [], skipped: [] });
+    expect(title).toMatchObject({ applied: 1, failed: [], skipped: [], reported: [] });
     const other = await applyConfigChanges(base, [
       upsert('GPT', 'GPT', { ...gpt, titleModel: 'gpt-4o-mini' }, gpt),
     ]);
-    expect(other).toMatchObject({ applied: 1, failed: [], skipped: [] });
+    expect(other).toMatchObject({ applied: 1, failed: [], skipped: [], reported: [] });
     expect(api.current!.writes().at(-1)).toMatchObject({
       body: { entries: [{ fieldPath: 'endpoints.custom' }] },
     });
     const same = await applyConfigChanges(base, [
       upsert('Moonshot', 'Moonshot', { ...moonshot, titleModel: 'kimi-k2' }, moonshot),
     ]);
-    expect(same.skipped).toEqual([
+    expect(same.reported).toEqual([
       { fieldPath: 'endpoints.custom.Moonshot.apiKey', reason: 'secretRebinding' },
     ]);
   });

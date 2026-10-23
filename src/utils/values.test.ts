@@ -335,10 +335,10 @@ describe('resolveShadowedBy (endpoints.all precedence)', () => {
       expect(resolveShadowedBy('endpoints.openAI.titleMethod', tree)?.precedence).toBe('block');
     });
 
-    it('treats the title endpoint and model as one choice', () => {
+    it('treats the title endpoint and model as one choice, pointing to the half `all` sets', () => {
       const tree = withTitles({ titleEndpoint: 'anthropic' });
       expect(resolveShadowedBy('endpoints.openAI.titleModel', tree, {}, 'field')).toEqual({
-        path: 'endpoints.all.titleModel',
+        path: 'endpoints.all.titleEndpoint',
         value: undefined,
         precedence: 'pair',
       });
@@ -349,7 +349,17 @@ describe('resolveShadowedBy (endpoints.all precedence)', () => {
           {},
           'field',
         ),
-      ).toEqual({ path: 'endpoints.all.titleEndpoint', value: undefined, precedence: 'pair' });
+      ).toEqual({ path: 'endpoints.all.titleModel', value: undefined, precedence: 'pair' });
+      expect(
+        resolveShadowedBy(
+          'endpoints.openAI.titleModel',
+          withTitles({}),
+          {
+            'endpoints.all.titleEndpoint': 'anthropic',
+          },
+          'field',
+        )?.path,
+      ).toBe('endpoints.all.titleEndpoint');
       expect(
         resolveShadowedBy(
           'endpoints.openAI.titleModel',

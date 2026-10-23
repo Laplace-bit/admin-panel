@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type * as t from '@/types';
 import {
   hasDottedKey,
+  uniqueSkipped,
   notifySuccess,
   notifyWarning,
   flattenObject,
@@ -497,11 +498,14 @@ export function useConfigImport({
           queryClient.invalidateQueries({ queryKey: ['groups'] }),
         ]);
       }
+      const result = await writeChanges(writeTarget, entries, []);
       /** Keys LibreChat merges back from the layer beneath are the merge an import asks for (D4), not a loss. */
-      const skipped = (await writeChanges(writeTarget, entries, [])).filter(
+      const lost = uniqueSkipped(result.skipped).filter(
         (item) => !MERGED_BACK_REASONS.has(item.reason),
       );
-      const written = Math.max(0, entries.length - skipped.length);
+      /** A part of an entry the server left out (a dropped credential) is noted; the entry is still written. */
+      const notes = [...lost, ...result.reported];
+      const written = Math.max(0, entries.length - lost.length);
       const message =
         writeTarget.type === 'scope'
           ? localize('com_config_import_profile_success', {
@@ -509,13 +513,13 @@ export function useConfigImport({
               name: `${scopeTypeLabel(writeTarget.scope, localize)}: ${writeTarget.scope.name}`,
             })
           : localize('com_config_import_base_success', { count: written });
-      if (skipped.length === 0) {
+      if (notes.length === 0) {
         notifySuccess(message);
         return;
       }
       const title =
-        written > 0 ? message : localize('com_config_nothing_stored', { count: skipped.length });
-      notifyWarning(title, describeSkipped(skipped));
+        written > 0 ? message : localize('com_config_nothing_stored', { count: lost.length });
+      notifyWarning(title, describeSkipped(notes));
     },
     [localize, queryClient, resolveTarget, writeChanges, describeSkipped],
   );

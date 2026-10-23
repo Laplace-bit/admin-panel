@@ -5,6 +5,7 @@ import {
   errorText,
   notifyInfo,
   notifyError,
+  uniqueSkipped,
   notifyWarning,
   notifySuccess,
   getValueAtPath,
@@ -52,17 +53,6 @@ function termsUrlOf(result: t.ApplyConfigChangesResult): string | null {
   const issue = result.failed.find(({ code }) => code === TERMS_NOT_ACCEPTED_ISSUE);
   if (!issue) return null;
   return typeof issue.params?.url === 'string' ? issue.params.url : '';
-}
-
-/** Skipped changes without repeats (the client and the server can report the same path). */
-function uniqueSkipped(skipped: t.SkippedChange[]): t.SkippedChange[] {
-  const seen = new Set<string>();
-  return skipped.filter(({ fieldPath, reason }) => {
-    const key = `${fieldPath}|${reason}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 /**
@@ -215,7 +205,7 @@ export function useConfigSave({
       if (result.issues.length > 0 || result.failed.length > 0) {
         throw new Error(describeFailure(result, []));
       }
-      return result.skipped;
+      return { skipped: result.skipped, reported: result.reported };
     },
     [applyChanges, describeFailure],
   );
@@ -446,7 +436,7 @@ export function useConfigSave({
       }
       clearEdits();
       announceWrite(
-        [...changeSet.payload.skipped, ...result.skipped],
+        [...changeSet.payload.skipped, ...result.skipped, ...result.reported],
         result.applied,
         localize('com_config_saved'),
       );

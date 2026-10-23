@@ -71,7 +71,11 @@ export interface SectionsHarnessOptions {
 }
 
 /** Profile-mode (USER role) value layers over Base, built by the page's own code. */
-function profileLayers(base: t.ValueLayers, profile: t.ConfigRecord): t.ValueLayers {
+function profileLayers(
+  base: t.ValueLayers,
+  profile: t.ConfigRecord,
+  rules: t.ConfigWriteRules,
+): t.ValueLayers {
   const paths = collectLeafPaths(profile);
   return withScopeLayer(
     base,
@@ -83,14 +87,22 @@ function profileLayers(base: t.ValueLayers, profile: t.ConfigRecord): t.ValueLay
       tombstones: [],
     },
     SCHEMA_PATHS,
+    rules,
   );
 }
 
-/** Base-mode value layers from a librechat.yaml and base overrides, built by the page's own code. */
-export function baseLayers(yaml: t.ConfigRecord, overrides: t.ConfigRecord): t.ValueLayers {
+/**
+ * Base-mode value layers from a librechat.yaml and base overrides, built by
+ * the page's own code under a server's write `rules` (the bundled ones by default).
+ */
+export function baseLayers(
+  yaml: t.ConfigRecord,
+  overrides: t.ConfigRecord,
+  rules?: t.ConfigWriteRules,
+): t.ValueLayers {
   return createBaseLayers(
     {
-      config: mergeScopeLayer(yaml, overrides),
+      config: mergeScopeLayer(yaml, overrides, [], rules),
       yamlConfig: yaml,
       yamlPaths: collectLeafPaths(yaml),
       dbOverrides: overrides,
@@ -115,8 +127,9 @@ export function SectionsHarness({
   extraFields,
   contract = BUNDLED_CONFIG_CONTRACT,
 }: SectionsHarnessOptions) {
-  const base = baseLayers(yaml, overrides);
-  const layers = profile ? profileLayers(base, profile) : base;
+  const rules = getWriteRules(contract);
+  const base = baseLayers(yaml, overrides, rules);
+  const layers = profile ? profileLayers(base, profile, rules) : base;
   const [edited, setEdited] = useState<t.FlatConfigMap>({});
   const [values, setValues] = useState<t.ConfigRecord>(layers.effective ?? {});
   const configured = new Set(

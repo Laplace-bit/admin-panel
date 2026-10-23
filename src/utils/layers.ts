@@ -132,12 +132,31 @@ export function setConfigPath(
 }
 
 /**
+ * `merged` with Base's value put back at each of `paths`, whatever an override
+ * or tombstone did there, inside it or at an ancestor (as LibreChat keeps its
+ * base-only paths).
+ */
+function keepBaseValues(
+  base: t.ConfigRecord,
+  merged: t.ConfigRecord,
+  paths: ReadonlySet<string>,
+): t.ConfigRecord {
+  let result = merged;
+  for (const path of paths) {
+    const value = getValueAtPath(base, path);
+    if (getValueAtPath(result, path) !== value) result = setConfigPath(result, path, value);
+  }
+  return result;
+}
+
+/**
  * The config a profile's members get, as far as one profile can tell: Base
  * (librechat.yaml plus base overrides) with the profile's overrides merged the
  * way LibreChat merges them (objects deep-merge, `endpoints.custom` merges by
  * name, other arrays are replaced) and its tombstoned paths removed. Sections a
- * profile cannot override (read-only by the server's write `rules`) keep their
- * Base values.
+ * profile cannot override (read-only by the server's write `rules`) and the
+ * fields only librechat.yaml sets inside the others (`yamlManagedFields`: the
+ * server's base-only and deployment-only paths) keep their Base values.
  */
 export function mergeScopeLayer(
   base: t.ConfigRecord,
@@ -156,7 +175,7 @@ export function mergeScopeLayer(
     if (readOnly.has(path.split('.')[0])) continue;
     merged = removeConfigPath(merged, path);
   }
-  return merged;
+  return keepBaseValues(base, merged, rules.yamlManagedFields);
 }
 
 function isStructuralEdit(value: t.ConfigValue): boolean {

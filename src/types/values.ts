@@ -38,7 +38,9 @@ export interface FieldLayer {
 
 /** A field whose own value is ignored because another path takes precedence (WS4, EV-8). */
 export interface ShadowedBy {
+  /** The setting that wins: Global's own field, or for `pair` the other half, which Global sets. */
   path: string;
+  /** What this field gets from Global (`undefined` where Global leaves it unset). */
   value: ConfigValue;
   /**
    * `block`: the whole other block wins, even where it leaves this field unset
