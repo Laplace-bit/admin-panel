@@ -33,6 +33,7 @@ import { KeyValueField } from '../fields/KeyValueField';
 import { MimeListField } from '../fields/MimeListField';
 import { RefListField } from '../fields/RefListField';
 import { LiteralField } from '../fields/LiteralField';
+import { EnvStatusWrap } from '../fields/EnvStatus';
 import { NumberField } from '../fields/NumberField';
 import { SelectField } from '../fields/SelectField';
 import { ToggleField } from '../fields/ToggleField';
@@ -151,12 +152,36 @@ function describedOptions(
 }
 
 /**
+ * What a field's env status note reports on: its own value, else (with no own
+ * value) the value it shows from the layer beneath. A stored secret is not an
+ * env reference, whatever the layer beneath holds. Text LibreChat does not
+ * expand (interface copy, model specs, prompts) is skipped by the note itself.
+ */
+function envStatusValue(props: t.FieldControlProps): t.ConfigValue {
+  if (props.secretPreview != null) return undefined;
+  if (props.value !== undefined && props.value !== '') return props.value;
+  return props.fieldDefault.hasOwnValue ? undefined : props.fieldDefault.value;
+}
+
+/**
  * The control for one field, shared by full settings rows and inline entry
- * rows. Picks the control from `FieldMeta.control` or the schema shape, wires
+ * rows, with whether each `${NAME}` its value references is set on the
+ * server below it (`envStatus`; see `ControlFor`).
+ */
+export function FieldControl(props: t.FieldControlProps) {
+  return (
+    <EnvStatusWrap value={envStatusValue(props)} path={props.path}>
+      <ControlFor {...props} />
+    </EnvStatusWrap>
+  );
+}
+
+/**
+ * Picks the control from `FieldMeta.control` or the schema shape, wires
  * "Default" (no own value) through `onClear`, and falls back to YAML when the
  * value does not fit the control.
  */
-export function FieldControl({
+function ControlFor({
   field,
   path,
   id,

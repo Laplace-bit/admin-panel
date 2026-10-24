@@ -30,7 +30,9 @@ vi.mock('@/hooks', async () => {
   );
   const { useConfigFeatures } =
     await vi.importActual<typeof import('@/hooks/config/contract')>('@/hooks/config/contract');
-  return { useLocalize: () => localize, useDebouncedFilter, useConfigFeatures };
+  const { useRefreshScopes } =
+    await vi.importActual<typeof import('@/hooks/config/scope')>('@/hooks/config/scope');
+  return { useLocalize: () => localize, useDebouncedFilter, useConfigFeatures, useRefreshScopes };
 });
 
 const scopes: t.ConfigScope[] = [
@@ -136,6 +138,7 @@ function renderSelector({
   const onOpenChange = vi.fn();
   const onError = vi.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  seedResolvedReads(queryClient);
   render(
     <QueryClientProvider client={queryClient}>
       <ConfigContractContext.Provider value={contract}>
@@ -151,7 +154,25 @@ function renderSelector({
       </ConfigContractContext.Provider>
     </QueryClientProvider>,
   );
-  return { onSelect, onOpenChange, onError };
+  return { onSelect, onOpenChange, onError, queryClient };
+}
+
+/** Server-resolved reads cached before a profile change: Jane's preview, a scope catalog and the env status. */
+const RESOLVED_READS: ReadonlyArray<readonly string[]> = [
+  ['configPreview', 'user', 'u-jane'],
+  ['configCatalog', 'group', 'g-eng'],
+  ['envStatus'],
+];
+
+function seedResolvedReads(queryClient: QueryClient) {
+  for (const queryKey of RESOLVED_READS) queryClient.setQueryData(queryKey, {});
+}
+
+/** Whether a profile change left every cached server-resolved read stale, so Preview reads the server again. */
+function resolvedReadsStale(queryClient: QueryClient): boolean {
+  return RESOLVED_READS.every(
+    (queryKey) => queryClient.getQueryState(queryKey)?.isInvalidated === true,
+  );
 }
 
 const row = (name: RegExp) => screen.findByRole('option', { name });
@@ -225,8 +246,9 @@ describe('ScopeSelector list', () => {
 
   it('toggles a profile active without selecting it', async () => {
     vi.mocked(toggleScopeActiveFn).mockResolvedValue({ success: true });
-    const { onSelect } = renderSelector();
+    const { onSelect, queryClient } = renderSelector();
     await row(/^Engineering/);
+    expect(resolvedReadsStale(queryClient)).toBe(false);
     const active = screen.getByRole('option', {
       name: 'com_scope_active_option(name=Engineering)',
     });
@@ -238,6 +260,7 @@ describe('ScopeSelector list', () => {
       }),
     );
     expect(onSelect).not.toHaveBeenCalled();
+    await waitFor(() => expect(resolvedReadsStale(queryClient)).toBe(true));
   });
 });
 
@@ -255,7 +278,9 @@ describe('ScopeSelector delete', () => {
 
   it('deleting the open profile returns to Base', async () => {
     vi.mocked(deleteScopeFn).mockResolvedValue({ success: true });
-    const { onSelect } = renderSelector({ selection: { type: 'SCOPE', scope: scopes[1] } });
+    const { onSelect, queryClient } = renderSelector({
+      selection: { type: 'SCOPE', scope: scopes[1] },
+    });
     await row(/^Engineering/);
     fireEvent.click(
       screen.getByRole('option', { name: 'com_scope_delete_named(name=Engineering)' }),
@@ -266,6 +291,7 @@ describe('ScopeSelector delete', () => {
     expect(deleteScopeFn).toHaveBeenCalledWith({
       data: { principalType: PrincipalType.GROUP, principalId: 'g-eng' },
     });
+    expect(resolvedReadsStale(queryClient)).toBe(true);
   });
 
   it('offers delete for user profiles too', async () => {
@@ -289,7 +315,7 @@ describe('ScopeSelector create picker', () => {
     renderSelector();
     await openCreate();
     expect(await screen.findByText('com_scope_no_groups')).toBeInTheDocument();
-    expect(screen.getByText('com_scope_user_search_hint')).toBeInTheDocument();
+    expect(screen.getByText('com_scope_user_search_hint(count=2)')).toBeInTheDocument();
     const heading = screen.getByText('com_scope_groups');
     expect(heading).toHaveAttribute('cmdk-group-heading');
     expect(await screen.findByRole('option', { name: /^ADMIN/ })).toBeInTheDocument();
@@ -311,13 +337,14 @@ describe('ScopeSelector create picker', () => {
       name: 'ADMIN',
     };
     vi.mocked(createScopeFn).mockResolvedValue({ scope: created });
-    const { onSelect } = renderSelector();
+    const { onSelect, queryClient } = renderSelector();
     await openCreate();
     fireEvent.click(await screen.findByRole('option', { name: /^ADMIN/ }));
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith({ type: 'SCOPE', scope: created }));
     expect(createScopeFn).toHaveBeenCalledWith({
       data: { principalType: PrincipalType.ROLE, principalId: 'ADMIN', name: 'ADMIN' },
     });
+    expect(resolvedReadsStale(queryClient)).toBe(true);
   });
 
   it('finds users by search and creates a user profile', async () => {

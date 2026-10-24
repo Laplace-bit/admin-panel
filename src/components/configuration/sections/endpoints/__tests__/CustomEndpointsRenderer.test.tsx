@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { configSchema } from 'librechat-data-provider';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, fireEvent, within, act } from '@testing-library/react';
 import type * as t from '@/types';
 import {
@@ -142,6 +143,49 @@ describe('CustomEndpointsRenderer', () => {
   it('marks an endpoint LibreChat would not serve (CE-3)', () => {
     render(<Harness layers={baseLayers()} initial={[{ name: 'OnlyName' }]} />);
     expect(within(row('OnlyName')).getByText('com_config_ce_status_unserved')).toBeInTheDocument();
+  });
+
+  it('marks a saved endpoint the scope catalog says is not served, with why (catalogApi)', () => {
+    const client = new QueryClient();
+    client.setQueryData(['configCatalog', 'role', '__base__'], {
+      endpoints: {
+        Mine: { enabled: false, custom: true, envVars: [], reason: 'missing_api_key' },
+        Claude: { enabled: true, custom: true, envVars: ['CH_API_KEY'] },
+      },
+    });
+    const contract = createServerContract({ catalogApi: true });
+    const { unmount } = render(
+      <QueryClientProvider client={client}>
+        <Harness layers={baseLayers()} contract={contract} />
+      </QueryClientProvider>,
+    );
+    const chip = within(row('Mine')).getByText('com_config_ce_status_not_served');
+    expect(chip).toHaveAttribute('title', 'com_config_providers_reason_missing_api_key');
+    expect(within(row('Claude')).queryByText('com_config_ce_status_not_served')).toBeNull();
+    expect(within(row('GPT')).queryByText('com_config_ce_status_not_served')).toBeNull();
+    const edited = savedList(baseLayers()).map((entry) =>
+      isConfigRecord(entry) && entry.name === 'Mine' ? { ...entry, apiKey: 'sk-new' } : entry,
+    );
+    unmount();
+    render(
+      <QueryClientProvider client={client}>
+        <Harness layers={baseLayers()} contract={contract} initial={edited} />
+      </QueryClientProvider>,
+    );
+    expect(within(row('Mine')).queryByText('com_config_ce_status_not_served')).toBeNull();
+  });
+
+  it('marks nothing not served on a server whose meta leaves catalogApi out', () => {
+    const client = new QueryClient();
+    client.setQueryData(['configCatalog', 'role', '__base__'], {
+      endpoints: { Mine: { enabled: false, custom: true, envVars: [], reason: 'missing_api_key' } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <Harness layers={baseLayers()} contract={createServerContract({})} />
+      </QueryClientProvider>,
+    );
+    expect(within(row('Mine')).queryByText('com_config_ce_status_not_served')).toBeNull();
   });
 
   it('keeps the name of a librechat.yaml endpoint read-only and offers no delete (D1)', () => {

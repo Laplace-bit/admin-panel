@@ -10,6 +10,7 @@ import {
   stripSecretPreviewValues,
   filterSecretPreviewFields,
   maskSecretValues,
+  maskStoredSecrets,
   MASKED_SECRET,
 } from './secrets';
 import { createField } from '@/test/fixtures';
@@ -203,5 +204,49 @@ describe('maskSecretValues', () => {
     expect(maskSecretValues('sk-live', 'apiKey')).toBe(MASKED_SECRET);
     expect(maskSecretValues('', 'apiKey')).toBe('');
     expect(maskSecretValues('https://x', 'baseURL')).toBe('https://x');
+  });
+});
+
+describe('maskStoredSecrets', () => {
+  it('masks every key the secret rule names, at any depth, and keeps ${VAR} references readable', () => {
+    expect(
+      maskStoredSecrets({
+        endpoints: {
+          custom: [
+            { name: 'A', apiKey: '${CH_API_KEY}', apiKeyPreview: 'sk-...abcd' },
+            { name: 'B', apiKey: 'sk-live' },
+          ],
+        },
+        webSearch: { tavilyApiKey: 'tvly-live', serperApiKey: '${SERPER_API_KEY}' },
+        mcpServers: {
+          acme: {
+            apiKey: { source: 'admin', authorization_type: 'bearer', key: 'live-key' },
+            oauth: { client_secret: 'shh', client_id: 'acme' },
+          },
+        },
+        ocr: { apiKey: '${OCR_API_KEY}', baseURL: 'https://ocr' },
+      }),
+    ).toEqual({
+      endpoints: {
+        custom: [
+          { name: 'A', apiKey: '${CH_API_KEY}', apiKeyPreview: 'sk-...abcd' },
+          { name: 'B', apiKey: MASKED_SECRET },
+        ],
+      },
+      webSearch: { tavilyApiKey: MASKED_SECRET, serperApiKey: '${SERPER_API_KEY}' },
+      mcpServers: {
+        acme: {
+          apiKey: { source: 'admin', authorization_type: 'bearer', key: MASKED_SECRET },
+          oauth: { client_secret: MASKED_SECRET, client_id: 'acme' },
+        },
+      },
+      ocr: { apiKey: '${OCR_API_KEY}', baseURL: 'https://ocr' },
+    });
+  });
+
+  it('masks a reference with text around it, and leaves empty values and other keys alone', () => {
+    expect(maskStoredSecrets('prefix-${KEY}', undefined, 'apiKey')).toBe(MASKED_SECRET);
+    expect(maskStoredSecrets('', undefined, 'cohereApiKey')).toBe('');
+    expect(maskStoredSecrets('live', 'headers', 'key')).toBe('live');
   });
 });

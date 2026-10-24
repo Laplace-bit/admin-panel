@@ -11,9 +11,9 @@ const ACTION_BUTTON =
   'flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-(--cui-color-stroke-default) bg-transparent px-3 py-1.5 text-sm text-(--cui-color-text-default) transition-colors hover:bg-(--cui-color-background-hover) aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent';
 
 /**
- * Import / Reset / scope actions, portaled into the page header (WS5). Below
- * `md` Import and Reset move into a menu and the scope label truncates, so
- * nothing overlaps the title at phone width (SH-7).
+ * Preview / Import / Reset / scope actions, portaled into the page header
+ * (WS5). Below `md` Preview, Import and Reset move into a menu and the scope
+ * label truncates, so nothing overlaps the title at phone width (SH-7).
  */
 export function HeaderActions({
   showImport,
@@ -25,6 +25,8 @@ export function HeaderActions({
   resetTitle,
   onResetClick,
   resetLabel,
+  showPreview = false,
+  onPreviewClick,
   showScope,
   scopeSelection,
   scopeLoading,
@@ -39,6 +41,9 @@ export function HeaderActions({
   }, []);
 
   const menuItems: t.KebabMenuItem[] = [
+    ...(showPreview && onPreviewClick
+      ? [{ label: localize('com_config_preview_button'), onClick: onPreviewClick }]
+      : []),
     ...(showImport
       ? [
           {
@@ -64,6 +69,21 @@ export function HeaderActions({
 
   const content = (
     <>
+      {showPreview && onPreviewClick && (
+        <span className="hidden md:flex">
+          <button
+            type="button"
+            onClick={onPreviewClick}
+            title={localize('com_config_preview_button_desc')}
+            className={ACTION_BUTTON}
+          >
+            <span aria-hidden="true">
+              <Icon name="eye" size="xs" />
+            </span>
+            {localize('com_config_preview_button')}
+          </button>
+        </span>
+      )}
       {showImport && (
         <span className="hidden md:flex">
           <button

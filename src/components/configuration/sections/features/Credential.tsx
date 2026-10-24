@@ -1,9 +1,9 @@
 import { useId } from 'react';
 import type * as t from '@/types';
+import { useLocalize, useEnvReferences, useConfigFeatures } from '@/hooks';
 import { isEncryptedCredential, SECRET_PREVIEW_MASK } from '@/constants';
 import { SecretField, SecretInput } from '../../fields/SecretField';
 import { FieldControl } from '../../renderer/FieldControl';
-import { useLocalize, useConfigFeatures } from '@/hooks';
 import { DecorativeIcon } from '@/components/shared';
 import { TextField } from '../../fields/TextField';
 import { credentialState } from './state';
@@ -23,6 +23,50 @@ const TONE_CLASSES: Record<t.StatusTone, string> = {
 /** States in which the credential's value is the one typed or stored here, not an environment reference. */
 const LITERAL_STATES: ReadonlySet<t.CredentialStatus> = new Set(['pending', 'stored', 'set']);
 
+/** Locale keys of the status line of a credential read from an environment variable, by the variable's state. */
+const ENV_LINE_KEYS: Readonly<
+  Record<'env' | 'default', Readonly<Record<t.EnvReferenceState, string>>>
+> = {
+  env: {
+    set: 'com_config_features_cred_env_set',
+    unset: 'com_config_features_cred_env_unset',
+    userProvided: 'com_config_features_cred_env_user',
+    notAllowed: 'com_config_features_cred_env_not_allowed',
+    unreported: 'com_config_features_cred_env',
+  },
+  default: {
+    set: 'com_config_features_cred_default_set',
+    unset: 'com_config_features_cred_default_unset',
+    userProvided: 'com_config_features_cred_default_user',
+    notAllowed: 'com_config_features_cred_default_not_allowed',
+    unreported: 'com_config_features_cred_default',
+  },
+};
+
+/**
+ * The status line of a credential read from an environment variable, with
+ * whether the server has it set (`envStatus`) and lets an override use it
+ * (`envAllowlist`). Unset or not allowed is a warning only for a credential
+ * the selected service needs (`needed`), since its value is then empty; an
+ * optional one falls back to the service's default. Without a reported
+ * state the line names the variable only.
+ */
+function envLine(
+  status: 'env' | 'default',
+  env: string,
+  envState: t.EnvReferenceState,
+  needed: boolean,
+  localize: t.LocalizeFn,
+): t.CredentialStatusLine {
+  const text = localize(ENV_LINE_KEYS[status][envState], { env });
+  if (envState === 'unset' || envState === 'notAllowed') {
+    return needed ? { tone: 'warn', icon: 'warning', text } : { tone: 'muted', icon: 'key', text };
+  }
+  if (envState === 'userProvided') return { tone: 'muted', icon: 'user', text };
+  if (envState === 'set' || status === 'env') return { tone: 'ok', icon: 'key', text };
+  return { tone: 'muted', icon: 'key', text };
+}
+
 /**
  * The status line of a credential: its source, and whether something is
  * wrong. Before `webSearchStoredKeys`, LibreChat resolves web search values
@@ -34,6 +78,7 @@ function statusLine(
   serviceName: string,
   inUse: boolean,
   storedKeysUsed: boolean,
+  envState: t.EnvReferenceState | undefined,
   localize: t.LocalizeFn,
 ): t.CredentialStatusLine | null {
   const encrypted = isEncryptedCredential(credential, { webSearchStoredKeys: storedKeysUsed });
@@ -64,17 +109,14 @@ function statusLine(
         ),
       };
     case 'env':
-      return {
-        tone: 'ok',
-        icon: 'key',
-        text: localize('com_config_features_cred_env', { env: state.env ?? credential.env }),
-      };
     case 'default':
-      return {
-        tone: 'muted',
-        icon: 'key',
-        text: localize('com_config_features_cred_default', { env: state.env ?? credential.env }),
-      };
+      return envLine(
+        state.status,
+        state.env ?? credential.env,
+        envState ?? 'unreported',
+        inUse && credential.required,
+        localize,
+      );
     case 'set':
       return credential.secret && !encrypted
         ? {
@@ -115,9 +157,24 @@ export function CredentialControl({
   const localize = useLocalize();
   const { webSearchStoredKeys } = useConfigFeatures();
   const statusId = useId();
-  if (props.disabled) return <FieldControl {...props} />;
   const state = credentialState({ ...props, credential });
-  const line = statusLine(state, credential, serviceName, inUse, webSearchStoredKeys, localize);
+  const readsEnv = state.status === 'env' || state.status === 'default';
+  const envName = state.env ?? credential.env;
+  const [envReference] = useEnvReferences(
+    undefined,
+    props.path,
+    readsEnv && !props.disabled ? [envName] : [],
+  );
+  if (props.disabled) return <FieldControl {...props} />;
+  const line = statusLine(
+    state,
+    credential,
+    serviceName,
+    inUse,
+    webSearchStoredKeys,
+    envReference?.state,
+    localize,
+  );
   const text = typeof props.value === 'string' ? props.value : '';
   const placeholder = localize(
     credential.secret

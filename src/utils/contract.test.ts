@@ -15,8 +15,8 @@ import {
   BUNDLED_CONFIG_CONTRACT,
   READ_ONLY_CONFIG_SECTIONS,
 } from '@/constants';
-import { createServerContract } from '@/test/fixtures';
 import { resolveConfigContract, foldsEndpointReferences } from './contract';
+import { createServerContract } from '@/test/fixtures';
 
 describe('resolveConfigContract', () => {
   it('is the bundled contract, every feature off, for a server without the meta route', () => {
@@ -52,6 +52,26 @@ describe('resolveConfigContract', () => {
       titleResolution: 'field',
       baseOnlyPaths: ['endpoints.agents.pullRequests.provider'],
     });
+  });
+
+  it('reads the read-API flags and the catalog model-list lifetime, each off or bundled when left out', () => {
+    const contract = resolveConfigContract({
+      features: { resolvedApi: true, catalogApi: true, envStatus: true },
+      limits: { catalogModelsTtlMs: 0 },
+    });
+    expect(contract.features).toMatchObject({
+      resolvedApi: true,
+      catalogApi: true,
+      envStatus: true,
+    });
+    expect(contract.limits.catalogModelsTtlMs).toBe(0);
+    const older = resolveConfigContract({ features: { changesBatch: true } });
+    expect(older.features).toMatchObject({
+      resolvedApi: false,
+      catalogApi: false,
+      envStatus: false,
+    });
+    expect(older.limits.catalogModelsTtlMs).toBe(BUNDLED_CONFIG_LIMITS.catalogModelsTtlMs);
   });
 
   it('reports versions only when all three are given', () => {

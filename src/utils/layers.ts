@@ -1,5 +1,5 @@
 import type * as t from '@/types';
-import { BUNDLED_WRITE_RULES, DEDICATED_CONFIG_SECTIONS } from '@/constants';
+import { BASE_PRINCIPAL, BUNDLED_WRITE_RULES, DEDICATED_CONFIG_SECTIONS } from '@/constants';
 import { deepSerializeKVPairs, getValueAtPath, isConfigRecord } from './format';
 import { collectLeafPaths, createPathIndex } from './paths';
 import { mapSecretPreviewPaths } from './secrets';
@@ -252,5 +252,53 @@ export function withScopeLayer(
       tombstones: new Set(data.tombstones),
     },
     effective: mergeScopeLayer(layers.base ?? {}, data.overrides, data.tombstones, rules),
+  };
+}
+
+/**
+ * The config a principal gets as the panel can estimate it, for a server that
+ * does not resolve configs itself (no `resolvedApi`): Base (librechat.yaml
+ * with the base overrides, as LibreChat serves it) with the principal's own
+ * profile merged over it (`mergeScopeLayer`), unless the profile is inactive.
+ * The profiles of a user's role and groups are not part of it, and nothing
+ * says what LibreChat leaves out of a document.
+ */
+export function estimateConfigPreview({
+  base,
+  scope,
+  own,
+  rules,
+}: t.PreviewEstimateInput): t.ConfigPreview {
+  const layers: t.PreviewLayer[] =
+    base.dbOverrides !== undefined || base.dbTombstones.length > 0
+      ? [
+          {
+            ...BASE_PRINCIPAL,
+            priority: 0,
+            isActive: true,
+            overrides: base.dbOverrides ?? {},
+            tombstones: base.dbTombstones,
+            ignored: [],
+          },
+        ]
+      : [];
+  const yaml = base.yamlConfig ?? {};
+  if (!scope || !own) return { source: 'panel', yaml, layers, resolved: base.config };
+  const layer: t.PreviewLayer = {
+    principalType: scope.principalType,
+    principalId: scope.principalId,
+    priority: scope.priority,
+    isActive: scope.isActive,
+    overrides: own.overrides,
+    tombstones: own.tombstones,
+    ignored: [],
+  };
+  return {
+    source: 'panel',
+    yaml,
+    layers: [...layers, layer],
+    resolved: scope.isActive
+      ? mergeScopeLayer(base.config, own.overrides, own.tombstones, rules)
+      : base.config,
   };
 }

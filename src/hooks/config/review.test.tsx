@@ -482,6 +482,18 @@ describe('saving against the loaded revision (changesBatch)', () => {
     expect(result.current.edits.editedValues).toEqual({});
   });
 
+  it('marks the scope catalogs, env status and previews stale with the saved target', async () => {
+    applyMock.mockResolvedValue(saved);
+    const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+    const { result } = renderPage(yaml, {}, yaml, batch, 'base:4');
+    await editAndSave(result);
+    const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
+    expect(keys).toEqual(
+      expect.arrayContaining([['baseConfig'], ['configCatalog'], ['envStatus'], ['configPreview']]),
+    );
+    invalidate.mockRestore();
+  });
+
   it('names a target without a document as absent', async () => {
     applyMock.mockResolvedValue(saved);
     const { result } = renderPage(yaml, {}, yaml, batch, null);

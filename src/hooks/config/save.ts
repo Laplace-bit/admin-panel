@@ -27,16 +27,17 @@ import {
   toRevisionPrecondition,
 } from '@/utils';
 import {
-  ADMIN_API_KEY_FIELD,
-  validateMcpCrossField,
-} from '@/components/configuration/sections/mcp/validation';
-import {
   UNSAFE_KEY_CODES,
   TERMS_NOT_ACCEPTED_CODE,
   TERMS_NOT_ACCEPTED_ISSUE,
+  RESOLVED_READ_QUERY_KEYS,
   MCP_API_KEY_MISSING_CODE,
   MCP_SECRET_NOT_CARRIED_CODE,
 } from '@/constants';
+import {
+  ADMIN_API_KEY_FIELD,
+  validateMcpCrossField,
+} from '@/components/configuration/sections/mcp/validation';
 import { buildConfigChanges, normalizeEditValue } from '@/components/configuration/edits';
 import { specListIssues } from '@/components/configuration/sections/specs/validation';
 import { isResetSent, summarizeChanges } from '@/components/configuration/summary';
@@ -203,15 +204,14 @@ export function useConfigSave({
     [localize, describeSkipped],
   );
 
+  /** The target's own reads, and the server-resolved ones (catalogs, env status, previews) any save can change. */
   const invalidateTarget = useCallback(
     (target: t.WriteTarget) => {
-      if (target.type === 'base') {
-        return queryClient.invalidateQueries({ queryKey: ['baseConfig'] });
-      }
-      return Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['resolvedConfig'] }),
-        queryClient.invalidateQueries({ queryKey: ['availableScopes'] }),
-      ]);
+      const keys: ReadonlyArray<readonly string[]> =
+        target.type === 'base'
+          ? [['baseConfig'], ...RESOLVED_READ_QUERY_KEYS]
+          : [['resolvedConfig'], ['availableScopes'], ...RESOLVED_READ_QUERY_KEYS];
+      return Promise.all(keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })));
     },
     [queryClient],
   );
@@ -697,10 +697,11 @@ export function useResetBaseConfig({ onReset }: t.ResetBaseConfigOptions): t.Res
        *  base reset doesn't make it stale on its own — but base-derived data
        *  (schemaDefaults, base values used for MCP inheritance) feeds scope mode,
        *  so flush it too, consistent with how scope saves invalidate. */
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['baseConfig'] }),
-        queryClient.invalidateQueries({ queryKey: ['resolvedConfig'] }),
-      ]);
+      await Promise.all(
+        [['baseConfig'], ['resolvedConfig'], ...RESOLVED_READ_QUERY_KEYS].map((queryKey) =>
+          queryClient.invalidateQueries({ queryKey }),
+        ),
+      );
       onReset();
       setResettingBase(false);
       setResetBaseOpen(false);

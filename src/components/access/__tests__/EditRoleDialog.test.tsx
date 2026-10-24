@@ -1,21 +1,28 @@
 import { PrincipalType } from 'librechat-data-provider';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type * as t from '@/types';
 import { BUNDLED_CONFIG_FEATURES } from '@/constants';
 import { EditRoleDialog } from '../EditRoleDialog';
+import { removeRoleMemberFn, updateRoleFn } from '@/server';
 
 const state = vi.hoisted(() => ({
   features: {} as Record<string, boolean>,
   scopes: [] as Array<Pick<t.ConfigScope, 'principalType' | 'principalId'>>,
+  members: [] as Array<{ userId: string; name: string; email: string }>,
 }));
 
-vi.mock('@/hooks', () => ({
-  useLocalize: () => (key: string, options?: Record<string, string | number>) =>
-    options ? `${key}(${Object.values(options).join(',')})` : key,
-  useConfigFeatures: () => state.features,
-}));
+vi.mock('@/hooks', async () => {
+  const { useRefreshScopes } =
+    await vi.importActual<typeof import('@/hooks/config/scope')>('@/hooks/config/scope');
+  return {
+    useLocalize: () => (key: string, options?: Record<string, string | number>) =>
+      options ? `${key}(${Object.values(options).join(',')})` : key,
+    useConfigFeatures: () => state.features,
+    useRefreshScopes,
+  };
+});
 
 vi.mock('@/server', () => ({
   MEMBERS_PAGE_SIZE: 20,
@@ -25,7 +32,7 @@ vi.mock('@/server', () => ({
   }),
   roleMembersQueryOptions: (id: string, page: number) => ({
     queryKey: ['roleMembers', id, page],
-    queryFn: async () => ({ members: [], total: 0 }),
+    queryFn: async () => ({ members: state.members, total: state.members.length }),
   }),
   availableScopesOptions: {
     queryKey: ['availableScopes'],
@@ -49,13 +56,14 @@ const role: t.Role = {
   permissions: {},
 } as t.Role;
 
-function renderDialog() {
+function renderDialog(): QueryClient {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
       <EditRoleDialog role={role} canManage onClose={vi.fn()} />
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 async function rename(name: string) {
@@ -66,6 +74,7 @@ async function rename(name: string) {
 beforeEach(() => {
   state.features = { ...BUNDLED_CONFIG_FEATURES };
   state.scopes = [{ principalType: PrincipalType.ROLE, principalId: 'EDITORS' }];
+  state.members = [];
 });
 
 describe('EditRoleDialog rename note', () => {
@@ -99,5 +108,41 @@ describe('EditRoleDialog rename note', () => {
     await rename('WRITERS');
     await act(async () => {});
     expect(screen.queryByText(/com_access_rename_profile/)).not.toBeInTheDocument();
+  });
+});
+
+describe('EditRoleDialog save', () => {
+  it("refreshes the profiles and every server-resolved read, since a user's role resolves their config", async () => {
+    vi.mocked(updateRoleFn).mockResolvedValue({ role: { ...role, name: 'WRITERS' } });
+    const queryClient = renderDialog();
+    queryClient.setQueryData(['configPreview', 'user', 'u1'], { ok: true });
+    queryClient.setQueryData(['configCatalog', 'role', 'EDITORS'], {});
+    queryClient.setQueryData(['envStatus'], {});
+    await rename('WRITERS');
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_save' }));
+    await waitFor(() =>
+      expect(queryClient.getQueryState(['configPreview', 'user', 'u1'])?.isInvalidated).toBe(true),
+    );
+    expect(queryClient.getQueryState(['configCatalog', 'role', 'EDITORS'])?.isInvalidated).toBe(
+      true,
+    );
+    expect(queryClient.getQueryState(['envStatus'])?.isInvalidated).toBe(true);
+  });
+
+  it('refreshes the server-resolved reads when part of the save fails after other parts landed', async () => {
+    state.members = [{ userId: 'u1', name: 'Jane', email: 'jane@example.com' }];
+    vi.mocked(updateRoleFn).mockResolvedValue({ role });
+    vi.mocked(removeRoleMemberFn).mockRejectedValue(new Error('boom'));
+    const queryClient = renderDialog();
+    queryClient.setQueryData(['configPreview', 'user', 'u1'], { ok: true });
+    queryClient.setQueryData(['envStatus'], {});
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'com_access_tab_members' }));
+    fireEvent.click(await screen.findByLabelText('com_access_remove_member Jane'));
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_save' }));
+    await waitFor(() => expect(removeRoleMemberFn).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(queryClient.getQueryState(['configPreview', 'user', 'u1'])?.isInvalidated).toBe(true),
+    );
+    expect(queryClient.getQueryState(['envStatus'])?.isInvalidated).toBe(true);
   });
 });

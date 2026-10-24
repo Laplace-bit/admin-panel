@@ -10,7 +10,7 @@ import {
   TrashButton,
 } from '@/components/shared';
 import { deleteRoleFn, allRolesQueryOptions, ROLES_PAGE_SIZE } from '@/server';
-import { useCapabilities, useLocalize } from '@/hooks';
+import { useLocalize, useCapabilities, useRefreshScopes } from '@/hooks';
 import { notifySuccess, notifyError } from '@/utils';
 import { EditRoleDialog } from './EditRoleDialog';
 import { SystemCapabilities } from '@/constants';
@@ -19,6 +19,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 export function RolesTab({ onCreateRole }: t.RolesTabProps) {
   const localize = useLocalize();
   const queryClient = useQueryClient();
+  const refreshScopes = useRefreshScopes();
   const { hasCapability } = useCapabilities();
   const canManage = hasCapability(SystemCapabilities.MANAGE_ROLES);
   const [editTarget, setEditTarget] = useState<t.Role | null>(null);
@@ -51,7 +52,7 @@ export function RolesTab({ onCreateRole }: t.RolesTabProps) {
     mutationFn: (role: t.Role) => deleteRoleFn({ data: { id: role.id } }),
     onSuccess: (_data, role) => {
       queryClient.invalidateQueries({ queryKey: ['roles'] });
-      queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
+      void refreshScopes();
       queryClient.invalidateQueries({ queryKey: ['roleAssignments'] });
       queryClient.invalidateQueries({ queryKey: ['roleMembers'] });
       notifySuccess(localize('com_toast_role_deleted', { name: role.name }));

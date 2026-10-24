@@ -36,3 +36,9 @@ export interface OAuthExchangeResponse {
   user: SerializableUser;
   expiresAt?: number;
 }
+
+/** One page of an admin list endpoint: the items at an offset, and how many exist in all. */
+export interface ListPage<T> {
+  items: T[];
+  total: number;
+}

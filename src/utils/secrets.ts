@@ -202,3 +202,29 @@ export function maskSecretValues(value: t.ConfigValue, key?: string): t.ConfigVa
   }
   return result;
 }
+
+/**
+ * Copy of a config tree with every non-empty string the panel's secret rule
+ * names (`isStoredSecretKey`: `apiKey`, `tavilyApiKey`, `client_secret`, an
+ * MCP server's `apiKey.key`) replaced by `MASKED_SECRET`, while a `${VAR}`
+ * reference, which is not a secret, stays readable. `parent` and `key` are
+ * where `value` is stored. For a tree the server already redacted (a
+ * preview), so a value it left under a secret key is still never shown.
+ */
+export function maskStoredSecrets(
+  value: t.ConfigValue,
+  parent?: string,
+  key?: string,
+): t.ConfigValue {
+  if (typeof value === 'string') {
+    const secret = key != null && value !== '' && isStoredSecretKey(parent, key);
+    return secret && !isEnvReference(value) ? MASKED_SECRET : value;
+  }
+  if (Array.isArray(value)) return value.map((item) => maskStoredSecrets(item));
+  if (!value || typeof value !== 'object') return value;
+  const result: Record<string, t.ConfigValue> = {};
+  for (const [childKey, child] of Object.entries(value)) {
+    result[childKey] = maskStoredSecrets(child, key, childKey);
+  }
+  return result;
+}

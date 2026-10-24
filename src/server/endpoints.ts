@@ -2,8 +2,9 @@ import { queryOptions } from '@tanstack/react-query';
 import { createServerFn } from '@tanstack/react-start';
 import { getRequestHeader } from '@tanstack/react-start/server';
 import type * as t from '@/types';
-import { isConfigRecord } from '@/utils';
+import { readApiJson } from './utils/json';
 import { apiFetch } from './utils/api';
+import { isConfigRecord } from '@/utils';
 
 /**
  * Enabled endpoints from `GET /api/endpoints` (as LibreChat serves them to the
@@ -61,16 +62,11 @@ export function toToolOptions(payload: t.ConfigValue): t.ToolOption[] {
   return options;
 }
 
-async function readJson(response: Response, what: string): Promise<t.ConfigValue> {
-  if (!response.ok) throw new Error(`Failed to load ${what}: ${response.status}`);
-  return (await response.json()) as t.ConfigValue;
-}
-
 /** Which endpoints LibreChat serves (AP-5 status badges, `endpoints` option source). */
 export const getEndpointStatusFn = createServerFn({ method: 'GET' }).handler(
   async (): Promise<t.EndpointStatusMap> => {
     const response = await apiFetch('/api/endpoints');
-    return toEndpointStatusMap(await readJson(response, 'endpoints'));
+    return toEndpointStatusMap(await readApiJson(response, 'endpoints'));
   },
 );
 
@@ -78,7 +74,7 @@ export const getEndpointStatusFn = createServerFn({ method: 'GET' }).handler(
 export const getModelsFn = createServerFn({ method: 'GET' }).handler(
   async (): Promise<t.EndpointModelsMap> => {
     const response = await apiFetch('/api/models');
-    return toEndpointModelsMap(await readJson(response, 'models'));
+    return toEndpointModelsMap(await readApiJson(response, 'models'));
   },
 );
 
@@ -93,7 +89,7 @@ export const getToolsFn = createServerFn({ method: 'GET' }).handler(
       '/api/agents/tools',
       userAgent ? { headers: { 'User-Agent': userAgent } } : undefined,
     );
-    return toToolOptions(await readJson(response, 'tools'));
+    return toToolOptions(await readApiJson(response, 'tools'));
   },
 );
 

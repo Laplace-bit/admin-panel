@@ -26,9 +26,12 @@ vi.mock('@/hooks', async () => {
     await vi.importActual<typeof import('@/hooks/dialogs')>('@/hooks/dialogs');
   const { useConfigFeatures } =
     await vi.importActual<typeof import('@/hooks/config/contract')>('@/hooks/config/contract');
+  const { useRefreshScopes } =
+    await vi.importActual<typeof import('@/hooks/config/scope')>('@/hooks/config/scope');
   return {
     useLocalize: () => localize,
     useScopeActions,
+    useRefreshScopes,
     useReturnFocus,
     useConfigFeatures,
     useExpandSignal: () => undefined,
@@ -62,9 +65,25 @@ const design: t.ConfigScope = {
   tombstones: [],
 };
 
+/** A preview and a scope catalog cached before a profile change. */
+const PREVIEW_KEY = ['configPreview', 'group', 'g-eng'];
+const CATALOG_KEY = ['configCatalog', 'group', 'g-eng'];
+
 function wrap(children: ReactNode) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>);
+  queryClient.setQueryData(PREVIEW_KEY, { ok: true });
+  queryClient.setQueryData(CATALOG_KEY, {});
+  const rendered = render(
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
+  );
+  return { ...rendered, queryClient };
+}
+
+/** Whether the cached preview and catalog are stale, so the next read asks the server again. */
+function resolvedReadsStale(queryClient: QueryClient): boolean {
+  return [PREVIEW_KEY, CATALOG_KEY].every(
+    (queryKey) => queryClient.getQueryState(queryKey)?.isInvalidated === true,
+  );
 }
 
 beforeEach(() => {
@@ -98,7 +117,7 @@ describe('ScopeBar', () => {
     const inactive = { ...engineering, isActive: false };
     vi.mocked(availableScopesOptions.queryFn!).mockResolvedValue([inactive]);
     vi.mocked(toggleScopeActiveFn).mockResolvedValue({ success: true });
-    wrap(<ScopeBar scope={inactive} onBackToBase={vi.fn()} />);
+    const { queryClient } = wrap(<ScopeBar scope={inactive} onBackToBase={vi.fn()} />);
     expect(screen.getByText('com_scope_inactive_hint')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'com_scope_activate' }));
     await waitFor(() =>
@@ -106,6 +125,7 @@ describe('ScopeBar', () => {
         data: { principalType: PrincipalType.GROUP, principalId: 'g-eng', isActive: true },
       }),
     );
+    await waitFor(() => expect(resolvedReadsStale(queryClient)).toBe(true));
   });
 
   it('says when the open profile was deleted and still offers the way back', async () => {
@@ -160,7 +180,9 @@ describe('ScopeBar on a server with deterministic precedence and a priority rout
   it('changes the priority, refusing one that is not a whole number of 0 or more', async () => {
     vi.mocked(availableScopesOptions.queryFn!).mockResolvedValue([engineering]);
     vi.mocked(setScopePriorityFn).mockResolvedValue({ priority: 5 });
-    ordered(<ScopeBar scope={engineering} onBackToBase={vi.fn()} canEditPriority />);
+    const { queryClient } = ordered(
+      <ScopeBar scope={engineering} onBackToBase={vi.fn()} canEditPriority />,
+    );
     fireEvent.click(screen.getByRole('button', { name: 'com_scope_priority_change_label' }));
     const input = screen.getByRole('spinbutton');
     expect(input).toHaveValue(20);
@@ -176,6 +198,7 @@ describe('ScopeBar on a server with deterministic precedence and a priority rout
       }),
     );
     await waitFor(() => expect(screen.queryByRole('spinbutton')).toBeNull());
+    expect(resolvedReadsStale(queryClient)).toBe(true);
   });
 
   it('reports a refused change and keeps the field open', async () => {

@@ -27,7 +27,10 @@ export type ConfigFeatureFlag =
   | 'envAllowlist'
   | 'secretRebinding'
   | 'writeReport'
-  | 'issueParams';
+  | 'issueParams'
+  | 'resolvedApi'
+  | 'catalogApi'
+  | 'envStatus';
 
 /** Which admin config behaviours the server has; a flag it does not report is `false`. */
 export type ConfigFeatures = Readonly<Record<ConfigFeatureFlag, boolean>>;
@@ -39,6 +42,8 @@ export interface ConfigLimits {
   maxChangeOps: number;
   /** How long another LibreChat instance may serve resolved config from before a write. */
   overrideCacheTtlMs: number;
+  /** How long `GET /catalog` reuses a scope's model lists while its endpoint config is unchanged (`catalogApi`). */
+  catalogModelsTtlMs: number;
 }
 
 /** A secret config field: encrypted at rest, omitted from reads, kept when a write omits it. */

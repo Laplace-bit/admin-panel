@@ -7,12 +7,13 @@ import { addRoleMemberFn, createRoleFn, updateRolePermissionsFn } from '@/server
 import { SelectedMemberList, UserSearchInline } from '@/components/shared';
 import { RolePermissionsPanel } from './RolePermissionsPanel';
 import { cn, notifySuccess, notifyError } from '@/utils';
+import { useLocalize, useRefreshScopes } from '@/hooks';
 import { defaultPermissions } from '@/constants';
-import { useLocalize } from '@/hooks';
 
 export function CreateRoleDialog({ open, onClose }: t.CreateRoleDialogProps) {
   const localize = useLocalize();
   const queryClient = useQueryClient();
+  const refreshScopes = useRefreshScopes();
   const [activeTab, setActiveTab] = useState<t.CreateRoleTab>('details');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -39,11 +40,13 @@ export function CreateRoleDialog({ open, onClose }: t.CreateRoleDialogProps) {
       }
       return { name: submittedName };
     },
-    onSuccess: (data) => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['roles'] });
       queryClient.invalidateQueries({ queryKey: ['roleMembers'] });
-      queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
       queryClient.invalidateQueries({ queryKey: ['roleAssignments'] });
+      void refreshScopes();
+    },
+    onSuccess: (data) => {
       notifySuccess(localize('com_toast_role_created', { name: data.name }));
       resetAndClose();
     },

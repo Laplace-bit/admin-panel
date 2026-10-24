@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, useMemo, useEffect, useCallback, useContext } from 'react';
 import type * as t from '@/types';
 import {
@@ -14,6 +14,7 @@ import {
 } from '@/utils';
 import { useConfigWriteRules, useConfigFeatures } from './contract';
 import { ScopeActionsContext } from '@/contexts/ScopeContext';
+import { RESOLVED_READ_QUERY_KEYS } from '@/constants';
 import { availableScopesOptions } from '@/server';
 
 const EMPTY_SCOPES: t.ConfigScope[] = [];
@@ -101,6 +102,24 @@ export function useScopeSelection({
     scopeLoadError: param != null && !match && isError ? error : null,
     retryScopes,
   };
+}
+
+/**
+ * Refreshes what a change to who gets which configuration makes stale: a
+ * profile created, deleted, switched on or off or re-prioritised, or a role
+ * or group membership edited. The profiles list is refetched, and the
+ * returned promise waits for it; the server-resolved reads (previews, scope
+ * catalogs, env status) are marked stale and refetch in the background, so a
+ * Preview opened next shows what the server resolves now.
+ */
+export function useRefreshScopes(): () => Promise<void> {
+  const queryClient = useQueryClient();
+  return useCallback(() => {
+    for (const queryKey of RESOLVED_READ_QUERY_KEYS) {
+      void queryClient.invalidateQueries({ queryKey });
+    }
+    return queryClient.invalidateQueries({ queryKey: availableScopesOptions.queryKey });
+  }, [queryClient]);
 }
 
 /**

@@ -38,6 +38,9 @@ export const CONFIG_FEATURE_FLAGS: readonly t.ConfigFeatureFlag[] = [
   'secretRebinding',
   'writeReport',
   'issueParams',
+  'resolvedApi',
+  'catalogApi',
+  'envStatus',
 ];
 
 /** A server without the meta route (or one that leaves a flag out) has none of these behaviours. */
@@ -50,6 +53,7 @@ export const BUNDLED_CONFIG_LIMITS: t.ConfigLimits = {
   maxPatchEntries: 100,
   maxChangeOps: 0,
   overrideCacheTtlMs: 60_000,
+  catalogModelsTtlMs: 120_000,
 };
 
 /** `expectedRevision` that makes a write apply only when the principal has no document. */

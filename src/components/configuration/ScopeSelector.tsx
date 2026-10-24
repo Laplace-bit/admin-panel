@@ -1,11 +1,23 @@
 import { Command } from 'cmdk';
-import { PrincipalType } from 'librechat-data-provider';
+import { useQuery } from '@tanstack/react-query';
 import { Badge, Button } from '@clickhouse/click-ui';
+import { PrincipalType } from 'librechat-data-provider';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Title as DialogTitle, Description as DialogDescription } from '@radix-ui/react-dialog';
 import type * as t from '@/types';
+import {
+  cn,
+  errorText,
+  isSameScope,
+  roleCandidate,
+  userCandidate,
+  groupCandidate,
+  formatScopeName,
+  findPriorityTies,
+  isCurrentSelection,
+  countScopeOverrides,
+} from '@/utils';
 import {
   createScopeFn,
   deleteScopeFn,
@@ -15,33 +27,15 @@ import {
   allGroupsQueryOptions,
   availableScopesOptions,
 } from '@/server';
-import {
-  cn,
-  errorText,
-  isSameScope,
-  formatScopeName,
-  findPriorityTies,
-  isCurrentSelection,
-  countScopeOverrides,
-} from '@/utils';
-import { useLocalize, useConfigFeatures, useDebouncedFilter } from '@/hooks';
+import { getScopeTypeConfig, MIN_USER_SEARCH_LENGTH, SCOPE_PRINCIPAL_GROUPS } from '@/constants';
+import { useLocalize, useRefreshScopes, useConfigFeatures, useDebouncedFilter } from '@/hooks';
 import { DecorativeIcon } from '@/components/shared';
-import { getScopeTypeConfig } from '@/constants';
-
-/** The admin user search needs at least this many characters. */
-const MIN_USER_QUERY = 2;
 
 const TYPE_LABEL_KEYS: Readonly<Record<string, string>> = {
   [PrincipalType.ROLE]: 'com_scope_type_role',
   [PrincipalType.GROUP]: 'com_scope_type_group',
   [PrincipalType.USER]: 'com_scope_type_user',
 };
-
-const GROUPS: ReadonlyArray<{ type: t.ScopePrincipalType; headingKey: string }> = [
-  { type: PrincipalType.ROLE, headingKey: 'com_scope_roles' },
-  { type: PrincipalType.GROUP, headingKey: 'com_scope_groups' },
-  { type: PrincipalType.USER, headingKey: 'com_scope_users' },
-];
 
 function principalKey(type: PrincipalType, id: string): string {
   return `${type}:${id}`;
@@ -57,7 +51,7 @@ export function ScopeSelector({
   isDirty = false,
 }: t.ScopeSelectorProps) {
   const localize = useLocalize();
-  const queryClient = useQueryClient();
+  const refreshScopes = useRefreshScopes();
   const { deterministicPrecedence } = useConfigFeatures();
   const precedenceKey = deterministicPrecedence
     ? 'com_scope_precedence_ordered'
@@ -90,7 +84,7 @@ export function ScopeSelector({
   const userSearch = useQuery({
     queryKey: ['scopeUserSearch', userQuery],
     queryFn: () => searchUsersFn({ data: { query: userQuery } }).then((r) => r.users),
-    enabled: open && showCreate && userQuery.length >= MIN_USER_QUERY,
+    enabled: open && showCreate && userQuery.length >= MIN_USER_SEARCH_LENGTH,
     staleTime: 30_000,
   });
 
@@ -145,36 +139,9 @@ export function ScopeSelector({
     const isNew = (c: t.ScopeCandidate) =>
       !existingKeys.has(principalKey(c.principalType, c.principalId));
     return {
-      [PrincipalType.ROLE]: allRoles
-        .map(
-          (role): t.ScopeCandidate => ({
-            principalType: PrincipalType.ROLE,
-            principalId: role.id,
-            name: role.name,
-            description: role.description,
-          }),
-        )
-        .filter(isNew),
-      [PrincipalType.GROUP]: allGroups
-        .map(
-          (group): t.ScopeCandidate => ({
-            principalType: PrincipalType.GROUP,
-            principalId: group.id,
-            name: group.name,
-            description: group.description,
-          }),
-        )
-        .filter(isNew),
-      [PrincipalType.USER]: (userSearch.data ?? [])
-        .map(
-          (user): t.ScopeCandidate => ({
-            principalType: PrincipalType.USER,
-            principalId: user.id,
-            name: user.name || user.username || user.email,
-            email: user.email,
-          }),
-        )
-        .filter(isNew),
+      [PrincipalType.ROLE]: allRoles.map(roleCandidate).filter(isNew),
+      [PrincipalType.GROUP]: allGroups.map(groupCandidate).filter(isNew),
+      [PrincipalType.USER]: (userSearch.data ?? []).map(userCandidate).filter(isNew),
     };
   }, [allRoles, allGroups, userSearch.data, existingKeys]);
 
@@ -201,14 +168,14 @@ export function ScopeSelector({
             ...(candidate.email && { email: candidate.email }),
           },
         });
-        await queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
+        await refreshScopes();
         choose({ type: 'SCOPE', scope });
       } catch (err) {
         setCreatingKey(null);
         onError?.(errorText(err, localize('com_scope_create_error'), localize));
       }
     },
-    [creatingKey, queryClient, choose, onError, localize],
+    [creatingKey, refreshScopes, choose, onError, localize],
   );
 
   const handleToggleActive = useCallback(
@@ -218,14 +185,14 @@ export function ScopeSelector({
         await toggleScopeActiveFn({
           data: { principalType: scope.principalType, principalId: scope.principalId, isActive },
         });
-        await queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
+        await refreshScopes();
       } catch (err) {
         onError?.(errorText(err, localize('com_scope_toggle_error'), localize));
       } finally {
         setTogglingKey(null);
       }
     },
-    [queryClient, onError, localize],
+    [refreshScopes, onError, localize],
   );
 
   const isOpenScope = useCallback(
@@ -246,7 +213,7 @@ export function ScopeSelector({
           principalId: deleteTarget.principalId,
         },
       });
-      await queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
+      await refreshScopes();
       if (isOpenScope(deleteTarget)) onSelect({ type: 'BASE' });
       setDeleteTarget(null);
       setDeleting(false);
@@ -258,7 +225,7 @@ export function ScopeSelector({
     deleteTarget,
     deleting,
     deleteBlocked,
-    queryClient,
+    refreshScopes,
     isOpenScope,
     onSelect,
     onError,
@@ -335,7 +302,9 @@ export function ScopeSelector({
           allGroups.length === 0 ? 'com_scope_no_groups' : 'com_scope_all_groups_used',
         );
       }
-      if (userQuery.length < MIN_USER_QUERY) return localize('com_scope_user_search_hint');
+      if (userQuery.length < MIN_USER_SEARCH_LENGTH) {
+        return localize('com_scope_user_search_hint', { count: MIN_USER_SEARCH_LENGTH });
+      }
       if (userSearch.isError) return localize('com_scope_user_search_error');
       return localize('com_scope_user_search_empty');
     };
@@ -372,7 +341,7 @@ export function ScopeSelector({
           )}
         </div>
         <Command.List ref={listRef} className="max-h-95 overflow-y-auto p-2 pb-3">
-          {GROUPS.map(({ type, headingKey }) => {
+          {SCOPE_PRINCIPAL_GROUPS.map(({ type, headingKey }) => {
             const config = getScopeTypeConfig(type);
             const items = candidates[type];
             return (
@@ -499,7 +468,7 @@ export function ScopeSelector({
               </Command.Item>
             </Command.Group>
 
-            {GROUPS.map(({ type, headingKey }) => {
+            {SCOPE_PRINCIPAL_GROUPS.map(({ type, headingKey }) => {
               const list = scopesByType.get(type);
               if (!list?.length) return null;
               return (

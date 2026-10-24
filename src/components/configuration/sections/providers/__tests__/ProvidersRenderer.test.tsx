@@ -61,10 +61,12 @@ function renderProviders(
   overrides: Partial<t.FieldRendererProps> = {},
   titleResolution?: t.ConfigRules['titleResolution'],
   contract: t.ConfigContract = BUNDLED_CONFIG_CONTRACT,
+  seed?: (client: QueryClient) => void,
 ) {
   const client = new QueryClient();
   client.setQueryData(['endpointStatus', 0], STATUS);
   client.setQueryData(['endpointModels', 0], { openAI: ['gpt-5-mini', 'gpt-5'] });
+  seed?.(client);
   const onChange = vi.fn();
   const values: t.ConfigValuesData = { configValues: CONFIG, editedValues: {}, titleResolution };
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -115,6 +117,76 @@ describe('ProvidersRenderer', () => {
     expect(within(card('openAI')).getByText('com_config_providers_status_active')).toBeTruthy();
     expect(within(card('google')).getByText('com_config_providers_status_disabled')).toBeTruthy();
     expect(within(card('all')).queryByText(/com_config_providers_status_/)).toBeNull();
+  });
+
+  it("reads status from the scope catalog, with why a provider is not served and its env names' status", () => {
+    const contract = createServerContract({ catalogApi: true, envStatus: true });
+    const { container } = renderProviders({}, undefined, contract, (client) => {
+      client.setQueryData(['configCatalog', 'role', '__base__'], {
+        status: { anthropic: { name: 'anthropic', custom: false, userProvide: false } },
+        endpoints: {
+          anthropic: { enabled: true, custom: false, envVars: ['ANTHROPIC_API_KEY'] },
+          google: {
+            enabled: false,
+            custom: false,
+            envVars: ['GOOGLE_KEY', 'GOOGLE_SERVICE_KEY_FILE'],
+            reason: 'not_listed',
+          },
+        },
+        models: { anthropic: ['claude-opus-5-5', 'claude-haiku-4-5'] },
+      });
+      client.setQueryData(['envStatus'], {
+        GOOGLE_KEY: { set: true, userProvided: false, sources: ['endpoint'] },
+        GOOGLE_SERVICE_KEY_FILE: { set: false, userProvided: false, sources: ['endpoint'] },
+      });
+    });
+    expect(within(card('anthropic')).getByText('com_config_providers_status_active')).toBeTruthy();
+    expect(within(card('openAI')).getByText('com_config_providers_status_disabled')).toBeTruthy();
+    const badge = card('google').querySelector('.provider-status') as HTMLElement;
+    expect(badge.getAttribute('title')).toContain('com_config_providers_reason_not_listed');
+    fireEvent.click(trigger('google'));
+    const row = card('google').querySelector('.provider-status-row') as HTMLElement;
+    expect(within(row).getByText(/com_config_providers_reason_not_listed/)).toBeTruthy();
+    expect(within(row).queryByText('com_config_providers_status_endpoints_note')).toBeNull();
+    const env = [...row.querySelectorAll('[data-env-state]')].map((item) => [
+      item.querySelector('code')?.textContent,
+      item.getAttribute('data-env-state'),
+    ]);
+    expect(env).toEqual([
+      ['GOOGLE_KEY', 'set'],
+      ['GOOGLE_SERVICE_KEY_FILE', 'unset'],
+    ]);
+    expect(row.querySelector('[data-env-state="unset"]')?.textContent).toContain(
+      'com_config_env_state_unset_optional',
+    );
+    fireEvent.click(trigger('anthropic'));
+    const anthropic = card('anthropic').querySelector('.provider-status-row') as HTMLElement;
+    expect(within(anthropic).getByText(/com_config_providers_status_models/)).toBeTruthy();
+    expect(container.querySelectorAll('[data-env-state="unreported"]')).toHaveLength(1);
+  });
+
+  it('reads status from the end-user routes on a server whose meta leaves catalogApi out', () => {
+    const contract = createServerContract({ envStatus: true });
+    const { container } = renderProviders({}, undefined, contract, (client) => {
+      client.setQueryData(['configCatalog', 'role', '__base__'], {
+        status: { anthropic: { name: 'anthropic', custom: false, userProvide: false } },
+        endpoints: {
+          google: { enabled: false, custom: false, envVars: ['GOOGLE_KEY'], reason: 'not_listed' },
+        },
+      });
+      client.setQueryData(['envStatus'], {
+        GOOGLE_KEY: { set: true, userProvided: false, sources: ['endpoint'] },
+      });
+    });
+    expect(within(card('openAI')).getByText('com_config_providers_status_active')).toBeTruthy();
+    expect(
+      within(card('anthropic')).getByText('com_config_providers_status_disabled'),
+    ).toBeTruthy();
+    fireEvent.click(trigger('google'));
+    const row = card('google').querySelector('.provider-status-row') as HTMLElement;
+    expect(within(row).queryByText(/com_config_providers_reason_/)).toBeNull();
+    expect(within(row).getByText('com_config_providers_status_endpoints_note')).toBeTruthy();
+    expect(container.querySelectorAll('[data-env-state]')).toHaveLength(0);
   });
 
   it('summarizes a collapsed card, flagging values Global takes precedence over', () => {

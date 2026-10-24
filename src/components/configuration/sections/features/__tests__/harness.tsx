@@ -2,6 +2,8 @@ import { vi } from 'vitest';
 import { useMemo, useState } from 'react';
 import { act, render } from '@testing-library/react';
 import { configSchema } from 'librechat-data-provider';
+import { QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import type { ComponentType } from 'react';
 import type * as t from '@/types';
 import {
@@ -45,6 +47,8 @@ interface SectionSetup {
   props?: Partial<t.FieldRendererProps>;
   /** Admin config features the server reports (none: an older server). */
   features?: Partial<t.ConfigFeatures>;
+  /** The page's query client, with the server reads a test seeds (none: nothing is fetched). */
+  client?: QueryClient;
 }
 
 function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -153,5 +157,12 @@ export function renderSection(Component: ComponentType<t.FieldRendererProps>, se
 
   /** Discards every pending edit and starts a new edit session, as Discard does on the page. */
   const startNewSession = () => act(() => newSession());
-  return { ...render(<Page />), ...spies, startNewSession };
+  const page = setup.client ? (
+    <QueryClientProvider client={setup.client}>
+      <Page />
+    </QueryClientProvider>
+  ) : (
+    <Page />
+  );
+  return { ...render(page), ...spies, startNewSession };
 }

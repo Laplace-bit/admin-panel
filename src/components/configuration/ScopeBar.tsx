@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Badge, Button, Icon } from '@clickhouse/click-ui';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type * as t from '@/types';
 import { formatScopeName, isSameScope, findPriorityTies, countScopeOverrides } from '@/utils';
+import { useLocalize, useRefreshScopes, useConfigFeatures } from '@/hooks';
 import { availableScopesOptions, toggleScopeActiveFn } from '@/server';
-import { useLocalize, useConfigFeatures } from '@/hooks';
 import { ScopeOverridesDialog } from './ScopeOverridesDialog';
 import { ScopePriorityEditor } from './ScopePriority';
 import { getScopeTypeConfig } from '@/constants';
@@ -39,7 +39,7 @@ export function ScopeBar({
   isEntryPending,
 }: t.ScopeBarProps) {
   const localize = useLocalize();
-  const queryClient = useQueryClient();
+  const refreshScopes = useRefreshScopes();
   const { deterministicPrecedence, priorityRoute } = useConfigFeatures();
   const [toggling, setToggling] = useState(false);
   const [overridesOpen, setOverridesOpen] = useState(false);
@@ -70,7 +70,7 @@ export function ScopeBar({
       await toggleScopeActiveFn({
         data: { principalType: current.principalType, principalId: current.principalId, isActive },
       });
-      await queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
+      await refreshScopes();
     } catch (err) {
       onError?.(err instanceof Error ? err.message : localize('com_scope_toggle_error'));
     } finally {
