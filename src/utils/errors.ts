@@ -1,5 +1,7 @@
 import type * as t from '@/types';
 import { TERMS_NOT_ACCEPTED_CODE } from '@/constants';
+import translation from '@/locales/en/translation.json';
+import { interpolateIssue } from './validation';
 
 const TERMS_PREFIX = `${TERMS_NOT_ACCEPTED_CODE} `;
 
@@ -29,4 +31,18 @@ export function errorText(error: unknown, fallback: string, localize: t.Localize
   if (termsUrl) return localize('com_config_terms_refused_at', { url: termsUrl });
   if (termsUrl === '') return localize('com_config_terms_refused');
   return messageOf(error) || fallback;
+}
+
+/**
+ * English text for a stable admin API error code the panel words itself
+ * (`com_config_api_error_<code>`), with the section a `FORBIDDEN_SECTION`
+ * names; null for a code it does not word, whose own text is kept. Error
+ * replies are read on the server, before the page localizes them.
+ */
+export function describeApiError(body: t.ApiErrorBody): string | null {
+  if (!body.code) return null;
+  const key = `com_config_api_error_${body.code.toLowerCase()}` as keyof typeof translation;
+  const template = translation[key];
+  if (typeof template !== 'string') return null;
+  return interpolateIssue(template, { section: body.section ?? '' });
 }

@@ -1,6 +1,8 @@
+import type * as t from '@/types';
 import { ensureFreshBearer, refreshOn401 } from './refresh';
 import { getApiBaseUrl, getServerApiUrl } from './url';
 import { TERMS_NOT_ACCEPTED_CODE } from '@/constants';
+import { describeApiError } from '@/utils';
 
 /** Skew window: refresh proactively when the bearer is within this of expiry. */
 const PROACTIVE_REFRESH_SKEW_MS = 30_000;
@@ -46,19 +48,27 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
 }
 
 /**
- * The message of a failed API response: its `{ error }` or `{ message }`, else
- * `fallback` with the status. LibreChat's refusal until the admin accepts its
- * terms of service becomes `terms_not_accepted <LibreChat URL>`, which the
- * panel explains (with where to accept them) instead of a bare 403.
+ * The message of a failed API response: the panel's wording of its stable
+ * `code` (`describeApiError`: a missing principal, a version conflict, a
+ * section the admin may not manage, …), else its `{ error }` or
+ * `{ message }`, else `fallback` with the status. LibreChat's refusal until
+ * the admin accepts its terms of service becomes `terms_not_accepted
+ * <LibreChat URL>`, which the panel explains (with where to accept them)
+ * instead of a bare 403.
  */
 export async function apiErrorMessage(response: Response, fallback: string): Promise<string> {
-  const body = (await response.json().catch(() => ({}))) as {
-    error?: string;
-    message?: string;
-    code?: string;
-  };
+  const body = (await response.json().catch(() => ({}))) as t.ApiErrorBody;
+  return apiErrorBodyMessage(body, response.status, fallback);
+}
+
+/** `apiErrorMessage` for a reply whose body was already read. */
+export function apiErrorBodyMessage(
+  body: t.ApiErrorBody,
+  status: number,
+  fallback: string,
+): string {
   if (body.code === TERMS_NOT_ACCEPTED_CODE) return `${TERMS_NOT_ACCEPTED_CODE} ${getApiBaseUrl()}`;
-  return body.error ?? body.message ?? `${fallback}: ${response.status}`;
+  return describeApiError(body) ?? body.error ?? body.message ?? `${fallback}: ${status}`;
 }
 
 /** Throws the message of a failed API response (see `apiErrorMessage`). */

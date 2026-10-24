@@ -29,9 +29,18 @@ import { overrideCountUnit } from '@/components/configuration/counts';
 import { planRevert } from '@/components/configuration/review/revert';
 import { findSchemaField } from '@/components/configuration/controls';
 import { normalizeForSave } from '@/components/configuration/edits';
+import { useConfigContract } from './contract';
 import { useLocalize } from '../useLocalize';
 
 const NO_ISSUES: t.ReviewIssue[] = [];
+
+/** The review warning of a change Global overrides take precedence over, by how they win. */
+const SHADOW_WARNINGS: Readonly<Record<NonNullable<t.ShadowedBy['precedence']>, t.ChangeWarning>> =
+  {
+    block: 'shadowedBlock',
+    field: 'shadowed',
+    pair: 'shadowedPair',
+  };
 
 /** Where Go to field lands: a removed entry is no longer on the page, so its list. */
 function goToPath(item: t.ChangeSummaryItem): string {
@@ -65,6 +74,7 @@ export function useChangeReview({
   onTabChange,
 }: t.ChangeReviewOptions): t.ChangeReviewState {
   const localize = useLocalize();
+  const { titleResolution } = useConfigContract().rules;
   const isScope = editingScope !== undefined;
   const { savePlan, fieldErrors, changes, confirmSaveOpen: open } = save;
   const {
@@ -157,18 +167,17 @@ export function useChangeReview({
       const found = drift.get(item.path);
       const shadowedBy =
         item.after !== undefined
-          ? resolveShadowedBy(item.path, baseline, edits.editedValues)
+          ? resolveShadowedBy(item.path, baseline, edits.editedValues, titleResolution)
           : undefined;
       if (!found && !shadowedBy) return item;
-      const shadowed: t.ChangeWarning =
-        shadowedBy?.precedence === 'block' ? 'shadowedBlock' : 'shadowed';
+      const shadowed = SHADOW_WARNINGS[shadowedBy?.precedence ?? 'field'];
       return {
         ...item,
         ...(found && { drift: found }),
         ...(shadowedBy && { warnings: [...(item.warnings ?? []), shadowed] }),
       };
     });
-  }, [input, changes, visibilityItems, baseline, edits.editedValues]);
+  }, [input, changes, visibilityItems, baseline, edits.editedValues, titleResolution]);
 
   const labelContext = useMemo<t.ReviewLabelContext>(
     () => ({ localize, fields: schemaTree, tree: applySaves(baseline, savePlan.saves) }),

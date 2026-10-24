@@ -145,6 +145,47 @@ describe('planConfigChanges', () => {
       },
     ]);
     expect(plan.effective).toBe(1);
+    expect(plan.changed).toEqual(['endpoints.custom.GPT']);
+  });
+
+  it('names what it changes by path, and a keyed collection by the entries its changes touch', () => {
+    const models = { default: ['m'] };
+    const adminA = { name: 'AdminA', apiKey: 'user_provided', baseURL: 'https://a', models };
+    const ollama = { ...adminA, name: 'Ollama', baseURL: 'http://ollama:11434/v1' };
+    const plan = planConfigChanges(
+      [
+        { op: 'set', path: 'mcpServers.github.url', value: 'https://mcp.example.com/' },
+        { op: 'reset', path: 'balance.refillAmount' },
+        { op: 'tombstone', path: 'endpoints.openAI.titleModel' },
+        {
+          op: 'upsertEntry',
+          path: 'endpoints.custom',
+          key: 'Ollama',
+          identity: null,
+          value: ollama,
+        },
+        {
+          op: 'upsertEntry',
+          path: 'endpoints.custom',
+          key: 'AdminB',
+          identity: 'AdminA',
+          value: { ...adminA, name: 'AdminB' },
+        },
+      ],
+      snapshot({
+        balance: { refillAmount: 5 },
+        endpoints: { custom: [adminA] },
+      }),
+    );
+    expect(plan.issues).toEqual([]);
+    expect(plan.changed).toEqual([
+      'mcpServers.github.url',
+      'endpoints.custom.ollama',
+      'endpoints.custom.AdminB',
+      'endpoints.custom.AdminA',
+      'balance',
+      'endpoints.openAI.titleModel',
+    ]);
   });
 
   it('blocks the whole batch on an invalid entry, naming the entry and field', () => {

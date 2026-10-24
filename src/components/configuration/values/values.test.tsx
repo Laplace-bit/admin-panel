@@ -4,12 +4,14 @@ import { render, screen, renderHook, fireEvent } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { baseLayersFixture, scopeLayersFixture, valuesDataFixture } from '@/test/layers';
+import { ProvenanceChip, FieldProvenance, ShadowBadge } from './ProvenanceChip';
 import { formatConfigValue, getRevertLabels, sourceLabel } from './labels';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
-import { ProvenanceChip, FieldProvenance } from './ProvenanceChip';
+import { GlobalRevealContext } from '@/contexts/GlobalRevealContext';
+import { deriveFieldState, resolveShadowedBy } from '@/utils';
 import { useFieldState, useRevertLabels } from '@/hooks';
 import { TabCountBadge } from './TabCountBadge';
-import { deriveFieldState } from '@/utils';
+import { labelForPath } from '../meta';
 
 vi.mock('@/hooks/useLocalize', () => ({
   useLocalize: () => (key: string, options?: Record<string, string | number>) =>
@@ -111,6 +113,25 @@ describe('ProvenanceChip', () => {
     fireEvent.click(chip);
     expect(chip).toHaveAttribute('aria-expanded', 'true');
     expect(reason).toBeVisible();
+  });
+
+  it('points a title model Global pairs away to the title endpoint Global sets', () => {
+    const tree = {
+      endpoints: { all: { titleEndpoint: 'anthropic' }, openAI: { titleModel: 'x' } },
+    };
+    const shadowedBy = resolveShadowedBy('endpoints.openAI.titleModel', tree, {}, 'field')!;
+    const reveal = vi.fn();
+    const { container } = render(
+      <GlobalRevealContext.Provider value={reveal}>
+        <ShadowBadge shadowedBy={shadowedBy} source="librechat.yaml" />
+      </GlobalRevealContext.Provider>,
+    );
+    const field = labelForPath('endpoints.all.titleEndpoint', localize);
+    expect(container.querySelector('.state-chip-reason')?.textContent).toBe(
+      `com_config_providers_shadow_pair${JSON.stringify({ field, source: 'librechat.yaml' })}`,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /com_config_providers_shadow_go/ }));
+    expect(reveal).toHaveBeenCalledWith('endpoints.all.titleEndpoint');
   });
 
   it('renders nothing for a plain default when asked to', () => {

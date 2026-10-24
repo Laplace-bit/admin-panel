@@ -49,8 +49,11 @@ export interface WebSearchCredential {
   required: boolean;
   /** A key: typed into a masked input. */
   secret: boolean;
-  /** LibreChat stores it encrypted and returns a masked preview (`<key>Preview`). */
-  encrypted: boolean;
+  /**
+   * LibreChat stores it encrypted and returns a masked preview (`<key>Preview`)
+   * only once it reports `webSearchStoredKeys` (Keenable); otherwise always, when `secret`.
+   */
+  encryptedSince?: 'webSearchStoredKeys';
   /** The environment variable LibreChat reads when the key is not set (`SERPER_API_KEY`). */
   env: string;
 }

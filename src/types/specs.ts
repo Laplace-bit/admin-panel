@@ -186,6 +186,8 @@ export interface ChipPickerProps {
   addLabel: string;
   /** Text of a chip whose value matches no choice ("Foo (not configured)"). */
   unknownLabel: (value: string) => string;
+  /** The choice a value names, where several spellings name one (`Ollama` is `ollama`). */
+  matchValue?: (value: string) => string;
   'aria-label': string;
   'aria-describedby'?: string;
 }

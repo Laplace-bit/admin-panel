@@ -13,7 +13,8 @@ const PLACEHOLDER = '\u0000add';
  * A set of values picked from known choices: each as a chip with Remove, and
  * a select of the choices not picked yet. Nothing can be typed, so a blank
  * or unknown value can't be added; one already stored stays visible (marked
- * as not configured) until it is removed.
+ * as not configured) until it is removed. With `matchValue`, a value spelled
+ * another way than its choice (`Ollama` for `ollama`) is that choice.
  */
 export function ChipPicker({
   id,
@@ -24,6 +25,7 @@ export function ChipPicker({
   disabled,
   addLabel,
   unknownLabel,
+  matchValue,
   'aria-label': ariaLabel,
   'aria-describedby': ariaDescribedBy,
 }: t.ChipPickerProps) {
@@ -33,7 +35,8 @@ export function ChipPicker({
   const labels = new Map(
     groups.flatMap((group) => group.options.map((option) => [option.value, option.label])),
   );
-  const picked = new Set(values);
+  const choiceOf = (value: string): string => (matchValue ? matchValue(value) : value);
+  const picked = new Set(values.map(choiceOf));
   const remaining = groups
     .map((group) => ({
       ...group,
@@ -64,7 +67,7 @@ export function ChipPicker({
       {values.length > 0 && (
         <ul aria-label={ariaLabel} className="settings-chip-list">
           {values.map((value) => {
-            const label = labels.get(value);
+            const label = labels.get(choiceOf(value));
             const known = label !== undefined;
             return (
               <li

@@ -1,5 +1,5 @@
 import type * as t from '@/types';
-import { DEDICATED_CONFIG_SECTIONS, READ_ONLY_CONFIG_SECTIONS } from '@/constants';
+import { BUNDLED_WRITE_RULES, DEDICATED_CONFIG_SECTIONS } from '@/constants';
 import { deepSerializeKVPairs, getValueAtPath, isConfigRecord } from './format';
 import { collectLeafPaths, createPathIndex } from './paths';
 import { mapSecretPreviewPaths } from './secrets';
@@ -132,28 +132,50 @@ export function setConfigPath(
 }
 
 /**
+ * `merged` with Base's value put back at each of `paths`, whatever an override
+ * or tombstone did there, inside it or at an ancestor (as LibreChat keeps its
+ * base-only paths).
+ */
+function keepBaseValues(
+  base: t.ConfigRecord,
+  merged: t.ConfigRecord,
+  paths: ReadonlySet<string>,
+): t.ConfigRecord {
+  let result = merged;
+  for (const path of paths) {
+    const value = getValueAtPath(base, path);
+    if (getValueAtPath(result, path) !== value) result = setConfigPath(result, path, value);
+  }
+  return result;
+}
+
+/**
  * The config a profile's members get, as far as one profile can tell: Base
  * (librechat.yaml plus base overrides) with the profile's overrides merged the
  * way LibreChat merges them (objects deep-merge, `endpoints.custom` merges by
  * name, other arrays are replaced) and its tombstoned paths removed. Sections a
- * profile cannot override keep their Base values.
+ * profile cannot override (read-only by the server's write `rules`) and the
+ * fields only librechat.yaml sets inside the others (`yamlManagedFields`: the
+ * server's base-only and deployment-only paths) keep their Base values.
  */
 export function mergeScopeLayer(
   base: t.ConfigRecord,
   overrides: t.ConfigRecord,
   tombstones: Iterable<string> = [],
+  rules: t.ConfigWriteRules = BUNDLED_WRITE_RULES,
 ): t.ConfigRecord {
+  const readOnly = rules.readOnlySections;
   const applicable: t.ConfigRecord = {};
   for (const [section, value] of Object.entries(overrides)) {
-    if (READ_ONLY_CONFIG_SECTIONS.has(section) || DEDICATED_CONFIG_SECTIONS.has(section)) continue;
+    if (readOnly.has(section) || DEDICATED_CONFIG_SECTIONS.has(section)) continue;
     applicable[section] = value;
   }
   let merged = mergeRecords(base, applicable, '');
   for (const path of tombstones) {
-    if (READ_ONLY_CONFIG_SECTIONS.has(path.split('.')[0])) continue;
+    if (readOnly.has(path.split('.')[0])) continue;
     merged = removeConfigPath(merged, path);
   }
-  return merged;
+  return keepBaseValues(base, merged, rules.yamlManagedFields);
 }
 
 function isStructuralEdit(value: t.ConfigValue): boolean {
@@ -218,6 +240,7 @@ export function withScopeLayer(
   scope: Pick<t.ScopeLayer, 'principalType' | 'name'>,
   data: t.ResolvedConfigData,
   schemaPaths: ReadonlySet<string>,
+  rules?: t.ConfigWriteRules,
 ): t.ValueLayers {
   return {
     ...layers,
@@ -228,6 +251,6 @@ export function withScopeLayer(
       overridePaths: createPathIndex(mapSecretPreviewPaths(data.changedPaths, schemaPaths)),
       tombstones: new Set(data.tombstones),
     },
-    effective: mergeScopeLayer(layers.base ?? {}, data.overrides, data.tombstones),
+    effective: mergeScopeLayer(layers.base ?? {}, data.overrides, data.tombstones, rules),
   };
 }

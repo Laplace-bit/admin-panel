@@ -27,3 +27,17 @@ export const KEYED_COLLECTIONS: ReadonlyMap<string, t.KeyedCollection> = new Map
     ] satisfies t.KeyedCollection[]
   ).map((collection): [string, t.KeyedCollection] => [collection.path, collection]),
 );
+
+/**
+ * Records of named entries that each hold a credential beside the destination
+ * it is sent to, where LibreChat drops a credential whose destination changed
+ * (`secretRebinding`): the record it reports an entry in → the one the panel
+ * edits it in (Azure groups are reported in the `groupMap` that `groups`
+ * resolves to). Elsewhere a credential is bound to the object holding it
+ * (`ocr.apiKey` to `ocr.baseURL`).
+ */
+export const CREDENTIAL_ENTRY_RECORDS: ReadonlyMap<string, string> = new Map([
+  ['endpoints.custom', 'endpoints.custom'],
+  ['mcpServers', 'mcpServers'],
+  ['endpoints.azureOpenAI.groupMap', 'endpoints.azureOpenAI.groups'],
+]);

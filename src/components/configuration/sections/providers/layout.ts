@@ -21,6 +21,7 @@ const MAX_LIST_PREVIEW = 2;
 const SHADOW_SUMMARY_KEYS = {
   wins: 'com_config_providers_summary_shadowed',
   ignored: 'com_config_providers_summary_shadowed_ignored',
+  paired: 'com_config_providers_summary_shadowed_pair',
 } as const;
 
 /** The purpose groups declared for a provider (the shared endpoint groups for an unknown one). */
@@ -189,15 +190,17 @@ export function createSummaryReader({
   configuredPaths,
   editedValues,
   root,
+  titleResolution,
 }: t.SummaryReaderInput): t.SummaryReader {
   return {
     isSet: (path) => isPathSet(path, configuredPaths, editedValues),
     valueAt: (path) =>
       getValue(path, getValueAtPath(providerValue, path.slice(providerPath.length + 1))),
     shadowOf: (path) => {
-      const shadow = resolveShadowedBy(path, root, editedValues);
+      const shadow = resolveShadowedBy(path, root, editedValues, titleResolution);
       if (!shadow) return null;
-      return shadow.value === undefined ? 'ignored' : 'wins';
+      if (shadow.value !== undefined) return 'wins';
+      return shadow.precedence === 'pair' ? 'paired' : 'ignored';
     },
   };
 }

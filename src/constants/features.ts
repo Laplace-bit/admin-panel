@@ -34,12 +34,29 @@ export function getDomainListPolicy(path: string): t.DomainListPolicy {
   return DOMAIN_LIST_POLICIES[path] ?? DEFAULT_DOMAIN_POLICY;
 }
 
-/** Keys LibreChat's admin API stores as typed: they are not in its secret registry. */
+/** Keys LibreChat's admin API stores as typed until `webSearchStoredKeys` adds them to its secret registry. */
 const PLAINTEXT_KEYS: ReadonlySet<string> = new Set(['keenableApiKey']);
 
 function credential(key: string, env: string, required: boolean): t.WebSearchCredential {
   const secret = /ApiKey$/.test(key);
-  return { key, env, required, secret, encrypted: secret && !PLAINTEXT_KEYS.has(key) };
+  return {
+    key,
+    env,
+    required,
+    secret,
+    ...(secret && PLAINTEXT_KEYS.has(key) && { encryptedSince: 'webSearchStoredKeys' as const }),
+  };
+}
+
+/**
+ * Whether LibreChat stores the credential encrypted, with a masked preview:
+ * every web search key, and Keenable's only on a server with `webSearchStoredKeys`.
+ */
+export function isEncryptedCredential(
+  { secret, encryptedSince }: t.WebSearchCredential,
+  features: Pick<t.ConfigFeatures, 'webSearchStoredKeys'>,
+): boolean {
+  return secret && (encryptedSince === undefined || features[encryptedSince]);
 }
 
 const SERPER_KEY = credential('serperApiKey', 'SERPER_API_KEY', true);

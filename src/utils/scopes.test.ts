@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
+import { resolveWriteRules } from '@/constants';
 import {
   isSameScope,
   applyScopeGates,
@@ -11,6 +12,7 @@ import {
   isCurrentSelection,
   countScopeOverrides,
   collectOverridePaths,
+  compareScopePrecedence,
   scopeGateSkipReason,
   scopeOverrideEntries,
   listScopeOverrideItems,
@@ -149,6 +151,41 @@ describe('findPriorityTies', () => {
   it('reports nothing for an inactive profile', () => {
     expect(findPriorityTies(off, [eng, design, off])).toEqual([]);
   });
+
+  it('says which profile applies last on equal priority (deterministicPrecedence)', () => {
+    const role = scope({
+      _id: 'b',
+      principalType: PrincipalType.ROLE,
+      principalId: 'USER',
+      overridePaths: ['interface.parameters'],
+    });
+    const older = scope({ _id: 'a', principalId: 'older', overridePaths: ['interface'] });
+    const newer = scope({ _id: 'c', principalId: 'newer', overridePaths: ['interface'] });
+    const ties = findPriorityTies(older, [role, older, newer]);
+    expect(ties.map((tie) => [tie.scope.principalId, tie.appliesAfter])).toEqual([
+      ['USER', true],
+      ['newer', false],
+    ]);
+    expect(findPriorityTies(role, [role, older])[0].appliesAfter).toBe(false);
+  });
+});
+
+describe('compareScopePrecedence', () => {
+  it('orders by priority, then roles before groups before users, then the older profile first', () => {
+    const user = scope({ _id: 'a', principalType: PrincipalType.USER, principalId: 'u1' });
+    const role = scope({ _id: 'z', principalType: PrincipalType.ROLE, principalId: 'USER' });
+    const groupOld = scope({ _id: '6a00', principalId: 'old' });
+    const groupNew = scope({ _id: '6a01', principalId: 'new' });
+    const low = scope({
+      _id: 'zz',
+      principalType: PrincipalType.USER,
+      principalId: 'u2',
+      priority: 5,
+    });
+    const ordered = [user, groupNew, role, low, groupOld].sort(compareScopePrecedence);
+    expect(ordered.map((s) => s.principalId)).toEqual(['u2', 'USER', 'old', 'new', 'u1']);
+    expect(compareScopePrecedence(groupOld, { ...groupOld })).toBe(0);
+  });
 });
 
 describe('buildScopeIndex', () => {
@@ -219,5 +256,20 @@ describe('scopeGateSkipReason', () => {
     expect(scopeGateSkipReason('filters.messages.unattributedAssistantContent')).toBe('baseOnly');
     expect(scopeGateSkipReason('langfuse.baseUrl')).toBe('dedicated');
     expect(scopeGateSkipReason('balance.startBalance')).toBeUndefined();
+  });
+
+  it("gates the sections the server's rules make read-only", () => {
+    const rules = resolveWriteRules(
+      {
+        baseOnlySections: ['filters', 'turnstile'],
+        baseOnlyPaths: [],
+        deploymentOnlyPaths: { includedTools: 'operator' },
+      },
+      true,
+    );
+    expect(scopeGateSkipReason('includedTools', rules)).toBe('yamlOnly');
+    expect(scopeGateSkipReason('rateLimits.fileUploads.ipMax', rules)).toBeUndefined();
+    expect(scopeGateSkipReason('turnstile.siteKey', rules)).toBe('yamlOnly');
+    expect(scopeGateSkipReason('registration.socialLogins', rules)).toBe('baseScope');
   });
 });

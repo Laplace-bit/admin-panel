@@ -11,11 +11,12 @@ import type {
 import type * as t from '@/types';
 import { collectOverridePaths, scopeOverrideEntries, stripSecretPreviewValues } from '@/utils';
 import { normalizeAppServiceKeys } from '../config/normalize';
-import { apiErrorMessage, apiFetch } from '../utils/api';
+import { apiErrorBodyMessage, apiErrorMessage, apiFetch } from '../utils/api';
 import { BASE_CONFIG_PRINCIPAL_ID } from '../constants';
-import { requireAnyCapability } from '../capabilities';
-import { DEFAULT_SCOPE_PRIORITY } from '@/constants';
+import { requireCapability, requireAnyCapability } from '../capabilities';
+import { MAX_SCOPE_PRIORITY, DEFAULT_SCOPE_PRIORITY } from '@/constants';
 import { getSchemaPathSet } from '../config/schema';
+import { readConfigContract } from '../config/meta';
 import { deepGet } from './paths';
 
 /** The admin list endpoints return at most this many items per page. */
@@ -238,10 +239,96 @@ export const fieldProfileValuesOptions = (fieldPath: string) =>
     queryFn: () => getFieldProfileValuesFn({ data: { fieldPath } }).then((r) => r.values),
   });
 
+/** `expectedRevision` that makes a PUT create the profile only when the principal has none. */
+const ABSENT_REVISION = 'absent';
+
+/** The admin API's codes for a create-only PUT the principal already has a profile for, or has none. */
+const VERSION_CONFLICT_CODE = 'CONFIG_VERSION_CONFLICT';
+const PRINCIPAL_NOT_FOUND_CODE = 'PRINCIPAL_NOT_FOUND';
+
+function missingRoleMessage(principalId: string): string {
+  return `There is no role named "${principalId}"`;
+}
+
+/** A created or existing profile's document from a reply, or an error when it carries none. */
+async function readConfigDoc(response: Response): Promise<t.ScopeConfigDoc> {
+  const body = (await response.json()) as AdminConfigResponse | { message?: string };
+  const config = 'config' in body ? body.config : undefined;
+  if (!config?._id) {
+    throw new Error(
+      'Backend did not return a config document. The scope may not have been created.',
+    );
+  }
+  return config;
+}
+
+/**
+ * Before `expectedRevision`: reads the principal's profile and returns it
+ * when there is one, else checks that a role exists (the admin API would
+ * create a profile for any name) and creates the profile with a PUT. A
+ * profile created by someone else between the read and the PUT is
+ * overwritten with an empty one.
+ */
+async function createScopeLegacy(
+  url: string,
+  data: t.CreateScopeInput,
+  principalId: string,
+  priority: number,
+): Promise<t.ScopeConfigDoc> {
+  const existing = await apiFetch(url);
+  if (existing.ok) return ((await existing.json()) as AdminConfigResponse).config;
+  if (data.principalType === PrincipalType.ROLE) {
+    const role = await apiFetch(`/api/admin/roles/${encodeURIComponent(principalId)}`);
+    if (role.status === 404) throw new Error(missingRoleMessage(principalId));
+  }
+  const response = await apiFetch(url, {
+    method: 'PUT',
+    body: JSON.stringify({ overrides: {}, priority }),
+  });
+  if (!response.ok) throw new Error(await apiErrorMessage(response, 'Failed to create scope'));
+  return readConfigDoc(response);
+}
+
+/**
+ * With `expectedRevision`: one create-only PUT (`expectedRevision: 'absent'`),
+ * so a profile created meanwhile is never overwritten; when one exists
+ * (409) it is read and returned. With `principalCheck` the admin API refuses
+ * a principal that doesn't exist (404 `PRINCIPAL_NOT_FOUND`), so the role
+ * is not looked up first.
+ */
+async function createScopeOnce(
+  url: string,
+  data: t.CreateScopeInput,
+  principalId: string,
+  priority: number,
+  principalCheck: boolean,
+): Promise<t.ScopeConfigDoc> {
+  if (!principalCheck && data.principalType === PrincipalType.ROLE) {
+    const role = await apiFetch(`/api/admin/roles/${encodeURIComponent(principalId)}`);
+    if (role.status === 404) throw new Error(missingRoleMessage(principalId));
+  }
+  const response = await apiFetch(url, {
+    method: 'PUT',
+    body: JSON.stringify({ overrides: {}, priority, expectedRevision: ABSENT_REVISION }),
+  });
+  if (response.ok) return readConfigDoc(response);
+  const body = (await response.json().catch(() => ({}))) as t.ApiErrorBody;
+  if (response.status === 409 && body.code === VERSION_CONFLICT_CODE) {
+    const existing = await apiFetch(url);
+    if (existing.ok) return ((await existing.json()) as AdminConfigResponse).config;
+  }
+  if (body.code === PRINCIPAL_NOT_FOUND_CODE && data.principalType === PrincipalType.ROLE) {
+    throw new Error(missingRoleMessage(principalId));
+  }
+  throw new Error(apiErrorBodyMessage(body, response.status, 'Failed to create scope'));
+}
+
 /**
  * Create a profile for a role, group or user. The priority defaults to
  * `DEFAULT_SCOPE_PRIORITY` for the principal type. When the principal already
- * has a profile it is returned as is, so creating never replaces overrides.
+ * has a profile it is returned as is, so creating never replaces overrides:
+ * atomically on a server with `expectedRevision` (`createScopeOnce`), else
+ * by reading first (`createScopeLegacy`).
  */
 export const createScopeFn = createServerFn({ method: 'POST' })
   .inputValidator(
@@ -262,64 +349,62 @@ export const createScopeFn = createServerFn({ method: 'POST' })
         path: ['principalId'],
       }),
   )
-  .handler(
-    async ({
-      data,
-    }: {
-      data: {
-        principalType: PrincipalType;
-        name: string;
-        priority?: number;
-        principalId?: string;
-        email?: string;
-      };
-    }) => {
-      await requireAnyCapability([
-        SystemCapabilities.ASSIGN_CONFIGS,
-        SystemCapabilities.MANAGE_CONFIGS,
-      ]);
-      const principalId =
-        data.principalId ??
-        (data.principalType === PrincipalType.ROLE
-          ? data.name.toLowerCase().replace(/\s+/g, '_')
-          : `grp_${data.name.toLowerCase().replace(/\s+/g, '_')}`);
-      const url = `/api/admin/config/${data.principalType}/${encodeURIComponent(principalId)}`;
-      const toScope = (config: t.ScopeConfigDoc): t.ConfigScope => ({
+  .handler(async ({ data }: { data: t.CreateScopeInput }) => {
+    await requireAnyCapability([
+      SystemCapabilities.ASSIGN_CONFIGS,
+      SystemCapabilities.MANAGE_CONFIGS,
+    ]);
+    const principalId =
+      data.principalId ??
+      (data.principalType === PrincipalType.ROLE
+        ? data.name.toLowerCase().replace(/\s+/g, '_')
+        : `grp_${data.name.toLowerCase().replace(/\s+/g, '_')}`);
+    const url = `/api/admin/config/${data.principalType}/${encodeURIComponent(principalId)}`;
+    const priority =
+      data.priority ?? DEFAULT_SCOPE_PRIORITY[data.principalType as t.ScopePrincipalType];
+    const { features } = await readConfigContract();
+    const config = features.expectedRevision
+      ? await createScopeOnce(url, data, principalId, priority, features.principalCheck)
+      : await createScopeLegacy(url, data, principalId, priority);
+    return {
+      scope: {
         ...apiConfigToScope(config),
         name: data.name,
         ...(data.email && { email: data.email }),
         ...(data.principalType === PrincipalType.GROUP && { memberCount: 0 }),
-      });
+      },
+    };
+  });
 
-      const existing = await apiFetch(url);
-      if (existing.ok) {
-        const { config } = (await existing.json()) as AdminConfigResponse;
-        return { scope: toScope(config) };
-      }
-      if (data.principalType === PrincipalType.ROLE) {
-        const role = await apiFetch(`/api/admin/roles/${encodeURIComponent(principalId)}`);
-        if (role.status === 404) throw new Error(`There is no role named "${principalId}"`);
-      }
-
-      const priority =
-        data.priority ?? DEFAULT_SCOPE_PRIORITY[data.principalType as t.ScopePrincipalType];
-      const response = await apiFetch(url, {
-        method: 'PUT',
-        body: JSON.stringify({ overrides: {}, priority }),
-      });
-
+/**
+ * Sets only a profile's priority (`priorityRoute`, D6): its overrides,
+ * hidden settings and active state stay as stored. Broad `manage:configs`
+ * only, like every priority change.
+ */
+export const setScopePriorityFn = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.object({
+      principalType: z.nativeEnum(PrincipalType),
+      principalId: z.string().min(1),
+      priority: z.number().int().min(0).max(MAX_SCOPE_PRIORITY),
+    }),
+  )
+  .handler(
+    async ({
+      data,
+    }: {
+      data: { principalType: PrincipalType; principalId: string; priority: number };
+    }) => {
+      await requireCapability(SystemCapabilities.MANAGE_CONFIGS);
+      const response = await apiFetch(
+        `/api/admin/config/${data.principalType}/${encodeURIComponent(data.principalId)}/priority`,
+        { method: 'PATCH', body: JSON.stringify({ priority: data.priority }) },
+      );
       if (!response.ok) {
-        throw new Error(await apiErrorMessage(response, 'Failed to create scope'));
+        throw new Error(await apiErrorMessage(response, 'Failed to change the priority'));
       }
-
-      const body = (await response.json()) as AdminConfigResponse | { message?: string };
-      const config = 'config' in body ? body.config : undefined;
-      if (!config?._id) {
-        throw new Error(
-          'Backend did not return a config document. The scope may not have been created.',
-        );
-      }
-      return { scope: toScope(config) };
+      const config = await readConfigDoc(response);
+      return { priority: config.priority };
     },
   );
 

@@ -16,6 +16,8 @@ import { extractSchemaTree, extractSchemaDefaults } from '@/server/config';
 import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
 import { buildConfigChanges } from '@/components/configuration/edits';
 import { collectFieldPaths } from '@/components/configuration/counts';
+import { BUNDLED_CONFIG_CONTRACT, getWriteRules } from '@/constants';
+import { ConfigContractContext } from '@/contexts/ContractContext';
 import { ConfigTabContent } from '@/components/configuration';
 import { ExpandContext } from '@/contexts/ExpandContext';
 
@@ -54,6 +56,8 @@ export interface TabHarnessOptions {
   overrides?: t.ConfigRecord;
   /** Press "Expand all" once rendered: every collapsible opens, lazily mounted ones too. */
   expandAll?: boolean;
+  /** The connected server's admin config contract; the bundled one (an older server) by default. */
+  contract?: t.ConfigContract;
 }
 
 export interface TabHarness {
@@ -68,7 +72,7 @@ interface HarnessProps extends Required<Omit<TabHarnessOptions, 'expandAll'>> {
   state: { edits: t.ConfigEditsState | null; plan: (() => t.WritePlan) | null };
 }
 
-function TabPage({ tab, tree, yaml, overrides, expandAll, state }: HarnessProps) {
+function TabPage({ tab, tree, yaml, overrides, expandAll, contract, state }: HarnessProps) {
   const schemaPathSet = useMemo(() => new Set(collectFieldPaths(tree)), [tree]);
   const config = useMemo(() => mergeScopeLayer(yaml, overrides), [yaml, overrides]);
   const layers = useMemo(
@@ -130,13 +134,14 @@ function TabPage({ tab, tree, yaml, overrides, expandAll, state }: HarnessProps)
       root: config,
       collections: edits.collectionEdits,
       visibility: edits.visibilityEdits,
+      writeRules: getWriteRules(contract),
     });
-    return planConfigChanges(changes.ops, {
-      stored: overrides,
-      tombstones: [],
-      lower: yaml,
-      lowerKind: 'yaml',
-    });
+    return planConfigChanges(
+      changes.ops,
+      { stored: overrides, tombstones: [], lower: yaml, lowerKind: 'yaml' },
+      contract.features,
+      getWriteRules(contract),
+    );
   };
 
   return (
@@ -181,17 +186,21 @@ export function renderTab({
   yaml = {},
   overrides = {},
   expandAll = false,
+  contract = BUNDLED_CONFIG_CONTRACT,
 }: TabHarnessOptions): TabHarness & ReturnType<typeof render> {
   const state: HarnessProps['state'] = { edits: null, plan: null };
   const result = render(
-    <TabPage
-      tab={tab}
-      tree={tree}
-      yaml={yaml}
-      overrides={overrides}
-      expandAll={expandAll}
-      state={state}
-    />,
+    <ConfigContractContext.Provider value={contract}>
+      <TabPage
+        tab={tab}
+        tree={tree}
+        yaml={yaml}
+        overrides={overrides}
+        expandAll={expandAll}
+        contract={contract}
+        state={state}
+      />
+    </ConfigContractContext.Provider>,
   );
   return {
     ...result,

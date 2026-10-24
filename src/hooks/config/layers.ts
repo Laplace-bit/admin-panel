@@ -16,6 +16,7 @@ import {
   overriddenEntryKeys,
 } from '@/utils';
 import { KEYED_COLLECTIONS } from '@/constants';
+import { useConfigWriteRules } from './contract';
 import { collectFieldPaths, withLangfuseConfiguredPath } from '@/components/configuration/counts';
 import { mergeIndexedArrayEdits } from '@/components/configuration/edits';
 import { getFieldMeta } from '@/components/configuration/meta';
@@ -101,13 +102,14 @@ export function useConfigLayers({
 
   const scopeQuery = useQuery(resolvedConfigOptions(selectedScope));
   const scopeData = isEditingScope ? scopeQuery.data : undefined;
+  const writeRules = useConfigWriteRules();
 
   /** Profile mode: Base merged with the profile's overrides, minus its tombstones (null until both load). */
   const valueLayers = useMemo((): t.ValueLayers | null => {
     if (!baseLayers || !isEditingScope) return baseLayers;
     if (!openScope || !scopeData) return null;
-    return withScopeLayer(baseLayers, openScope, scopeData, schemaPathSet);
-  }, [baseLayers, isEditingScope, openScope, scopeData, schemaPathSet]);
+    return withScopeLayer(baseLayers, openScope, scopeData, schemaPathSet, writeRules);
+  }, [baseLayers, isEditingScope, openScope, scopeData, schemaPathSet, writeRules]);
 
   /**
    * Overridden entries of each keyed list, by the edit target: Base's

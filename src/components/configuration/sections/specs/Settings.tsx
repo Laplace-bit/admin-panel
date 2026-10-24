@@ -3,8 +3,8 @@ import { useNavigate } from '@tanstack/react-router';
 import { normalizeEndpointName } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
-import { cn, isRowVisible, isConfigRecord, stringItems } from '@/utils';
-import { useLocalize, useFieldState, useValuesScope } from '@/hooks';
+import { cn, isRowVisible, stringItems, isConfigRecord, foldsEndpointReferences } from '@/utils';
+import { useLocalize, useFieldState, useValuesScope, useConfigContract } from '@/hooks';
 import { DecorativeIcon, StateChip } from '@/components/shared';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { hasPathOrDescendant } from '../../renderer/paths';
@@ -172,6 +172,8 @@ export function SpecsSettings({
   showConfiguredOnly,
 }: t.SpecsSettingsProps) {
   const localize = useLocalize();
+  /** A server that folds endpoint references matches `Ollama` to `ollama`: neither spelling "never matches". */
+  const foldsNames = foldsEndpointReferences(useConfigContract());
   const navigate = useNavigate();
   const scope = useValuesScope();
   const rowFilter = useContext(RowFilterContext);
@@ -353,9 +355,10 @@ export function SpecsSettings({
               return true;
             }}
             addLabel={localize('com_config_specs_added_add')}
+            matchValue={foldsNames ? normalizeEndpointName : undefined}
             unknownLabel={(name) => {
               const served = normalizeEndpointName(name);
-              return served !== name && options.knownEndpoints.has(served)
+              return !foldsNames && served !== name && options.knownEndpoints.has(served)
                 ? localize('com_config_specs_added_served_as', { name, served })
                 : localize('com_config_specs_not_configured', { name });
             }}

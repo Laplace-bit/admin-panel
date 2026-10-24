@@ -29,10 +29,54 @@ export const TERMS_NOT_ACCEPTED_ISSUE = 'TERMS_NOT_ACCEPTED';
 const INTERIM_BASE_ONLY_SECTIONS = ['mcpAppSandbox'];
 
 /**
+ * Sections LibreChat reads from librechat.yaml before sign-in (Turnstile),
+ * read-only on every server: one that reports its rules lists them as
+ * base-only, an older one reads them from the raw file.
+ */
+const PRE_AUTH_YAML_SECTIONS: readonly string[] = ['turnstile'];
+
+/**
+ * Sections and fields only librechat.yaml sets, as the panel knew them before
+ * servers reported `rules.deploymentOnlyPaths`: sections read at startup or
+ * from the raw librechat.yaml, and settings read once at startup.
+ */
+export const BUNDLED_DEPLOYMENT_ONLY_PATHS: Readonly<Record<string, t.DeploymentOnlyReason>> = {
+  cloudfront: 'operator',
+  rateLimits: 'operator',
+  /** Read as `req.config.config.permissions`: the raw librechat.yaml, never the merged overrides. */
+  permissions: 'operator',
+  /** The docs gate reads `getAppConfig({ baseOnly: true }).config.openapi`. */
+  openapi: 'operator',
+  /** Only librechat.yaml's own loader knows it; AppService never carries it into the app config. */
+  cache: 'unused',
+  /** Social sign-in and OpenID discovery are set up once at startup from librechat.yaml. */
+  'registration.oauthStateTtlMs': 'startup',
+  'registration.openidDiscovery': 'startup',
+  /**
+   * Read once at startup, from librechat.yaml alone (`getAppConfig({ baseOnly:
+   * true })` while the server boots): the agents' background, event and
+   * approval hook runtime, and MCP catalog recovery's state limits and fence
+   * retry worker. `catalogRecovery.authorizationFenceTimeoutMs` is not one:
+   * requests read it from the merged config too.
+   */
+  'endpoints.agents.eventDriven': 'startup',
+  'endpoints.agents.subagentActivity': 'startup',
+  'endpoints.agents.toolApproval.hooks': 'startup',
+  'endpoints.agents.backgroundTasks.shutdownInterruptGraceMs': 'startup',
+  'endpoints.agents.backgroundTasks.completionResultBatchSize': 'startup',
+  'endpoints.agents.backgroundTasks.completionReceiptBatching': 'startup',
+  'mcpSettings.catalogRecovery.maxStateEntries': 'startup',
+  'mcpSettings.catalogRecovery.maxDetachedDiscoveries': 'startup',
+  'mcpSettings.catalogRecovery.authorizationFenceRetryIntervalMs': 'startup',
+  'mcpSettings.catalogRecovery.authorizationFenceRetryBatchSize': 'startup',
+};
+
+/**
  * Top-level sections the panel must never write, with the reason shown in the
- * UI. Base-only sections are stripped by the admin API for every principal;
- * the YAML-only ones are read from the raw librechat.yaml at startup or before
- * login, so overrides have no effect.
+ * UI, on a server that does not report its rules. Base-only sections are
+ * stripped by the admin API for every principal; the YAML-only ones are read
+ * from the raw librechat.yaml at startup or before login, so overrides have
+ * no effect. A server that reports its rules decides them (`getWriteRules`).
  */
 export const READ_ONLY_CONFIG_SECTIONS: ReadonlyMap<string, t.ReadOnlyReason> = new Map<
   string,
@@ -41,15 +85,10 @@ export const READ_ONLY_CONFIG_SECTIONS: ReadonlyMap<string, t.ReadOnlyReason> = 
   ...[...BASE_ONLY_CONFIG_SECTIONS, ...INTERIM_BASE_ONLY_SECTIONS].map(
     (section): [string, t.ReadOnlyReason] => [section, 'baseOnly'],
   ),
-  ['cloudfront', 'yamlOnly'],
-  ['rateLimits', 'yamlOnly'],
-  ['turnstile', 'yamlOnly'],
-  /** Read as `req.config.config.permissions`: the raw librechat.yaml, never the merged overrides. */
-  ['permissions', 'yamlOnly'],
-  /** The docs gate reads `getAppConfig({ baseOnly: true }).config.openapi`. */
-  ['openapi', 'yamlOnly'],
-  /** Only librechat.yaml's own loader knows it; AppService never carries it into the app config. */
-  ['cache', 'yamlOnly'],
+  ...Object.keys(BUNDLED_DEPLOYMENT_ONLY_PATHS)
+    .filter((path) => !path.includes('.'))
+    .map((section): [string, t.ReadOnlyReason] => [section, 'yamlOnly']),
+  ...PRE_AUTH_YAML_SECTIONS.map((section): [string, t.ReadOnlyReason] => [section, 'yamlOnly']),
 ]);
 
 /**
@@ -67,43 +106,81 @@ export const APP_SERVICE_KEY_ALIASES: Readonly<Record<string, string>> = {
   mcpConfig: 'mcpServers',
 };
 
-/**
- * Settings LibreChat reads once at startup, from librechat.yaml alone
- * (`getAppConfig({ baseOnly: true })` while the server boots), so an admin
- * override never takes effect: the agents' background, event and approval
- * hook runtime, and MCP catalog recovery's state limits and fence retry
- * worker. `catalogRecovery.authorizationFenceTimeoutMs` is not one: requests
- * read it from the merged config too.
- */
-export const STARTUP_ONLY_FIELDS: ReadonlySet<string> = new Set([
-  'endpoints.agents.eventDriven',
-  'endpoints.agents.subagentActivity',
-  'endpoints.agents.toolApproval.hooks',
-  'endpoints.agents.backgroundTasks.shutdownInterruptGraceMs',
-  'endpoints.agents.backgroundTasks.completionResultBatchSize',
-  'endpoints.agents.backgroundTasks.completionReceiptBatching',
-  'mcpSettings.catalogRecovery.maxStateEntries',
-  'mcpSettings.catalogRecovery.maxDetachedDiscoveries',
-  'mcpSettings.catalogRecovery.authorizationFenceRetryIntervalMs',
-  'mcpSettings.catalogRecovery.authorizationFenceRetryBatchSize',
-]);
+/** Social sign-in buttons: read before sign-in, from librechat.yaml until `preAuthBaseOverrides`. */
+export const SOCIAL_LOGINS_PATH = 'registration.socialLogins';
 
 /**
- * Fields LibreChat only processes from librechat.yaml (overrides are merged
- * after `azureConfigSetup`/`vertexConfigSetup` run, or read only at startup),
- * so edits would be silent no-ops. Rendered read-only until the backend
- * re-processes overrides.
+ * Fields LibreChat only processes from librechat.yaml: overrides are merged
+ * after `azureConfigSetup`/`vertexConfigSetup` run, so edits would be silent
+ * no-ops. Rendered read-only until the backend re-processes overrides.
  */
-export const YAML_MANAGED_FIELDS: ReadonlySet<string> = new Set([
+const YAML_PROCESSED_FIELDS: readonly string[] = [
   'endpoints.azureOpenAI.groups',
   'endpoints.anthropic.vertex',
-  /** The sign-in page reads it before login, from librechat.yaml only (unauthenticated `/api/config`). */
-  'registration.socialLogins',
-  /** Social sign-in and OpenID discovery are set up once at startup from librechat.yaml. */
-  'registration.oauthStateTtlMs',
-  'registration.openidDiscovery',
-  ...STARTUP_ONLY_FIELDS,
-]);
+];
+
+/**
+ * The fields of `rules`' deployment-only paths inside writable sections, and
+ * which of them are read only at startup.
+ */
+function deploymentOnlyFields(paths: Readonly<Record<string, t.DeploymentOnlyReason>>): {
+  fields: string[];
+  startup: string[];
+} {
+  const nested = Object.entries(paths).filter(([path]) => path.includes('.'));
+  return {
+    fields: nested.map(([path]) => path),
+    startup: nested.filter(([, reason]) => reason === 'startup').map(([path]) => path),
+  };
+}
+
+/**
+ * Where the panel may write on a server with these rules and features:
+ * base-only sections, deployment-only sections and fields, base-only fields,
+ * the fields LibreChat only processes from librechat.yaml, and, until Base
+ * overrides apply before sign-in (`preAuthBaseOverrides`), the social
+ * sign-in buttons.
+ */
+export function resolveWriteRules(
+  rules: Pick<t.ConfigRules, 'baseOnlySections' | 'baseOnlyPaths' | 'deploymentOnlyPaths'>,
+  preAuthBaseOverrides: boolean,
+): t.ConfigWriteRules {
+  const readOnlySections = new Map<string, t.ReadOnlyReason>();
+  for (const section of rules.baseOnlySections) readOnlySections.set(section, 'baseOnly');
+  for (const path of Object.keys(rules.deploymentOnlyPaths)) {
+    if (!path.includes('.')) readOnlySections.set(path, 'yamlOnly');
+  }
+  for (const section of PRE_AUTH_YAML_SECTIONS) readOnlySections.set(section, 'yamlOnly');
+  const { fields, startup } = deploymentOnlyFields(rules.deploymentOnlyPaths);
+  return {
+    readOnlySections,
+    yamlManagedFields: new Set([
+      ...YAML_PROCESSED_FIELDS,
+      ...(preAuthBaseOverrides ? [] : [SOCIAL_LOGINS_PATH]),
+      ...fields,
+      ...rules.baseOnlyPaths,
+    ]),
+    startupOnlyFields: new Set(startup),
+  };
+}
+
+/** The write rules of a server that reports none: every section and field as before servers did. */
+export const BUNDLED_WRITE_RULES: t.ConfigWriteRules = resolveWriteRules(
+  {
+    baseOnlySections: [...READ_ONLY_CONFIG_SECTIONS]
+      .filter(([, reason]) => reason === 'baseOnly')
+      .map(([section]) => section),
+    baseOnlyPaths: [],
+    deploymentOnlyPaths: BUNDLED_DEPLOYMENT_ONLY_PATHS,
+  },
+  false,
+);
+
+/** Fields LibreChat reads once at startup, from librechat.yaml alone, as the panel knew them. */
+export const STARTUP_ONLY_FIELDS: ReadonlySet<string> = BUNDLED_WRITE_RULES.startupOnlyFields;
+
+/** Fields only librechat.yaml sets, as the panel knew them before servers reported their rules. */
+export const YAML_MANAGED_FIELDS: ReadonlySet<string> = BUNDLED_WRITE_RULES.yamlManagedFields;
 
 /** Config keys for values that must never be displayed in plain text. */
 export const SECRET_CONFIG_KEYS: ReadonlySet<string> = new Set([
@@ -128,6 +205,23 @@ export const SKIP_REASON_KEYS: Readonly<Record<t.SkipReason, string>> = {
   baseScope: 'com_scope_skip_base_scope',
   inheritedValue: 'com_scope_skip_inherited_value',
   inheritedMerged: 'com_scope_skip_inherited_merged',
+  processServer: 'com_config_skip_process_server',
+  secretRebinding: 'com_config_skip_secret_rebinding',
+};
+
+/**
+ * The panel's skip reason for each reason the admin API reports a write did
+ * not store (`skipped`, with `writeReport`) or stores without effect
+ * (`ignored`). A reason a newer server adds reads as not stored or not applied.
+ */
+export const REPORTED_SKIP_REASONS: Readonly<Record<string, t.SkipReason>> = {
+  base_only_section: 'baseOnly',
+  base_only_path: 'baseOnly',
+  deployment_only_path: 'yamlOnly',
+  dedicated_section: 'dedicated',
+  interface_permission: 'permission',
+  process_mcp_server: 'processServer',
+  secret_rebinding: 'secretRebinding',
 };
 
 /** Why a lower-layer key comes back after a write: LibreChat merges it in, so it is reported but not lost. */
@@ -143,8 +237,11 @@ export function getConfigSection(path: string): string {
 }
 
 /** The top-level section a dot-path belongs to, when that section is read-only. */
-export function getReadOnlyReason(path: string): t.ReadOnlyReason | undefined {
-  return READ_ONLY_CONFIG_SECTIONS.get(getConfigSection(path));
+export function getReadOnlyReason(
+  path: string,
+  rules: t.ConfigWriteRules = BUNDLED_WRITE_RULES,
+): t.ReadOnlyReason | undefined {
+  return rules.readOnlySections.get(getConfigSection(path));
 }
 
 function isAtOrUnderAny(path: string, fields: ReadonlySet<string>): boolean {
@@ -155,11 +252,17 @@ function isAtOrUnderAny(path: string, fields: ReadonlySet<string>): boolean {
 }
 
 /** Whether `path` is, or is inside, a field managed only in librechat.yaml. */
-export function isYamlManagedPath(path: string): boolean {
-  return isAtOrUnderAny(path, YAML_MANAGED_FIELDS);
+export function isYamlManagedPath(
+  path: string,
+  rules: t.ConfigWriteRules = BUNDLED_WRITE_RULES,
+): boolean {
+  return isAtOrUnderAny(path, rules.yamlManagedFields);
 }
 
-/** Whether `path` is, or is inside, a setting LibreChat reads only at startup (`STARTUP_ONLY_FIELDS`). */
-export function isStartupOnlyPath(path: string): boolean {
-  return isAtOrUnderAny(path, STARTUP_ONLY_FIELDS);
+/** Whether `path` is, or is inside, a setting LibreChat reads only at startup. */
+export function isStartupOnlyPath(
+  path: string,
+  rules: t.ConfigWriteRules = BUNDLED_WRITE_RULES,
+): boolean {
+  return isAtOrUnderAny(path, rules.startupOnlyFields);
 }

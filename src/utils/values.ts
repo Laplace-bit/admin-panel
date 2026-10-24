@@ -40,8 +40,12 @@ const NO_VALUES_STATE: t.FieldState = {
   isHidden: false,
 };
 
-/** Title settings LibreChat reads from `endpoints.all` as a whole block whenever one exists. */
-const BLOCK_SHADOWED_KEYS: ReadonlySet<string> = new Set([
+/**
+ * Title settings. LibreChat reads them from `endpoints.all` as a whole block
+ * whenever one exists (`titleResolution: 'block'`), or per field like the
+ * settings below (`'field'`), with the title endpoint and model as one choice.
+ */
+const TITLE_KEYS: ReadonlySet<string> = new Set([
   'titleConvo',
   'titleModel',
   'titleMethod',
@@ -49,6 +53,9 @@ const BLOCK_SHADOWED_KEYS: ReadonlySet<string> = new Set([
   'titlePrompt',
   'titlePromptTemplate',
 ]);
+
+/** With `titleResolution: 'field'`, both come from the first layer that sets either. */
+const TITLE_ROUTING_KEYS: readonly string[] = ['titleEndpoint', 'titleModel'];
 
 /** Settings where a value in `endpoints.all` wins per field: title timing, stream rate, activity and reasoning labels. */
 const FIELD_SHADOWED_KEYS: ReadonlySet<string> = new Set([
@@ -86,15 +93,21 @@ function sameValue(a: t.ConfigValue, b: t.ConfigValue): boolean {
 
 /**
  * The `endpoints.all` setting that takes precedence over a provider or custom
- * endpoint field (EV-8). Titles read the whole `all` block whenever one exists
- * (`endpoints.all ?? endpoints[x]`), so every per-endpoint title setting is
- * ignored, even one that `all` leaves unset. Activity and reasoning-label
- * settings resolve per field (`all[key] ?? endpoint[key]`).
+ * endpoint field (EV-8). Activity and reasoning-label settings resolve per
+ * field (`all[key] ?? endpoint[key]`). Titles, on a server that resolves them
+ * as a block (`titleResolution: 'block'`), read the whole `all` block
+ * whenever one exists (`endpoints.all ?? endpoints[x]`), so every
+ * per-endpoint title setting is ignored, even one that `all` leaves unset;
+ * on one that resolves them per field (`'field'`), only a title setting `all`
+ * sets wins, and the title endpoint and model are one choice: both come from
+ * `all` when it sets either, so the half `all` leaves unset points to the
+ * half it sets.
  */
 export function resolveShadowedBy(
   path: string,
   root: t.ConfigValue,
   editedValues: t.FlatConfigMap = {},
+  titleResolution: t.ConfigRules['titleResolution'] = 'block',
 ): t.ShadowedBy | undefined {
   const segments = path.split('.');
   if (segments[0] !== 'endpoints') return undefined;
@@ -104,14 +117,21 @@ export function resolveShadowedBy(
   const isCustomField =
     segments.length === 4 && segments[1] === 'custom' && INDEX_SEGMENT.test(segments[2]);
   if (!isProviderField && !isCustomField) return undefined;
-  const isBlock = BLOCK_SHADOWED_KEYS.has(key);
-  if (!isBlock && !FIELD_SHADOWED_KEYS.has(key)) return undefined;
+  const isTitle = TITLE_KEYS.has(key);
+  if (!isTitle && !FIELD_SHADOWED_KEYS.has(key)) return undefined;
   const all = getValueAtPath(root, 'endpoints.all');
   if (!isConfigRecord(all)) return undefined;
+  const valueOf = (name: string): t.ConfigValue => {
+    const allPath = `endpoints.all.${name}`;
+    return allPath in editedValues ? editedValues[allPath] : all[name];
+  };
   const allPath = `endpoints.all.${key}`;
-  const value = allPath in editedValues ? editedValues[allPath] : all[key];
-  if (isBlock) return { path: allPath, value, precedence: 'block' };
-  return value === undefined ? undefined : { path: allPath, value, precedence: 'field' };
+  const value = valueOf(key);
+  if (isTitle && titleResolution === 'block') return { path: allPath, value, precedence: 'block' };
+  if (value !== undefined) return { path: allPath, value, precedence: 'field' };
+  if (!isTitle || !TITLE_ROUTING_KEYS.includes(key)) return undefined;
+  const other = TITLE_ROUTING_KEYS.find((name) => name !== key && valueOf(name) !== undefined);
+  return other ? { path: `endpoints.all.${other}`, value, precedence: 'pair' } : undefined;
 }
 
 interface BaseReadout {
@@ -323,7 +343,7 @@ function deriveBaseModeState(
   const revertValue = revertTarget ? revertTarget.value : base.effective;
   const pending = readPending(path, data.editedValues, revertValue);
   /** D5: LibreChat reads this section only from librechat.yaml, so a stored override has no effect. */
-  if (base.isOverride && getReadOnlyReason(path) === 'yamlOnly') {
+  if (base.isOverride && getReadOnlyReason(path, data.writeRules) === 'yamlOnly') {
     return {
       value: pending.isEdited ? pending.value : base.lower.value,
       effective: base.lower.value,
@@ -343,6 +363,7 @@ function deriveBaseModeState(
     path,
     data.configValues ?? layers.effective,
     data.editedValues,
+    data.titleResolution,
   );
   return {
     value: pending.isEdited ? pending.value : (shown ?? base.effective),
@@ -392,6 +413,7 @@ function deriveScopeModeState(
     path,
     data.configValues ?? layers.effective,
     data.editedValues,
+    data.titleResolution,
   );
   return {
     value: pending.isEdited ? pending.value : (shown ?? effective),

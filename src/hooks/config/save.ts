@@ -5,6 +5,7 @@ import {
   errorText,
   notifyInfo,
   notifyError,
+  uniqueSkipped,
   notifyWarning,
   notifySuccess,
   getValueAtPath,
@@ -25,7 +26,7 @@ import { applyConfigChangesFn, resetBaseConfigFn } from '@/server';
 import { describeIssues } from '@/components/configuration/issues';
 import { hasPathOverlap } from '@/components/configuration/counts';
 import { labelForPath } from '@/components/configuration/meta';
-import { useConfigFeatures } from './contract';
+import { useConfigFeatures, useConfigWriteRules } from './contract';
 import { useLocalize } from '../useLocalize';
 
 function toTargetRef(target: t.WriteTarget): t.WriteTargetRef {
@@ -54,17 +55,6 @@ function termsUrlOf(result: t.ApplyConfigChangesResult): string | null {
   return typeof issue.params?.url === 'string' ? issue.params.url : '';
 }
 
-/** Skipped changes without repeats (the client and the server can report the same path). */
-function uniqueSkipped(skipped: t.SkippedChange[]): t.SkippedChange[] {
-  const seen = new Set<string>();
-  return skipped.filter(({ fieldPath, reason }) => {
-    const key = `${fieldPath}|${reason}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
 /**
  * The save pipeline of the configuration page (WS1). Pending edits become
  * `ConfigChange` ops (keyed collection entries by identity), which are
@@ -82,6 +72,7 @@ export function useConfigSave({
   const localize = useLocalize();
   const queryClient = useQueryClient();
   const features = useConfigFeatures();
+  const writeRules = useConfigWriteRules();
   const {
     configValues,
     dbOverrides,
@@ -214,7 +205,7 @@ export function useConfigSave({
       if (result.issues.length > 0 || result.failed.length > 0) {
         throw new Error(describeFailure(result, []));
       }
-      return result.skipped;
+      return { skipped: result.skipped, reported: result.reported };
     },
     [applyChanges, describeFailure],
   );
@@ -228,6 +219,7 @@ export function useConfigSave({
       root: baseActiveConfigValues,
       collections: collectionEdits,
       visibility: visibilityEdits,
+      writeRules,
     }),
     [
       schemaTree,
@@ -236,6 +228,7 @@ export function useConfigSave({
       isEditingScope,
       collectionEdits,
       visibilityEdits,
+      writeRules,
     ],
   );
 
@@ -263,8 +256,8 @@ export function useConfigSave({
   }, [isEditingScope, valueLayers, configValues, dbOverrides, yamlConfig]);
 
   const plan = useMemo(
-    () => planConfigChanges(changeSet.ops, snapshot, features),
-    [changeSet, snapshot, features],
+    () => planConfigChanges(changeSet.ops, snapshot, features, writeRules),
+    [changeSet, snapshot, features, writeRules],
   );
 
   const clientIssues = useMemo(
@@ -443,7 +436,7 @@ export function useConfigSave({
       }
       clearEdits();
       announceWrite(
-        [...changeSet.payload.skipped, ...result.skipped],
+        [...changeSet.payload.skipped, ...result.skipped, ...result.reported],
         result.applied,
         localize('com_config_saved'),
       );

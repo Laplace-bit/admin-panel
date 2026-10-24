@@ -135,6 +135,12 @@ const ISSUE_MESSAGES: Readonly<Record<string, string>> = {
   too_big_value: 'is too large',
   dotted_key: "has a key with a dot where LibreChat expects a setting's name",
   unknown_section: "isn't a section LibreChat knows",
+  not_multiple_of: 'must be a multiple of {{multipleOf}}',
+  custom_empty: 'is empty: enter a host and a port',
+  custom_format: 'must be only host:port, without http:// or a path',
+  custom_missing_port: 'must include a port, for example localhost:11434',
+  custom_public_ip:
+    'is a public IP address: enter a private address, or a hostname that resolves to one',
 };
 
 /**
@@ -229,6 +235,68 @@ function classifySchemaIssue(issue: t.SchemaIssue): {
     default:
       return { code: issue.code, params: {} };
   }
+}
+
+/** A bound the admin API reported as a number, or undefined (dates and bigints are not sent). */
+function numberBound(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * The issue code and message parameters of an issue the admin API reported
+ * with `params` (`issueParams`): its bounds, options and expected type, read
+ * the way the panel reads its own schema issues; a refinement's `reason`
+ * becomes `custom_<reason>` where the panel words it. Without params, or
+ * without the parameter a code's message needs, the code is worded without
+ * it (`paramlessIssueCode`).
+ */
+export function classifyReportedIssue(
+  code: string,
+  params: t.ReportedIssueParams | undefined,
+): { code: string; params?: Record<string, string | number> } {
+  if (!params) return { code: paramlessIssueCode(code) };
+  const bound = numberBound(code === 'too_big' ? params.maximum : params.minimum);
+  switch (code) {
+    case 'too_small':
+    case 'too_big':
+      if (bound === undefined) return { code: paramlessIssueCode(code) };
+      break;
+    case 'invalid_type':
+    case 'invalid_literal':
+      if (params.expected === undefined) return { code: paramlessIssueCode(code) };
+      break;
+    case 'invalid_enum_value':
+    case 'invalid_union_discriminator':
+      if (!params.options?.length) return { code: paramlessIssueCode('invalid_enum_value') };
+      return {
+        code: 'invalid_enum_value',
+        params: { options: params.options.map((option) => JSON.stringify(option)).join(', ') },
+      };
+    case 'not_multiple_of': {
+      const step = numberBound(params.multipleOf);
+      return step === undefined
+        ? { code: 'invalid_value' }
+        : { code, params: { multipleOf: step } };
+    }
+    case 'custom': {
+      const reasonCode = params.reason ? `custom_${params.reason}` : undefined;
+      return { code: reasonCode && reasonCode in ISSUE_MESSAGES ? reasonCode : code };
+    }
+    default:
+      break;
+  }
+  return classifySchemaIssue({
+    code,
+    path: [],
+    message: '',
+    expected: params.expected,
+    received: params.received,
+    minimum: bound,
+    maximum: bound,
+    inclusive: params.inclusive,
+    type: params.type,
+    validation: params.validation,
+  });
 }
 
 /** Config issues (stable codes, English messages) for schema issues relative to `basePath`. */

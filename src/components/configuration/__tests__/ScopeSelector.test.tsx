@@ -12,6 +12,9 @@ import {
   allGroupsQueryOptions,
 } from '@/server';
 import { ScopeSelector } from '../ScopeSelector';
+import { ConfigContractContext } from '@/contexts/ContractContext';
+import { createServerContract } from '@/test/fixtures';
+import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
 
 function localize(key: string, options?: Record<string, string | number>): string {
   if (!options) return key;
@@ -25,7 +28,9 @@ vi.mock('@/hooks', async () => {
   const { useDebouncedFilter } = await vi.importActual<typeof import('@/hooks/useDebouncedFilter')>(
     '@/hooks/useDebouncedFilter',
   );
-  return { useLocalize: () => localize, useDebouncedFilter };
+  const { useConfigFeatures } =
+    await vi.importActual<typeof import('@/hooks/config/contract')>('@/hooks/config/contract');
+  return { useLocalize: () => localize, useDebouncedFilter, useConfigFeatures };
 });
 
 const scopes: t.ConfigScope[] = [
@@ -119,24 +124,31 @@ beforeEach(() => {
 interface RenderOptions {
   selection?: t.ScopeSelection;
   isDirty?: boolean;
+  contract?: t.ConfigContract;
 }
 
-function renderSelector({ selection = { type: 'BASE' }, isDirty = false }: RenderOptions = {}) {
+function renderSelector({
+  selection = { type: 'BASE' },
+  isDirty = false,
+  contract = BUNDLED_CONFIG_CONTRACT,
+}: RenderOptions = {}) {
   const onSelect = vi.fn();
   const onOpenChange = vi.fn();
   const onError = vi.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <ScopeSelector
-        open
-        onOpenChange={onOpenChange}
-        currentSelection={selection}
-        onSelect={onSelect}
-        permissions={{ canView: true, canEdit: true, canAssign: true }}
-        onError={onError}
-        isDirty={isDirty}
-      />
+      <ConfigContractContext.Provider value={contract}>
+        <ScopeSelector
+          open
+          onOpenChange={onOpenChange}
+          currentSelection={selection}
+          onSelect={onSelect}
+          permissions={{ canView: true, canEdit: true, canAssign: true }}
+          onError={onError}
+          isDirty={isDirty}
+        />
+      </ConfigContractContext.Provider>
     </QueryClientProvider>,
   );
   return { onSelect, onOpenChange, onError };
@@ -168,6 +180,19 @@ describe('ScopeSelector list', () => {
       renderSelector();
       const eng = await row(/^Engineering/);
       expect(within(eng).getByText('com_scope_tie_short(names=Design)')).toBeInTheDocument();
+    } finally {
+      scopes[2].isActive = false;
+    }
+  });
+
+  it('describes the fixed order instead of warning when LibreChat orders ties', async () => {
+    scopes[2].isActive = true;
+    try {
+      renderSelector({ contract: createServerContract({ deterministicPrecedence: true }) });
+      const eng = await row(/^Engineering/);
+      expect(within(eng).queryByText('com_scope_tie_short(names=Design)')).toBeNull();
+      expect(screen.getAllByText('com_scope_precedence_ordered').length).toBeGreaterThan(0);
+      expect(screen.queryByText('com_scope_precedence')).toBeNull();
     } finally {
       scopes[2].isActive = false;
     }

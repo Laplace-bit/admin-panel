@@ -14,12 +14,15 @@ const text = z.string();
 const names = z.array(z.string());
 const count = z.number().int().nonnegative();
 const nameMap = z.record(z.string(), z.string());
+/** A reason a newer server adds reads as an operator boundary: only librechat.yaml sets the path. */
+const deploymentReason = z.enum(['startup', 'operator', 'unused']).catch('operator');
 
 const rulesSchema = z.object({
   acceptedSections: lenient(names),
   baseOnlySections: lenient(names),
   basePrincipalSections: lenient(names),
   baseOnlyPaths: lenient(names),
+  deploymentOnlyPaths: lenient(z.record(z.string(), deploymentReason)),
   arrayMergeKeys: lenient(nameMap),
   atomicMergePaths: lenient(names),
   overrideKeyMap: lenient(nameMap),

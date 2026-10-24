@@ -11,6 +11,9 @@ import {
   valuesDataFixture,
 } from '@/test/layers';
 import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
+import { ConfigContractContext } from '@/contexts/ContractContext';
+import { createServerContract } from '@/test/fixtures';
+import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { ModelSpecsRenderer } from '../ModelSpecsRenderer';
@@ -57,22 +60,26 @@ function renderSpecs(
     data,
     collectionEdits = {},
     showConfiguredOnly,
+    contract = BUNDLED_CONFIG_CONTRACT,
   }: {
     onChange?: t.FieldRendererProps['onChange'];
     data?: t.ConfigValuesData;
     collectionEdits?: t.CollectionEdits;
     showConfiguredOnly?: boolean;
+    contract?: t.ConfigContract;
   } = {},
 ) {
   const values = data ?? valuesDataFixture(baseLayersFixture());
   const wrap = (children: ReactNode) => (
-    <CollectionEditsContext.Provider value={collectionEdits}>
-      <ConfigValuesProvider
-        value={{ ...values, configValues: { ...values.configValues, modelSpecs } }}
-      >
-        {children}
-      </ConfigValuesProvider>
-    </CollectionEditsContext.Provider>
+    <ConfigContractContext.Provider value={contract}>
+      <CollectionEditsContext.Provider value={collectionEdits}>
+        <ConfigValuesProvider
+          value={{ ...values, configValues: { ...values.configValues, modelSpecs } }}
+        >
+          {children}
+        </ConfigValuesProvider>
+      </CollectionEditsContext.Provider>
+    </ConfigContractContext.Provider>
   );
   const ui = (
     <ModelSpecsRenderer
@@ -248,6 +255,40 @@ describe('ModelSpecsRenderer', () => {
       screen.getByRole('button', { name: /com_config_specs_chip_remove \{"name":"Gone"\}/ }),
     );
     expect(onChange).toHaveBeenCalledWith('modelSpecs.addedEndpoints', ['openAI']);
+  });
+
+  it('matches an endpoint spelled as written once the server folds endpoint names', () => {
+    const values = valuesDataFixture(baseLayersFixture());
+    const data: t.ConfigValuesData = {
+      ...values,
+      configValues: {
+        ...values.configValues,
+        endpoints: { custom: [{ name: 'Ollama', baseURL: 'http://127.0.0.1:11434/v1' }] },
+      },
+    };
+    const optionsOf = () =>
+      [
+        ...(
+          document.getElementById('modelSpecs-addedEndpoints-add') as HTMLSelectElement
+        ).querySelectorAll('option'),
+      ].map((option) => [option.value, option.textContent]);
+    const before = renderSpecs({ list: SPECS, addedEndpoints: ['Ollama'] }, { data });
+    expect(
+      screen.getByText('com_config_specs_added_served_as {"name":"Ollama","served":"ollama"}'),
+    ).toBeInTheDocument();
+    expect(optionsOf()).toContainEqual(['ollama', 'Ollama (ollama)']);
+    before.unmount();
+    renderSpecs(
+      { list: SPECS, addedEndpoints: ['Ollama'] },
+      { data, contract: createServerContract({}, { titleResolution: 'field' }) },
+    );
+    expect(screen.queryByText(/com_config_specs_added_served_as/)).not.toBeInTheDocument();
+    const chip = screen.getByRole('button', {
+      name: 'com_config_specs_chip_remove {"name":"Ollama"}',
+    }).parentElement;
+    expect(chip).toHaveTextContent('Ollama');
+    expect(chip).toHaveAttribute('title', 'Ollama');
+    expect(optionsOf().map(([value]) => value)).not.toContain('ollama');
   });
 
   it('flags spec problems on the row and at the field', () => {

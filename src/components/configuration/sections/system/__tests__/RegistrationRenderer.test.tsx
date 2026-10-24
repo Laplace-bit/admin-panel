@@ -1,6 +1,7 @@
 import '@/locales/i18n';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, within } from '@testing-library/react';
+import { createServerContract } from '@/test/fixtures';
 import { renderSections } from '@/test/sections';
 
 const YAML = {
@@ -23,6 +24,45 @@ describe('RegistrationRenderer', () => {
     expect(screen.getByText('Google')).toBeInTheDocument();
     expect(screen.getByText(/reads this list from librechat.yaml only/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Remove openid/i })).not.toBeInTheDocument();
+  });
+
+  it('edits the providers in Base once Base overrides apply before sign-in', () => {
+    const onChange = vi.fn();
+    renderSections({
+      sections: ['registration'],
+      yaml: YAML,
+      onChange,
+      contract: createServerContract({ preAuthBaseOverrides: true }),
+    });
+    expect(screen.queryByText(/reads this list from librechat.yaml only/)).toBeNull();
+    fireEvent.change(screen.getByRole('combobox', { name: /Add sign-in option/ }), {
+      target: { value: 'github' },
+    });
+    expect(onChange).toHaveBeenLastCalledWith('registration.socialLogins', [
+      'openid',
+      'google',
+      'github',
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Google' }));
+    expect(onChange).toHaveBeenLastCalledWith('registration.socialLogins', ['openid', 'github']);
+    expect(
+      screen.getByText('Social, SSO and LDAP sign-ins and password resets check this list too.'),
+    ).toBeInTheDocument();
+  });
+
+  it('removes the Base list when it matches librechat.yaml again', () => {
+    const onChange = vi.fn();
+    renderSections({
+      sections: ['registration'],
+      yaml: YAML,
+      overrides: { registration: { socialLogins: ['openid'] } },
+      onChange,
+      contract: createServerContract({ preAuthBaseOverrides: true }),
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: /Add sign-in option/ }), {
+      target: { value: 'google' },
+    });
+    expect(onChange).toHaveBeenLastCalledWith('registration.socialLogins', undefined);
   });
 
   it('in a profile, lists the librechat.yaml providers, not a stale Base override', () => {

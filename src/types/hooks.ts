@@ -12,6 +12,7 @@ import type {
   CollectionEdits,
   ConfigWarning,
   ChangeSummaryItem,
+  ApplyConfigChangesResult,
 } from './changes';
 import type {
   ConfigValue,
@@ -220,13 +221,15 @@ export interface ConfigEditsState {
 /**
  * Writes saves and resets to a target through the validated, all-or-nothing
  * apply; rejects with a readable summary when anything is invalid, and
- * resolves to the changes that were not stored or did not take effect.
+ * resolves to the changes that were not stored or did not take effect
+ * (`skipped`), apart from the parts of written ones the server reported
+ * (`reported`).
  */
 export type WriteChangesFn = (
   target: WriteTarget,
   saves: SaveEntry[],
   resets: string[],
-) => Promise<SkippedChange[]>;
+) => Promise<Pick<ApplyConfigChangesResult, 'skipped' | 'reported'>>;
 
 /** Toast for a finished write, listing anything that was not stored. */
 export type AnnounceWriteFn = (

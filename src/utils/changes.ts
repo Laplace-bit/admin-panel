@@ -7,6 +7,7 @@ import type * as t from '@/types';
 import {
   getEntryKey,
   diffOverride,
+  entryLocation,
   hasHiddenSecret,
   mergeConfigLayers,
   getKeyedCollection,
@@ -32,6 +33,7 @@ import {
   getConfigSection,
   getReadOnlyReason,
   SECRET_CONFIG_KEYS,
+  BUNDLED_WRITE_RULES,
   BUNDLED_CONFIG_FEATURES,
 } from '@/constants';
 import { isSecretKey, toSecretPreviewKey, valueOrSecretPreview } from './secrets';
@@ -61,8 +63,9 @@ export function findWriteRuleIssues(
   path: string,
   value: t.ConfigValue,
   features: t.ConfigFeatures = BUNDLED_CONFIG_FEATURES,
+  rules: t.ConfigWriteRules = BUNDLED_WRITE_RULES,
 ): t.ConfigIssue[] {
-  const issues = findValueRuleIssues(path, value, features);
+  const issues = findValueRuleIssues(path, value, features, rules);
   const collection = getKeyedCollection(path);
   if (!collection || !Array.isArray(value) || issues.length === 0) return issues;
   return issues.map((issue) => withEntryOf(issue, collection, value));
@@ -84,8 +87,9 @@ function findValueRuleIssues(
   path: string,
   value: t.ConfigValue,
   features: t.ConfigFeatures,
+  rules: t.ConfigWriteRules,
 ): t.ConfigIssue[] {
-  const managed = findYamlManagedValues(path, value);
+  const managed = findYamlManagedValues(path, value, rules);
   if (managed.length > 0) {
     return managed.map((managedPath) => ({
       path: managedPath,
@@ -139,6 +143,7 @@ function blankTextIssue({ path, key }: t.BlankConfigText): t.ConfigIssue {
 interface PlanState {
   snapshot: t.WriteSnapshot;
   features: t.ConfigFeatures;
+  rules: t.ConfigWriteRules;
   sets: Map<string, t.ConfigValue>;
   resets: string[];
   tombstones: string[];
@@ -267,8 +272,8 @@ function collectOps(state: PlanState, ops: t.ConfigChange[]): void {
   for (const op of ops) {
     const isRemoval = op.op === 'reset' || op.op === 'untombstone' || op.op === 'removeEntry';
     const reason =
-      getWriteSkipReason(op.path, isRemoval) ??
-      (isProfile && !isRemoval ? scopeGateSkipReason(op.path) : undefined);
+      getWriteSkipReason(op.path, isRemoval, state.rules) ??
+      (isProfile && !isRemoval ? scopeGateSkipReason(op.path, state.rules) : undefined);
     if (reason) {
       state.skipped.push({ fieldPath: op.path, reason });
       continue;
@@ -541,8 +546,8 @@ function isIntroducedIssue(state: PlanState, path: string, issue: t.ConfigIssue)
 function validateSets(state: PlanState): Set<string> {
   const blocked = new Set<string>();
   for (const [path, value] of state.sets) {
-    const ruleIssues = findWriteRuleIssues(path, value, state.features).filter((issue) =>
-      isIntroducedIssue(state, path, issue),
+    const ruleIssues = findWriteRuleIssues(path, value, state.features, state.rules).filter(
+      (issue) => isIntroducedIssue(state, path, issue),
     );
     if (ruleIssues.length > 0) {
       state.issues.push(...ruleIssues);
@@ -585,7 +590,9 @@ function validateSections(state: PlanState, blocked: ReadonlySet<string>): void 
   ];
   /** LibreChat reads librechat.yaml-only sections from the file alone: removing an override there can't break them. */
   const sections = new Set(
-    written.filter((path) => getReadOnlyReason(path) !== 'yamlOnly').map(getConfigSection),
+    written
+      .filter((path) => getReadOnlyReason(path, state.rules) !== 'yamlOnly')
+      .map(getConfigSection),
   );
   const reported = new Set(state.issues.map(issueKey));
   const { lower, stored } = state.snapshot;
@@ -636,10 +643,20 @@ function findMergedBackKeys(state: PlanState): void {
   }
 }
 
+/** The plan's write paths, a keyed collection's by the entries its changes touch. */
+function changedLocations(state: PlanState): string[] {
+  const paths = [...state.sets.keys(), ...state.resets, ...state.tombstones, ...state.untombstones];
+  return paths.flatMap((path) => {
+    const entries = state.touchedEntries.get(path);
+    return entries ? [...entries].map((name) => entryLocation(path, name)) : [path];
+  });
+}
+
 /**
  * Resolves a batch of changes against the target's stored overrides and the
  * layer beneath it, into the admin API writes that implement it, by the
- * server's contract `features` (the bundled ones: an older server). Everything
+ * server's contract `features` and write `rules` (the bundled ones: an older
+ * server). Everything
  * is checked before anything may be written: write rules (read-only and
  * YAML-managed paths, process-backed MCP fields, unsafe keys), field and
  * entry schemas, whole sections, and the keyed collection rules. The client
@@ -650,10 +667,12 @@ export function planConfigChanges(
   ops: t.ConfigChange[],
   snapshot: t.WriteSnapshot,
   features: t.ConfigFeatures = BUNDLED_CONFIG_FEATURES,
+  rules: t.ConfigWriteRules = BUNDLED_WRITE_RULES,
 ): t.WritePlan {
   const state: PlanState = {
     snapshot,
     features,
+    rules,
     sets: new Map(),
     resets: [],
     tombstones: [],
@@ -684,6 +703,7 @@ export function planConfigChanges(
     warnings: state.warnings,
     storedAfter,
     effective: state.effective,
+    changed: changedLocations(state),
   };
 }
 

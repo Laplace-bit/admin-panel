@@ -9,7 +9,8 @@ import {
 } from '@/components/configuration/configMeta';
 import { providerTocItems } from '@/components/configuration/sections/providers';
 import { webSearchTocItems } from '@/components/configuration/sections/features';
-import { INTERFACE_GROUPS, READ_ONLY_CONFIG_SECTIONS } from '@/constants';
+import { useConfigWriteRules } from './contract';
+import { INTERFACE_GROUPS } from '@/constants';
 import { getValueAtPath, isConfigRecord } from '@/utils';
 import { useLocalize } from '../useLocalize';
 
@@ -126,6 +127,7 @@ export function useTabSections({
   editedValues,
 }: t.TabSectionsOptions): t.ConfigSectionConfig[] {
   const localize = useLocalize();
+  const writeRules = useConfigWriteRules();
 
   return useMemo((): t.ConfigSectionConfig[] => {
     // Collect virtual section entries (those with schemaKey) that target this tab
@@ -144,7 +146,7 @@ export function useTabSections({
         const children = section.children ?? [];
         const hasStructuredChildren =
           (section.isObject || section.type === 'record') && children.length > 0;
-        const readOnlyReason = READ_ONLY_CONFIG_SECTIONS.get(section.key);
+        const readOnlyReason = writeRules.readOnlySections.get(section.key);
         return {
           id: section.key,
           titleKey: meta?.titleKey ?? `com_config_section_${section.key}`,
@@ -204,5 +206,13 @@ export function useTabSections({
     }
 
     return allSections;
-  }, [schemaTree, activeTab, activeConfigValues, editedValues, localize, sectionPermissions]);
+  }, [
+    schemaTree,
+    activeTab,
+    activeConfigValues,
+    editedValues,
+    localize,
+    sectionPermissions,
+    writeRules,
+  ]);
 }

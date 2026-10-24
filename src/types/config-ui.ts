@@ -14,7 +14,8 @@ import type { TocEntry, JumpTarget, ConfigSearchHit, ConfigSearchItem } from './
 import type { BaseOverridesState, ImportSkippedKey, ImportRequest } from './review';
 import type { TabBadge, PathIndex, ValueLayers } from './values';
 import type { FieldControlProps } from './controls';
-import type { VisibilityEdit } from './changes';
+import type { ReportedIssue, ReportedLocation, ReportedSkip, VisibilityEdit } from './changes';
+import type { ConfigWriteRules } from './contract';
 
 export interface ConfigTab {
   id: string;
@@ -528,6 +529,8 @@ export interface SaveContext {
   hasOverride: (path: string) => boolean;
   /** Whether the edit target is a profile, whose values beneath come from Base (not librechat.yaml). */
   isScope?: boolean;
+  /** The server's write rules (`getWriteRules`); the bundled ones when absent. */
+  writeRules?: ConfigWriteRules;
 }
 
 /** Result of the server-side pre-flight that runs before any write. */
@@ -540,11 +543,17 @@ export interface ConfigCheckResult {
 export interface PatchFieldsResponse {
   error?: string;
   message?: string;
-  /** `CONFIG_OVERRIDE_INVALID` when the admin API rejected the values (see `issues`). */
+  /** `CONFIG_OVERRIDE_INVALID` when the admin API rejected the values (see `issues`), or why it refused the write. */
   code?: string;
   /** Paths (YAML keys, array indices of the sent value) and stable codes of rejected values. */
-  issues?: Array<{ path: string; code: string }>;
+  issues?: ReportedIssue[];
   config?: { overrides?: ConfigRecord; tombstones?: string[] } | null;
+  /** `writeReport`: the locations the write stored or removed. */
+  applied?: ReportedLocation[];
+  /** `writeReport`: the locations, or parts of a written value, the write did not store. */
+  skipped?: ReportedSkip[];
+  /** Stored values the runtime merge leaves out (`secret_rebinding`, …). */
+  ignored?: ReportedSkip[];
 }
 
 /** Outcome of a save call: how many entries the backend applied and which were dropped. */

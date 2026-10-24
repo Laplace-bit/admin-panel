@@ -3,6 +3,7 @@ import type * as t from '@/types';
 import { SecretField, SecretInput } from '../../fields/SecretField';
 import { FieldControl } from '../../renderer/FieldControl';
 import { useLocalize, useConfigFeatures } from '@/hooks';
+import { isEncryptedCredential } from '@/constants';
 import { DecorativeIcon } from '@/components/shared';
 import { TextField } from '../../fields/TextField';
 import { credentialState } from './state';
@@ -35,6 +36,7 @@ function statusLine(
   storedKeysUsed: boolean,
   localize: t.LocalizeFn,
 ): t.CredentialStatusLine | null {
+  const encrypted = isEncryptedCredential(credential, { webSearchStoredKeys: storedKeysUsed });
   if (!storedKeysUsed && LITERAL_STATES.has(state.status)) {
     return {
       tone: 'warn',
@@ -44,7 +46,7 @@ function statusLine(
   }
   switch (state.status) {
     case 'pending':
-      return credential.encrypted
+      return encrypted
         ? { tone: 'muted', icon: 'lock', text: localize('com_config_features_cred_pending') }
         : {
             tone: 'warn',
@@ -66,7 +68,7 @@ function statusLine(
         text: localize('com_config_features_cred_default', { env: state.env ?? credential.env }),
       };
     case 'set':
-      return credential.secret && !credential.encrypted
+      return credential.secret && !encrypted
         ? {
             tone: 'warn',
             icon: 'warning',

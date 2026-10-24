@@ -133,7 +133,7 @@ export function buildSavePayload(
   const skipped: t.SkippedChange[] = [];
   for (const path of touched) {
     const edited = editedValues[path];
-    const reason = getWriteSkipReason(path, edited === undefined);
+    const reason = getWriteSkipReason(path, edited === undefined, context?.writeRules);
     if (reason) {
       skipped.push({ fieldPath: path, reason });
       continue;

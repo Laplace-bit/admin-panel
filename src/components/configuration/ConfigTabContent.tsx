@@ -27,7 +27,8 @@ import { ConfigSection } from './ConfigSection';
 import { CodeField } from './fields/CodeField';
 import { InfoBanner } from './InfoBanner';
 import { ScopeGate } from './ScopeGate';
-import { useLocalize } from '@/hooks';
+import { useLocalize, useConfigContract } from '@/hooks';
+import { getWriteRules } from '@/constants';
 
 /**
  * Enter in an input of the tab form must never submit it (and so "click" its
@@ -149,8 +150,11 @@ export function ConfigTabContent({
     return map;
   }, [sectionCounts]);
 
+  const contract = useConfigContract();
   const valuesData = useMemo<t.ConfigValuesData>(
     () => ({
+      writeRules: getWriteRules(contract),
+      titleResolution: contract.rules.titleResolution,
       configValues,
       editedValues,
       resolvedValues,
@@ -173,6 +177,7 @@ export function ConfigTabContent({
       isEditingScope,
       valueLayers,
       visibilityEdits,
+      contract,
     ],
   );
 
