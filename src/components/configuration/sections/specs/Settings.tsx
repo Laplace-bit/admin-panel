@@ -3,8 +3,21 @@ import { useNavigate } from '@tanstack/react-router';
 import { normalizeEndpointName } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
-import { cn, isRowVisible, stringItems, isConfigRecord, foldsEndpointReferences } from '@/utils';
-import { useLocalize, useFieldState, useValuesScope, useConfigContract } from '@/hooks';
+import {
+  cn,
+  isRowVisible,
+  stringItems,
+  isConfigRecord,
+  selectsHiddenEndpoint,
+  foldsEndpointReferences,
+} from '@/utils';
+import {
+  useLocalize,
+  useFieldState,
+  useValuesScope,
+  useHiddenEntries,
+  useConfigContract,
+} from '@/hooks';
 import { DecorativeIcon, StateChip } from '@/components/shared';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { hasPathOrDescendant } from '../../renderer/paths';
@@ -87,12 +100,7 @@ function modelSelectOn(value: t.ConfigValue, specCount: number, added: number): 
 /** "Users will see: 3 specs, plus OpenAI and Agents in the endpoint menu. 1 more is hidden." */
 export function previewText(
   localize: t.LocalizeFn,
-  {
-    items,
-    mode,
-    menuOn,
-    added,
-  }: { items: t.ConfigValue[]; mode: t.SpecSelectionMode; menuOn: boolean; added: string[] },
+  { items, mode, menuOn, added, addsNone = false }: t.SpecsPreviewInput,
 ): string {
   if (items.length === 0) {
     return localize(
@@ -107,6 +115,7 @@ export function previewText(
     if (added.length > 0) {
       return localize('com_config_specs_preview_added', { specs, endpoints: added.join(', ') });
     }
+    if (addsNone) return localize('com_config_specs_preview_added_none', { specs });
     return localize('com_config_specs_preview_all', { specs });
   })();
   if (hidden === 0) return sentence;
@@ -184,6 +193,11 @@ export function SpecsSettings({
   const mode = modeOf(enforce, prioritize);
   const added = stringItems(getValue(ADDED, undefined));
   const menuOn = modelSelectOn(getValue(MODEL_SELECT, undefined), items.length, added.length);
+  /** What the profile's members get: LibreChat leaves out the specs and added endpoints it hides (`keyedTombstones`). */
+  const { hidden: hiddenEndpoints } = useHiddenEntries('endpoints.custom');
+  const hiddenIds = new Set(hiddenEndpoints.keys());
+  const servedItems = items.filter((spec) => !selectsHiddenEndpoint(spec, hiddenIds));
+  const servedAdded = added.filter((name) => !hiddenIds.has(normalizeEndpointName(name)));
   const canEdit = !disabled && permissions?.canEdit !== false;
   const isShown = (path: string) =>
     isRowVisible(rowFilter, path) &&
@@ -375,10 +389,11 @@ export function SpecsSettings({
         <SpecNote tone="preview" icon={<DecorativeIcon name="users" size="sm" />}>
           <span className="font-medium">{localize('com_config_specs_preview_label')}</span>{' '}
           {previewText(localize, {
-            items,
+            items: servedItems,
             mode,
             menuOn,
-            added: added.map((name) => endpointLabelOf(options, name)),
+            added: servedAdded.map((name) => endpointLabelOf(options, name)),
+            addsNone: servedAdded.length === 0 && added.length > 0,
           })}
         </SpecNote>
       )}
