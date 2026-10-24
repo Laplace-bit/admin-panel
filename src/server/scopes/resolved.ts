@@ -48,6 +48,12 @@ export const getResolvedConfigFn = createServerFn({ method: 'GET' })
       const resolvedConfig: t.FlatConfigMap = {};
       for (const path of changedPaths) resolvedConfig[path] = getValueAtPath(overrides, path);
 
-      return { resolvedConfig, changedPaths, overrides, tombstones: config.tombstones ?? [] };
+      return {
+        resolvedConfig,
+        changedPaths,
+        overrides,
+        tombstones: config.tombstones ?? [],
+        ...(typeof config.revision === 'string' && { revision: config.revision }),
+      };
     },
   );

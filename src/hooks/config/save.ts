@@ -10,8 +10,10 @@ import {
   notifySuccess,
   getValueAtPath,
   termsRefusalUrl,
+  usesChangeBatch,
   planConfigChanges,
   mergedBackChanges,
+  toRevisionPrecondition,
 } from '@/utils';
 import {
   ADMIN_API_KEY_FIELD,
@@ -39,6 +41,23 @@ function hasWrites(plan: t.WritePlan): boolean {
   return (
     plan.sets.length + plan.resets.length + plan.tombstones.length + plan.untombstones.length > 0
   );
+}
+
+/**
+ * The revision the pending edits were made against: the target's loaded
+ * revision when the first of them was made, held while any is pending. A
+ * re-read meanwhile (the review opening, a window-focus refetch) does not
+ * move it, so a save over a version someone else saved since is a conflict
+ * rather than a silent overwrite. Once the edits are saved or dropped it
+ * follows the loaded revision again.
+ */
+function useEditRevision(
+  loaded: string | null | undefined,
+  pending: boolean,
+): string | null | undefined {
+  const [held, setHeld] = useState({ pending, revision: loaded });
+  if (held.pending !== pending) setHeld({ pending, revision: loaded });
+  return pending && held.pending ? held.revision : loaded;
 }
 
 /** The admin session ended (signed out elsewhere or expired): the save never reached LibreChat. */
@@ -82,6 +101,7 @@ export function useConfigSave({
     overridePaths,
     valueLayers,
     baseActiveConfigValues,
+    targetRevision,
   } = layers;
   const {
     editedValues,
@@ -100,13 +120,25 @@ export function useConfigSave({
   const [serverIssues, setServerIssues] = useState<t.ConfigIssue[]>([]);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [termsUrl, setTermsUrl] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
 
   useEffect(() => setServerIssues([]), [editedValues, visibilityEdits]);
+
+  const hasPendingEdits =
+    Object.keys(editedValues).length > 0 || Object.keys(visibilityEdits).length > 0;
+  const editRevision = useEditRevision(targetRevision, hasPendingEdits);
+
+  /** The revision the edits are saved against (`changesBatch`): see `useEditRevision`. */
+  const expectedRevision = useMemo(
+    () => (usesChangeBatch(features) ? toRevisionPrecondition(editRevision) : undefined),
+    [features, editRevision],
+  );
 
   const clearEdits = useCallback(() => {
     resetEdits();
     setConfirmSaveOpen(false);
     setSaving(false);
+    setConflict(false);
     setSaveError(null);
   }, [resetEdits, setSaveError]);
 
@@ -152,13 +184,16 @@ export function useConfigSave({
 
   /**
    * Applies ops through the server's validated apply; queries are refetched
-   * whatever the outcome. A call that fails outright (an ended session) is
-   * reported at once: the refetch, which retries, runs in the background.
+   * whatever the outcome, so after a conflict the page shows what is stored
+   * now. A call that fails outright (an ended session) is reported at once:
+   * the refetch, which retries, runs in the background.
    */
   const applyChanges = useCallback(
-    async (target: t.WriteTarget, ops: t.ConfigChange[]) => {
+    async (target: t.WriteTarget, ops: t.ConfigChange[], revision?: string) => {
       try {
-        const result = await applyConfigChangesFn({ data: { target: toTargetRef(target), ops } });
+        const result = await applyConfigChangesFn({
+          data: { target: toTargetRef(target), ops, expectedRevision: revision },
+        });
         await invalidateTarget(target);
         return result;
       } catch (err) {
@@ -176,6 +211,7 @@ export function useConfigSave({
       const { summaries } = describeIssues(blocking, collections, localize);
       const titleKey = (() => {
         if (result.issues.length > 0) return 'com_config_validation_failed';
+        if (result.partiallyWritten) return 'com_config_apply_partial';
         return result.compensated === false
           ? 'com_config_apply_rollback_incomplete'
           : 'com_config_apply_failed';
@@ -391,92 +427,135 @@ export function useConfigSave({
     localize,
   ]);
 
-  const handleConfirmSave = useCallback(async () => {
-    if (saving || unsafeKeys.length > 0) return;
-    if (clientIssues.length > 0) {
-      setSaveError(`${localize('com_config_validation_failed')} — ${issueSummaries.join('; ')}`);
-      return;
-    }
-    if (!hasWrites(plan)) {
-      clearEdits();
-      if (savePlan.skipped.length > 0)
-        announceWrite(savePlan.skipped, 0, localize('com_config_saved'));
-      else notifyInfo(localize('com_config_nothing_to_save'));
-      return;
-    }
-    const mcpError = findMcpError();
-    if (mcpError) {
-      setSaveError(mcpError);
-      notifyError(mcpError);
-      return;
-    }
+  /**
+   * Saves the pending edits to the edit target, against `revision` (see
+   * `ApplyConfigChangesRequest.expectedRevision`). A target saved elsewhere
+   * meanwhile is a `conflict`: nothing was written, and the review offers to
+   * reload or to merge.
+   */
+  const saveAgainst = useCallback(
+    async (revision: string | undefined) => {
+      if (saving || unsafeKeys.length > 0) return;
+      if (clientIssues.length > 0) {
+        setSaveError(`${localize('com_config_validation_failed')} — ${issueSummaries.join('; ')}`);
+        return;
+      }
+      if (!hasWrites(plan)) {
+        clearEdits();
+        if (savePlan.skipped.length > 0)
+          announceWrite(savePlan.skipped, 0, localize('com_config_saved'));
+        else notifyInfo(localize('com_config_nothing_to_save'));
+        return;
+      }
+      const mcpError = findMcpError();
+      if (mcpError) {
+        setSaveError(mcpError);
+        notifyError(mcpError);
+        return;
+      }
 
-    setSaving(true);
+      setSaving(true);
+      setSaveError(null);
+      setSessionExpired(false);
+      setTermsUrl(null);
+      setConflict(false);
+      try {
+        const result = await applyChanges(editTarget, changeSet.ops, revision);
+        if (result.conflict) {
+          setSaving(false);
+          setConflict(true);
+          notifyWarning(
+            localize('com_config_conflict_title'),
+            localize('com_config_conflict_toast'),
+          );
+          return;
+        }
+        const terms = termsUrlOf(result);
+        if (terms !== null) {
+          const message = localize('com_config_terms_not_accepted');
+          setSaving(false);
+          setTermsUrl(terms);
+          setSaveError(message);
+          notifyError(message);
+          return;
+        }
+        if (result.issues.length > 0 || result.failed.length > 0) {
+          const message = describeFailure(result, changeSet.collections);
+          setServerIssues([...result.issues, ...result.failed]);
+          setSaving(false);
+          setSaveError(message);
+          notifyError(message);
+          return;
+        }
+        clearEdits();
+        announceWrite(
+          [...changeSet.payload.skipped, ...result.skipped, ...result.reported],
+          result.applied,
+          localize('com_config_saved'),
+        );
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : String(err);
+        const expired = isSessionError(raw);
+        const message = expired ? localize('com_config_session_expired') : raw;
+        setSaving(false);
+        setSessionExpired(expired);
+        setSaveError(message);
+        notifyError(message);
+      }
+    },
+    [
+      saving,
+      unsafeKeys,
+      clientIssues,
+      issueSummaries,
+      plan,
+      savePlan,
+      changeSet,
+      clearEdits,
+      announceWrite,
+      findMcpError,
+      applyChanges,
+      describeFailure,
+      editTarget,
+      localize,
+      setSaveError,
+    ],
+  );
+
+  /**
+   * Save from the review, against the revision the edits were made against.
+   * While the conflict notice is shown only Reload or Merge resolves it: Save
+   * would send that revision again and meet the same conflict. Closing the
+   * review ends the notice; the review opened again compares the edits with
+   * what is stored now, and its Save conflicts again until the admin reloads
+   * or merges.
+   */
+  const handleConfirmSave = useCallback(async () => {
+    if (conflict) return;
+    await saveAgainst(expectedRevision);
+  }, [conflict, saveAgainst, expectedRevision]);
+
+  /** Merges after a conflict: the server plans the edits over the target as stored now. */
+  const saveOverLatest = useCallback(() => saveAgainst(undefined), [saveAgainst]);
+
+  const reloadLatest = useCallback(async () => {
+    setConflict(false);
     setSaveError(null);
-    setSessionExpired(false);
-    setTermsUrl(null);
-    try {
-      const result = await applyChanges(editTarget, changeSet.ops);
-      const terms = termsUrlOf(result);
-      if (terms !== null) {
-        const message = localize('com_config_terms_not_accepted');
-        setSaving(false);
-        setTermsUrl(terms);
-        setSaveError(message);
-        notifyError(message);
-        return;
-      }
-      if (result.issues.length > 0 || result.failed.length > 0) {
-        const message = describeFailure(result, changeSet.collections);
-        setServerIssues([...result.issues, ...result.failed]);
-        setSaving(false);
-        setSaveError(message);
-        notifyError(message);
-        return;
-      }
-      clearEdits();
-      announceWrite(
-        [...changeSet.payload.skipped, ...result.skipped, ...result.reported],
-        result.applied,
-        localize('com_config_saved'),
-      );
-    } catch (err) {
-      const raw = err instanceof Error ? err.message : String(err);
-      const expired = isSessionError(raw);
-      const message = expired ? localize('com_config_session_expired') : raw;
-      setSaving(false);
-      setSessionExpired(expired);
-      setSaveError(message);
-      notifyError(message);
-    }
-  }, [
-    saving,
-    unsafeKeys,
-    clientIssues,
-    issueSummaries,
-    plan,
-    savePlan,
-    changeSet,
-    clearEdits,
-    announceWrite,
-    findMcpError,
-    applyChanges,
-    describeFailure,
-    editTarget,
-    localize,
-    setSaveError,
-  ]);
+    await invalidateTarget(editTarget);
+  }, [invalidateTarget, editTarget, setSaveError]);
 
   /**
    * Opening the review re-reads the target, so rows saved by someone else
-   * meanwhile are flagged as drifted (SV-8). Blocking problems are listed by
-   * the review from `issues`.
+   * meanwhile are flagged as drifted (SV-8); the revision Save sends stays the
+   * one the edits were made against. Blocking problems are listed by the
+   * review from `issues`.
    */
   const openReview = useCallback(() => {
     void invalidateTarget(editTarget);
     setSaveError(null);
     setSessionExpired(false);
     setTermsUrl(null);
+    setConflict(false);
     setConfirmSaveOpen(true);
   }, [invalidateTarget, editTarget, setSaveError]);
 
@@ -485,6 +564,7 @@ export function useConfigSave({
     setSaveError(null);
     setSessionExpired(false);
     setTermsUrl(null);
+    setConflict(false);
   }, [setSaveError]);
 
   const closeReview = useCallback(() => setConfirmSaveOpen(false), []);
@@ -502,6 +582,9 @@ export function useConfigSave({
     fieldErrors,
     issueSummaries,
     handleConfirmSave,
+    conflict,
+    reloadLatest,
+    saveOverLatest,
     openReview,
     cancelReview,
     closeReview,

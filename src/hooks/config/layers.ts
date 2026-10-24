@@ -196,6 +196,7 @@ export function useConfigLayers({
     overridePaths: isEditingScope ? scopeOverridePaths : dbOverridePaths,
     listOverrideCounts,
     valueLayers,
+    targetRevision: isEditingScope ? scopeData?.revision : baseConfigData?.dbRevision,
   };
 }
 

@@ -80,7 +80,15 @@ export interface ReportedIssue extends ReportedLocation {
 /** A location a write did not store (`skipped`) or stores without effect (`ignored`), and why. */
 export interface ReportedSkip extends ReportedLocation {
   reason: string;
+  /** The change of a `POST …/changes` batch it belongs to, by position in the sent ops. */
+  opIndex?: number;
 }
+
+/** One change of a `POST …/changes` batch as the panel sends it (`changesBatch`). */
+export type ConfigBatchOp =
+  | { op: 'set'; fieldPath: string; value: ConfigValue }
+  /** Removes the target's override at the path, the objects that leaves empty and the tombstones at or below it. */
+  | { op: 'unset' | 'tombstone'; fieldPath: string };
 
 /** An admin API error reply: its text, and the stable `code` (and route details) newer servers add. */
 export interface ApiErrorBody {
@@ -95,7 +103,12 @@ export interface ApiErrorBody {
 export interface ApplyConfigChangesRequest {
   target: WriteTarget;
   ops: ConfigChange[];
-  expectedVersion?: number;
+  /**
+   * The target's revision the edits were made against (`changesBatch`):
+   * `absent` when it had no document. A save finds it changed elsewhere
+   * (`conflict`) instead of writing over it.
+   */
+  expectedRevision?: string;
 }
 
 /** Warning attached to a change in the review (WS1 produces, WS7 renders). */
@@ -148,8 +161,15 @@ export interface ApplyConfigChangesResult {
    * without effect (a credential it drops): the change itself is written.
    */
   reported: SkippedChange[];
-  /** A failed write was rolled back to the overrides captured before it. */
+  /** A failed write was rolled back to the overrides captured before it (servers without `changesBatch`). */
   compensated?: boolean;
+  /**
+   * The target was saved elsewhere since the revision the edits were made
+   * against (`expectedRevision`), so nothing was written.
+   */
+  conflict?: boolean;
+  /** A save split into batches of `maxChangeOps` failed after earlier batches were written. */
+  partiallyWritten?: boolean;
 }
 
 /** How a change reads in the review (WS1). */
@@ -229,6 +249,11 @@ export interface WriteSnapshot {
   /** The layer beneath the target: librechat.yaml for base, the base config for a profile. */
   lower: ConfigRecord;
   lowerKind: LowerLayerKind;
+  /**
+   * The target's stored revision (`expectedRevision`): `null` when it has no
+   * document, absent when the server does not report revisions.
+   */
+  revision?: string | null;
 }
 
 /** The admin API writes a batch of changes resolves to, and what blocks or limits it (WS1). */

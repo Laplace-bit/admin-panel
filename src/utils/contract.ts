@@ -1,5 +1,6 @@
 import type * as t from '@/types';
 import {
+  ABSENT_REVISION,
   CONFIG_FEATURE_FLAGS,
   BUNDLED_CONFIG_RULES,
   BUNDLED_CONFIG_LIMITS,
@@ -43,6 +44,25 @@ export function resolveConfigContract(body: t.AdminConfigMetaBody | null): t.Con
  */
 export function foldsEndpointReferences(contract: t.ConfigContract): boolean {
   return contract.rules.titleResolution === 'field';
+}
+
+/**
+ * Whether saves go to `POST …/changes` as one batch with a revision
+ * precondition: written all at once and validated as a whole, so nothing is
+ * rolled back by hand and another admin's save is never overwritten unseen.
+ */
+export function usesChangeBatch(features: t.ConfigFeatures): boolean {
+  return features.changesBatch && features.expectedRevision;
+}
+
+/**
+ * The `expectedRevision` that names a stored revision: `absent` for a
+ * target without a document (`null`), none when the server reports no
+ * revisions (`undefined`).
+ */
+export function toRevisionPrecondition(revision: string | null | undefined): string | undefined {
+  if (revision === undefined) return undefined;
+  return revision ?? ABSENT_REVISION;
 }
 
 /** A copy without the keys whose value is `undefined`, so they don't hide the fallback's. */

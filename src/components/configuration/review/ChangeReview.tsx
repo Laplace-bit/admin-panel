@@ -88,14 +88,58 @@ function SaveFailureAction({ review }: { review: t.ChangeReviewState }) {
 }
 
 /**
+ * A save that found the target saved elsewhere meanwhile (nothing was
+ * written; the page already shows what is stored now): reload, dropping the
+ * edits, or merge them over it.
+ */
+function ConflictNotice({ review }: { review: t.ChangeReviewState }) {
+  const localize = useLocalize();
+  return (
+    <div
+      role="alert"
+      className="flex flex-col gap-2 rounded-lg bg-(--cui-color-feedback-warning-bg) px-3 py-2 text-(--cui-color-feedback-warning-fg)"
+    >
+      <p className="m-0 flex items-center gap-1.5 text-sm font-medium">
+        <Icon name="warning" size="xs" aria-hidden="true" />
+        {localize('com_config_conflict_title')}
+      </p>
+      <p className="m-0 text-xs">
+        {localize('com_config_conflict_body', {
+          target: review.scope
+            ? `${scopeTypeLabel(review.scope, localize)}: ${review.scope.name}`
+            : localize('com_scope_base_config'),
+        })}
+      </p>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button
+          htmlType="button"
+          type="secondary"
+          label={localize('com_config_conflict_reload')}
+          onClick={review.reloadLatest}
+          disabled={review.saving}
+        />
+        <Button
+          htmlType="button"
+          type="primary"
+          label={localize('com_config_conflict_merge')}
+          onClick={() => void review.mergeLatest()}
+          disabled={review.saving || review.blocked}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
  * The change review drawer (WS7): what Save writes to the open target,
  * grouped tab › section › entry, with BEFORE → AFTER, the value a reset
  * reverts to, masked secrets, warnings and problems. Save stays disabled
- * while pre-flight problems exist.
+ * while pre-flight problems exist, and after a conflict, which the notice's
+ * Reload or Merge and save resolves.
  */
 export function ChangeReview({ review }: t.ChangeReviewProps) {
   const localize = useLocalize();
-  const { model, open, saving, blocked } = review;
+  const { model, open, saving, blocked, conflict } = review;
   const blocking = model.issues.filter((issue) => issue.blocking);
   const isEmpty = model.count === 0;
   const returnFocus = useReturnFocus(open, activeConfigTab);
@@ -148,6 +192,7 @@ export function ChangeReview({ review }: t.ChangeReviewProps) {
           </header>
 
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-3">
+            {conflict && <ConflictNotice review={review} />}
             {blocking.length > 0 && (
               <IssueList
                 title={localize('com_config_review_issues', { count: blocking.length })}
@@ -206,7 +251,7 @@ export function ChangeReview({ review }: t.ChangeReviewProps) {
                 saving ? localize('com_config_review_saving') : localize('com_config_review_save')
               }
               onClick={() => void review.confirm()}
-              disabled={saving || blocked}
+              disabled={saving || blocked || conflict}
             />
           </footer>
         </Dialog.Content>

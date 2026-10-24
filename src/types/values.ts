@@ -215,15 +215,23 @@ export interface BaseConfigData {
   dbOverrides?: ConfigRecord;
   /** Paths the base overrides remove from librechat.yaml. */
   dbTombstones: string[];
+  /**
+   * The base document's revision (`expectedRevision`): `null` when there is
+   * none, absent when the server does not report revisions.
+   */
+  dbRevision?: string | null;
   schemaDefaults: FlatConfigMap;
   /** MCP servers defined in librechat.yaml. */
   yamlMcpKeys?: string[];
   yamlMcpServers?: Record<string, ConfigValue>;
 }
 
-/** An admin config document as the API returns it, including its tombstones. */
+/**
+ * An admin config document as the API returns it, including its tombstones
+ * and (`expectedRevision`) its revision, `<id>:<configVersion>`.
+ */
 export interface AdminConfigDocResponse {
-  config: AdminConfig & Pick<Config, 'tombstones'>;
+  config: AdminConfig & Pick<Config, 'tombstones'> & { revision?: string };
 }
 
 /** One profile's own config document (WS4). */
@@ -236,6 +244,11 @@ export interface ResolvedConfigData {
   overrides: ConfigRecord;
   /** Paths the profile hides from what it inherits. */
   tombstones: string[];
+  /**
+   * The profile document's revision (`expectedRevision`): `null` when there is
+   * none, absent when the server does not report revisions.
+   */
+  revision?: string | null;
 }
 
 /** One setting of a read-only summary: its label ("Group › Setting"), display text and data path. */

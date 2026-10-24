@@ -141,6 +141,8 @@ const ISSUE_MESSAGES: Readonly<Record<string, string>> = {
   custom_missing_port: 'must include a port, for example localhost:11434',
   custom_public_ip:
     'is a public IP address: enter a private address, or a hostname that resolves to one',
+  TOO_MANY_CHANGES:
+    'has {{count}} changes, more than the {{limit}} LibreChat takes in one save: save some of them first, then the rest',
 };
 
 /**

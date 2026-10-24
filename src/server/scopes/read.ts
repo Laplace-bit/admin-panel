@@ -9,12 +9,17 @@ import type {
   AdminUserListItem,
 } from '@librechat/data-schemas';
 import type * as t from '@/types';
+import {
+  ABSENT_REVISION,
+  MAX_SCOPE_PRIORITY,
+  VERSION_CONFLICT_CODE,
+  DEFAULT_SCOPE_PRIORITY,
+} from '@/constants';
 import { collectOverridePaths, scopeOverrideEntries, stripSecretPreviewValues } from '@/utils';
 import { normalizeAppServiceKeys } from '../config/normalize';
 import { apiErrorBodyMessage, apiErrorMessage, apiFetch } from '../utils/api';
 import { BASE_CONFIG_PRINCIPAL_ID } from '../constants';
 import { requireCapability, requireAnyCapability } from '../capabilities';
-import { MAX_SCOPE_PRIORITY, DEFAULT_SCOPE_PRIORITY } from '@/constants';
 import { getSchemaPathSet } from '../config/schema';
 import { readConfigContract } from '../config/meta';
 import { deepGet } from './paths';
@@ -239,11 +244,7 @@ export const fieldProfileValuesOptions = (fieldPath: string) =>
     queryFn: () => getFieldProfileValuesFn({ data: { fieldPath } }).then((r) => r.values),
   });
 
-/** `expectedRevision` that makes a PUT create the profile only when the principal has none. */
-const ABSENT_REVISION = 'absent';
-
-/** The admin API's codes for a create-only PUT the principal already has a profile for, or has none. */
-const VERSION_CONFLICT_CODE = 'CONFIG_VERSION_CONFLICT';
+/** The admin API's code for a create-only PUT for a principal that does not exist. */
 const PRINCIPAL_NOT_FOUND_CODE = 'PRINCIPAL_NOT_FOUND';
 
 function missingRoleMessage(principalId: string): string {

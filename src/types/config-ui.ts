@@ -556,6 +556,19 @@ export interface PatchFieldsResponse {
   ignored?: ReportedSkip[];
 }
 
+/** Body of a `POST …/changes` reply (`changesBatch`): the stored document's revision and what the batch did. */
+export interface ChangesBatchResponse extends PatchFieldsResponse {
+  config?: { overrides?: ConfigRecord; tombstones?: string[]; revision?: string } | null;
+  /** The stored document's revision after the batch; `null` when the target has none. */
+  revision?: string | null;
+  /** Whether a document was written: a batch that changes nothing writes nothing. */
+  written?: boolean;
+  /** A refused change of the batch (400), by position in the sent ops. */
+  opIndex?: number;
+  /** `CONFIG_VERSION_CONFLICT` (409): the revision stored now. */
+  currentRevision?: string | null;
+}
+
 /** Outcome of a save call: how many entries the backend applied and which were dropped. */
 export interface ConfigWriteResult {
   success: boolean;

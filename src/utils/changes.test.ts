@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type * as t from '@/types';
 import {
+  toBatchOps,
   verifyWrite,
   planConfigChanges,
   mergedBackChanges,
@@ -542,6 +543,22 @@ describe('planConfigChanges', () => {
     expect(plan.resets).toEqual(['balance.startBalance']);
   });
 
+  it('widens over a stored tombstone the same batch unhides', () => {
+    const plan = planConfigChanges(
+      [
+        { op: 'reset', path: 'memory.agent.provider' },
+        { op: 'reset', path: 'memory.agent.model' },
+        { op: 'untombstone', path: 'memory.agent.id' },
+      ],
+      snapshot({ memory: { agent: { provider: 'openAI', model: 'gpt-4o-mini' } } }, yaml, [
+        'memory.agent.id',
+      ]),
+    );
+    expect(plan.resets).toEqual(['memory']);
+    expect(plan.untombstones).toEqual(['memory.agent.id']);
+    expect(plan.storedAfter).toEqual({});
+  });
+
   it('never widens a reset past a tombstone the same batch writes', () => {
     const plan = planConfigChanges(
       [
@@ -572,6 +589,16 @@ describe('planConfigChanges', () => {
       ]),
     );
     expect(plan.resets).toEqual(['endpoints.anthropic.models']);
+  });
+
+  it('sends a reset as is to a server that prunes emptied parents itself', () => {
+    const plan = planConfigChanges(
+      [{ op: 'reset', path: 'endpoints.anthropic.models.default' }],
+      snapshot({ endpoints: { anthropic: { models: { default: ['claude-opus-5-5'] } } } }),
+      { ...BUNDLED_CONFIG_FEATURES, prunesEmptyParents: true },
+    );
+    expect(plan.resets).toEqual(['endpoints.anthropic.models.default']);
+    expect(plan.issues).toEqual([]);
   });
 
   it('folds a reset with new descendant values into one set (rename onto the same key)', () => {
@@ -663,6 +690,121 @@ describe('planConfigChanges', () => {
       { fieldPath: 'filters.messages.pii.action', reason: 'baseOnly' },
       { fieldPath: 'interface.prompts', reason: 'permission' },
     ]);
+  });
+});
+
+describe('planConfigChanges — change batches', () => {
+  const batch: t.ConfigFeatures = {
+    ...BUNDLED_CONFIG_FEATURES,
+    changesBatch: true,
+    expectedRevision: true,
+  };
+  const memoryYaml: t.ConfigRecord = { ...yaml, memory: { agent: { id: 'agent_yaml' } } };
+
+  it('validates a hide alone on the end state, as the batch is judged', () => {
+    const ops: t.ConfigChange[] = [{ op: 'tombstone', path: 'memory.agent.id' }];
+    const legacy = planConfigChanges(ops, snapshot({}, memoryYaml));
+    const batched = planConfigChanges(ops, snapshot({}, memoryYaml), batch);
+    expect(legacy.issues).toEqual([]);
+    expect(batched.issues.length).toBeGreaterThan(0);
+    expect(batched.issues.every((issue) => issue.path.startsWith('memory.agent'))).toBe(true);
+  });
+
+  it('accepts a union switch whose hide and sets leave a valid section', () => {
+    const plan = planConfigChanges(
+      [
+        { op: 'set', path: 'memory.agent.provider', value: 'openAI' },
+        { op: 'set', path: 'memory.agent.model', value: 'gpt-4o-mini' },
+        { op: 'tombstone', path: 'memory.agent.id' },
+      ],
+      snapshot({}, memoryYaml),
+      batch,
+    );
+    expect(plan.issues).toEqual([]);
+  });
+});
+
+describe('toBatchOps', () => {
+  const features: t.ConfigFeatures = {
+    ...BUNDLED_CONFIG_FEATURES,
+    changesBatch: true,
+    expectedRevision: true,
+    prunesEmptyParents: true,
+  };
+
+  it('orders unhides, hides, sets, then resets, one unset per removed path', () => {
+    const plan = planConfigChanges(
+      [
+        { op: 'set', path: 'balance.startBalance', value: 5 },
+        { op: 'reset', path: 'balance.refillAmount' },
+        { op: 'reset', path: 'balance.enabled' },
+        { op: 'untombstone', path: 'balance.refillAmount' },
+        { op: 'tombstone', path: 'mcpServers.github' },
+      ],
+      snapshot({ balance: { refillAmount: 3, enabled: false } }, yaml, ['balance.refillAmount']),
+      features,
+    );
+    expect(toBatchOps(plan)).toEqual([
+      { op: 'unset', fieldPath: 'balance.refillAmount' },
+      { op: 'tombstone', fieldPath: 'mcpServers.github' },
+      { op: 'set', fieldPath: 'balance.startBalance', value: 5 },
+      { op: 'unset', fieldPath: 'balance.enabled' },
+    ]);
+  });
+
+  it('unhides an entry before the edits and hides inside it, which the unhide would remove', () => {
+    const url = 'https://example.org/mcp';
+    const plan = planConfigChanges(
+      [
+        { op: 'untombstone', path: 'mcpServers.github' },
+        { op: 'set', path: 'mcpServers.github.url', value: url },
+        { op: 'tombstone', path: 'mcpServers.github.headers' },
+      ],
+      snapshot({}, yaml, ['mcpServers.github']),
+      features,
+    );
+    expect(plan.issues).toEqual([]);
+    expect(toBatchOps(plan)).toEqual([
+      { op: 'unset', fieldPath: 'mcpServers.github' },
+      { op: 'tombstone', fieldPath: 'mcpServers.github.headers' },
+      { op: 'set', fieldPath: 'mcpServers.github.url', value: url },
+    ]);
+  });
+
+  it('leaves out an edit inside an entry the same batch hides, which would show it again', () => {
+    const plan = planConfigChanges(
+      [
+        { op: 'set', path: 'mcpServers.github.url', value: 'https://example.org/mcp' },
+        { op: 'set', path: 'balance.startBalance', value: 5 },
+        { op: 'tombstone', path: 'mcpServers.github' },
+      ],
+      snapshot({ mcpServers: { github: { url: 'https://stored.example.org/mcp' } } }),
+      features,
+    );
+    expect(plan).toMatchObject({ issues: [], skipped: [], effective: 2 });
+    expect(plan.sets).toEqual([{ fieldPath: 'balance.startBalance', value: 5 }]);
+    expect(toBatchOps(plan)).toEqual([
+      { op: 'tombstone', fieldPath: 'mcpServers.github' },
+      { op: 'set', fieldPath: 'balance.startBalance', value: 5 },
+    ]);
+  });
+});
+
+describe('toBatchOps — one change per path', () => {
+  it('leaves out the unset of a path the batch hides anyway', () => {
+    const ops = toBatchOps({
+      sets: [],
+      resets: ['mcpServers.github'],
+      tombstones: ['mcpServers.github'],
+      untombstones: [],
+      skipped: [],
+      issues: [],
+      warnings: [],
+      storedAfter: {},
+      effective: 2,
+      changed: ['mcpServers.github'],
+    });
+    expect(ops).toEqual([{ op: 'tombstone', fieldPath: 'mcpServers.github' }]);
   });
 });
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type * as t from '@/types';
 import { BUNDLED_CONFIG_FEATURES, getWriteRules } from '@/constants';
-import { reportedPath, readWriteReport, getWriteSkipReason } from './writes';
+import { reportedPath, readWriteReport, readBatchReport, getWriteSkipReason } from './writes';
 import { createServerContract } from '@/test/fixtures';
 import { entryLocation } from './collections';
 import { createPathIndex } from './paths';
@@ -121,6 +121,85 @@ describe('readWriteReport', () => {
     const features = { ...BUNDLED_CONFIG_FEATURES, writeReport: true };
     expect(readWriteReport({ config: null }, features)).toEqual([]);
     expect(readWriteReport({ skipped: [{ reason: 'base_only_path' }] }, features)).toEqual([]);
+  });
+});
+
+describe('readBatchReport', () => {
+  it('reads what a change batch skipped and what the merge ignores, whatever the flags', () => {
+    const body: t.PatchFieldsResponse = {
+      skipped: [
+        { opIndex: 0, segments: ['turnstile'], reason: 'base_only_section' },
+        { opIndex: 1, segments: ['interface', 'prompts'], reason: 'interface_permission' },
+      ],
+      ignored: [
+        { opIndex: 2, segments: ['mcpServers', 'everything'], reason: 'process_mcp_server' },
+        {
+          path: 'webSearch.jinaApiKey',
+          segments: ['webSearch', 'jinaApiKey'],
+          reason: 'secret_rebinding',
+        },
+      ],
+    };
+    const changed = createPathIndex(['turnstile', 'interface', 'mcpServers.everything']);
+    expect(readBatchReport(body, changed)).toEqual([
+      { fieldPath: 'turnstile', reason: 'baseOnly' },
+      { fieldPath: 'interface.prompts', reason: 'permission' },
+      { fieldPath: 'mcpServers.everything', reason: 'processServer' },
+    ]);
+  });
+
+  describe('for the locations the save changed', () => {
+    const rebinding = (segments: string[]): t.ReportedSkip => ({
+      path: segments.join('.'),
+      segments,
+      reason: 'secret_rebinding',
+    });
+    const body: t.PatchFieldsResponse = {
+      skipped: [
+        { opIndex: 0, segments: ['endpoints', 'custom'], reason: 'base_only_path' },
+        {
+          opIndex: 1,
+          segments: ['endpoints', 'custom', 'GPT', 'headers'],
+          reason: 'base_only_path',
+        },
+        {
+          opIndex: 1,
+          segments: ['endpoints', 'custom', 'Moonshot', 'headers'],
+          reason: 'base_only_path',
+        },
+      ],
+      ignored: [
+        { opIndex: 2, segments: ['mcpServers', 'everything'], reason: 'process_mcp_server' },
+        rebinding(['endpoints', 'custom', 'Moonshot', 'apiKey']),
+        rebinding(['mcpServers', 'github', 'apiKey', 'key']),
+        rebinding(['ocr', 'apiKey']),
+      ],
+    };
+    const shownFor = (changed: string[]) =>
+      readBatchReport(body, createPathIndex(changed)).map(({ fieldPath }) => fieldPath);
+
+    it('keeps a dropped credential only when the save changed its entry or the object holding it', () => {
+      expect(shownFor(['endpoints.custom.Moonshot'])).toEqual([
+        'endpoints.custom',
+        'endpoints.custom.Moonshot.headers',
+        'endpoints.custom.Moonshot.apiKey',
+      ]);
+      expect(shownFor(['mcpServers.github.url'])).toEqual(['mcpServers.github.apiKey.key']);
+      expect(shownFor(['ocr.baseURL'])).toEqual(['ocr.apiKey']);
+    });
+
+    it('does not repeat a dropped credential or a part of another entry for a save elsewhere', () => {
+      expect(shownFor(['balance.startBalance'])).toEqual([]);
+      expect(shownFor(['endpoints.custom.GPT'])).toEqual([
+        'endpoints.custom',
+        'endpoints.custom.GPT.headers',
+      ]);
+      expect(shownFor(['mcpServers.cloudflare.url', 'speech.tts.openai.url'])).toEqual([]);
+    });
+
+    it('keeps a part reported under a server the save changed, whatever its reason', () => {
+      expect(shownFor(['mcpServers.everything.url'])).toEqual(['mcpServers.everything']);
+    });
   });
 });
 

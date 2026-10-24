@@ -355,6 +355,26 @@ describe('applyConfigChanges — clear/reset and verification (SV-4, SV-5, SV-7)
     expect(api.current!.tombstones()).toEqual(['balance.refillAmount']);
   });
 
+  it('leaves no {} behind when a union switches back to its librechat.yaml key', async () => {
+    api.current!.seed(
+      'role/__base__',
+      { memory: { agent: { provider: 'openAI', model: 'gpt-4o-mini' } } },
+      ['memory.agent.id'],
+    );
+    const result = await applyConfigChanges(base, [
+      { op: 'reset', path: 'memory.agent.provider' },
+      { op: 'reset', path: 'memory.agent.model' },
+      { op: 'untombstone', path: 'memory.agent.id' },
+    ]);
+    expect(result).toMatchObject({ issues: [], failed: [], skipped: [] });
+    expect(api.current!.writes().map((r) => r.path)).toEqual([
+      expect.stringMatching(/fieldPath=memory\.agent\.id$/),
+      expect.stringMatching(/fieldPath=memory$/),
+    ]);
+    expect(api.current!.stored()).toEqual({});
+    expect(api.current!.tombstones()).toEqual([]);
+  });
+
   it('reports a value LibreChat dropped as not stored', async () => {
     api.current!.stripSection('speech');
     const result = await applyConfigChanges(base, [
@@ -407,6 +427,33 @@ describe('applyConfigChanges — profiles (SV-9)', () => {
   it('hides an inherited value only on an explicit tombstone', async () => {
     api.current!.seed('group/eng', {});
     await applyConfigChanges(scope, [{ op: 'tombstone', path: 'mcpServers.cloudflare' }]);
+    expect(api.current!.tombstones('group/eng')).toEqual(['mcpServers.cloudflare']);
+  });
+
+  it('keeps an edit inside a server shown again in the same save', async () => {
+    const url = 'https://eng-cloudflare.example.com/mcp';
+    api.current!.seed('group/eng', {}, ['mcpServers.cloudflare']);
+    const result = await applyConfigChanges(scope, [
+      { op: 'untombstone', path: 'mcpServers.cloudflare' },
+      { op: 'set', path: 'mcpServers.cloudflare.url', value: url },
+    ]);
+    expect(result).toMatchObject({ applied: 2, issues: [], failed: [], skipped: [] });
+    expect(api.current!.writes().map((r) => r.method)).toEqual(['DELETE', 'PATCH']);
+    expect(api.current!.stored('group/eng')).toEqual({ mcpServers: { cloudflare: { url } } });
+    expect(api.current!.tombstones('group/eng')).toEqual([]);
+  });
+
+  it('keeps a server hidden when a field inside it is edited in the same save', async () => {
+    api.current!.seed('group/eng', {
+      mcpServers: { cloudflare: { url: 'https://eng-cloudflare.example.com/mcp' } },
+    });
+    const result = await applyConfigChanges(scope, [
+      { op: 'set', path: 'mcpServers.cloudflare.url', value: 'https://other.example.com/mcp' },
+      { op: 'tombstone', path: 'mcpServers.cloudflare' },
+    ]);
+    expect(result).toMatchObject({ applied: 1, issues: [], failed: [], skipped: [] });
+    expect(api.current!.writes().map((r) => r.method)).toEqual(['POST']);
+    expect(api.current!.stored('group/eng')).toEqual({ mcpServers: {} });
     expect(api.current!.tombstones('group/eng')).toEqual(['mcpServers.cloudflare']);
   });
 
@@ -537,10 +584,20 @@ describe('applyConfigChanges — write reports, structured issues and codes', ()
     const result = await applyConfigChanges(base, [
       { op: 'set', path: 'balance.startBalance', value: 5 },
       { op: 'set', path: 'balance.refillAmount', value: 6 },
+      { op: 'set', path: 'interface.modelSelect', value: false },
     ]);
-    expect(result).toMatchObject({ issues: [], failed: [], applied: 1 });
+    expect(result).toMatchObject({ issues: [], failed: [], applied: 2 });
     expect(result.skipped).toEqual([{ fieldPath: 'balance.refillAmount', reason: 'yamlOnly' }]);
     expect(result.reported).toEqual([{ fieldPath: 'interface.prompts', reason: 'permission' }]);
+  });
+
+  it('does not report a part of a section the save did not change', async () => {
+    api.current!.reportMeta({ features: { writeReport: true } });
+    api.current!.reportWrites(() => ({ applied: [], skipped: [skippedPart] }));
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.startBalance', value: 5 },
+    ]);
+    expect(result).toMatchObject({ issues: [], failed: [], applied: 1, skipped: [], reported: [] });
   });
 
   it('leaves the report alone on a server without writeReport', async () => {
@@ -789,5 +846,473 @@ describe('applyConfigChanges — write reports, structured issues and codes', ()
           'This MCP server runs a local process defined in librechat.yaml, so LibreChat applies no overrides to it.',
       },
     ]);
+  });
+});
+
+describe('applyConfigChanges — change batches (changesBatch, expectedRevision)', () => {
+  const batchMeta = (limits: Partial<t.ConfigLimits> = {}): t.AdminConfigMetaBody => ({
+    features: {
+      changesBatch: true,
+      expectedRevision: true,
+      prunesEmptyParents: true,
+      awaitedInvalidation: true,
+    },
+    limits: { maxChangeOps: 1000, ...limits },
+  });
+  const posts = () => api.current!.writes().filter((request) => request.path.endsWith('/changes'));
+
+  beforeEach(() => {
+    api.current!.reportMeta(batchMeta());
+  });
+
+  it('writes every change as one batch named by the revision it was planned against', async () => {
+    api.current!.seed('role/__base__', { balance: { refillAmount: 7 } });
+    const revision = api.current!.revision();
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.startBalance', value: 5 },
+      { op: 'reset', path: 'balance.refillAmount' },
+      { op: 'tombstone', path: 'mcpServers.cloudflare' },
+    ]);
+    expect(result).toMatchObject({ applied: 3, issues: [], failed: [], skipped: [] });
+    expect(api.current!.writes()).toEqual([
+      {
+        method: 'POST',
+        path: '/api/admin/config/role/__base__/changes',
+        body: {
+          ops: [
+            { op: 'tombstone', fieldPath: 'mcpServers.cloudflare' },
+            { op: 'set', fieldPath: 'balance.startBalance', value: 5 },
+            { op: 'unset', fieldPath: 'balance.refillAmount' },
+          ],
+          priority: 0,
+          expectedRevision: revision,
+        },
+      },
+    ]);
+    expect(api.current!.stored()).toEqual({ balance: { startBalance: 5 } });
+    expect(api.current!.tombstones()).toEqual(['mcpServers.cloudflare']);
+  });
+
+  it('creates the base document only while it has none', async () => {
+    await applyConfigChanges(base, [{ op: 'set', path: 'balance.startBalance', value: 5 }]);
+    expect(posts()[0].body?.expectedRevision).toBe('absent');
+  });
+
+  it('sends a reset as planned, without widening it: the server prunes emptied parents', async () => {
+    api.current!.seed('role/__base__', { balance: { startBalance: 5 } });
+    await applyConfigChanges(base, [{ op: 'reset', path: 'balance.startBalance' }]);
+    expect(posts()[0].body?.ops).toEqual([{ op: 'unset', fieldPath: 'balance.startBalance' }]);
+    expect(api.current!.stored()).toEqual({});
+  });
+
+  it('writes nothing and reports a conflict when the target changed since the edits were loaded', async () => {
+    api.current!.seed('role/__base__', { balance: { startBalance: 5 } });
+    const loaded = api.current!.revision();
+    api.current!.seed('role/__base__', { balance: { startBalance: 6 } });
+    const result = await applyConfigChanges(
+      base,
+      [{ op: 'set', path: 'balance.refillAmount', value: 9 }],
+      loaded!,
+    );
+    expect(result).toMatchObject({ conflict: true, applied: 0 });
+    expect(result.failed.map((issue) => issue.code)).toEqual(['CONFIG_VERSION_CONFLICT']);
+    expect(api.current!.writes()).toEqual([]);
+  });
+
+  it('saves against the revision the edits were loaded at', async () => {
+    api.current!.seed('role/__base__', { balance: { startBalance: 5 } });
+    const loaded = api.current!.revision();
+    const result = await applyConfigChanges(
+      base,
+      [{ op: 'set', path: 'balance.refillAmount', value: 9 }],
+      loaded!,
+    );
+    expect(result).toMatchObject({ applied: 1, failed: [] });
+    expect(result.conflict).toBeUndefined();
+    expect(posts()[0].body?.expectedRevision).toBe(loaded);
+  });
+
+  it('reports a conflict when another save lands between the read and the batch (409)', async () => {
+    api.current!.seed('role/__base__', { balance: { startBalance: 5 } });
+    const loaded = api.current!.revision();
+    let raced = false;
+    api.current!.setOverride((request) => {
+      if (!request.path.endsWith('/changes') || raced) return undefined;
+      raced = true;
+      api.current!.seed('role/__base__', { balance: { startBalance: 8 } });
+      return undefined;
+    });
+    const result = await applyConfigChanges(
+      base,
+      [{ op: 'set', path: 'balance.refillAmount', value: 9 }],
+      loaded!,
+    );
+    expect(result).toMatchObject({ conflict: true, applied: 0 });
+    expect(posts()).toHaveLength(1);
+    expect(api.current!.stored()).toEqual({ balance: { startBalance: 8 } });
+  });
+
+  it('plans once more when a save without a loaded revision (an import) loses that race', async () => {
+    api.current!.seed('role/__base__', { balance: { startBalance: 5 } });
+    let raced = false;
+    api.current!.setOverride((request) => {
+      if (!request.path.endsWith('/changes') || raced) return undefined;
+      raced = true;
+      api.current!.seed('role/__base__', { balance: { startBalance: 8 } });
+      return undefined;
+    });
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.refillAmount', value: 9 },
+    ]);
+    expect(result).toMatchObject({ applied: 1, failed: [] });
+    expect(posts()).toHaveLength(2);
+    expect(api.current!.stored()).toEqual({ balance: { startBalance: 8, refillAmount: 9 } });
+  });
+
+  it('refuses a batch whole and sends nothing to roll it back', async () => {
+    api.current!.seed('role/__base__', { balance: { startBalance: 5 } });
+    api.current!.setOverride((request) =>
+      request.path.endsWith('/changes')
+        ? {
+            status: 400,
+            body: {
+              error: 'Config change cannot be applied to the stored config',
+              code: 'CONFIG_PATH_INVALID',
+              opIndex: 1,
+            },
+          }
+        : undefined,
+    );
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.startBalance', value: 6 },
+      { op: 'set', path: 'speech.speechTab.advancedMode', value: true },
+    ]);
+    expect(result.failed).toEqual([
+      {
+        path: 'speech.speechTab.advancedMode',
+        code: 'WRITE_FAILED',
+        message: 'Config change cannot be applied to the stored config',
+      },
+    ]);
+    expect(result.compensated).toBeUndefined();
+    expect(api.current!.writes()).toHaveLength(1);
+    expect(api.current!.stored()).toEqual({ balance: { startBalance: 5 } });
+  });
+
+  it('reports what the batch did not store, counting only whole changes as not applied', async () => {
+    api.current!.stripSection('speech');
+    api.current!.reportWrites(() => ({
+      skipped: [
+        {
+          opIndex: 1,
+          segments: ['speech', 'speechTab', 'advancedMode'],
+          reason: 'base_only_section',
+        },
+        { opIndex: 2, segments: ['interface', 'prompts'], reason: 'interface_permission' },
+      ],
+    }));
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.startBalance', value: 6 },
+      { op: 'set', path: 'speech.speechTab.advancedMode', value: true },
+      { op: 'set', path: 'interface', value: { prompts: false, modelSelect: true } },
+    ]);
+    expect(result.applied).toBe(2);
+    expect(result.skipped).toEqual([
+      { fieldPath: 'speech.speechTab.advancedMode', reason: 'baseOnly' },
+    ]);
+    expect(result.reported).toEqual([{ fieldPath: 'interface.prompts', reason: 'permission' }]);
+  });
+
+  it('reports a change the runtime merge does not use', async () => {
+    api.current!.reportWrites(() => ({
+      ignored: [
+        {
+          opIndex: 0,
+          segments: ['mcpServers', 'cloudflare', 'title'],
+          reason: 'process_mcp_server',
+        },
+      ],
+    }));
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'mcpServers.cloudflare.title', value: 'Cloudflare' },
+    ]);
+    expect(result.applied).toBe(0);
+    expect(result.skipped).toEqual([
+      { fieldPath: 'mcpServers.cloudflare.title', reason: 'processServer' },
+    ]);
+  });
+
+  describe('a dropped credential or a partial report, for the changes a batch made', () => {
+    const dropped = {
+      path: 'endpoints.custom.Moonshot.apiKey',
+      segments: ['endpoints', 'custom', 'Moonshot', 'apiKey'],
+      reason: 'secret_rebinding',
+    };
+    const noted = { fieldPath: 'endpoints.custom.Moonshot.apiKey', reason: 'secretRebinding' };
+    const [moonshot, gpt] = customEntries;
+    const editMoonshot = upsert(
+      'Moonshot',
+      'Moonshot',
+      { ...moonshot, titleModel: 'kimi-k2' },
+      moonshot,
+    );
+
+    it('is noted apart from the count when the batch changed its entry', async () => {
+      api.current!.reportWrites(() => ({ ignored: [dropped] }));
+      const result = await applyConfigChanges(base, [
+        editMoonshot,
+        { op: 'set', path: 'balance.startBalance', value: 5 },
+      ]);
+      expect(result).toMatchObject({ applied: 2, failed: [], skipped: [] });
+      expect(result.reported).toEqual([noted]);
+    });
+
+    it('is not repeated by an unrelated save, or one of another entry the batch sends whole', async () => {
+      api.current!.reportWrites(() => ({ ignored: [dropped] }));
+      const unrelated = await applyConfigChanges(base, [
+        { op: 'set', path: 'endpoints.openAI.titleModel', value: 'gpt-5-nano' },
+      ]);
+      expect(unrelated).toMatchObject({ applied: 1, failed: [], skipped: [], reported: [] });
+      const other = await applyConfigChanges(base, [
+        upsert('GPT', 'GPT', { ...gpt, titleModel: 'gpt-4o-mini' }, gpt),
+      ]);
+      expect(posts().at(-1)?.body?.ops).toEqual([
+        expect.objectContaining({ op: 'set', fieldPath: 'endpoints.custom' }),
+      ]);
+      expect(other).toMatchObject({ applied: 1, failed: [], skipped: [], reported: [] });
+      expect((await applyConfigChanges(base, [editMoonshot])).reported).toEqual([noted]);
+    });
+
+    it('is noted once however many batches repeat it', async () => {
+      api.current!.reportMeta(batchMeta({ maxChangeOps: 1 }));
+      api.current!.reportWrites(() => ({ ignored: [dropped] }));
+      const result = await applyConfigChanges(base, [
+        editMoonshot,
+        { op: 'set', path: 'balance.startBalance', value: 5 },
+      ]);
+      expect(posts()).toHaveLength(2);
+      expect(result).toMatchObject({ applied: 2, failed: [], skipped: [] });
+      expect(result.reported).toEqual([noted]);
+    });
+
+    it('keeps a part reported inside the entry the batch changed, not inside another', async () => {
+      const part = (name: string) => ({
+        opIndex: 0,
+        segments: ['endpoints', 'custom', name, 'headers'],
+        reason: 'base_only_path',
+      });
+      api.current!.reportWrites(() => ({ skipped: [part('GPT'), part('Moonshot')] }));
+      const result = await applyConfigChanges(base, [editMoonshot]);
+      expect(result).toMatchObject({ applied: 1, failed: [], skipped: [] });
+      expect(result.reported).toEqual([
+        { fieldPath: 'endpoints.custom.Moonshot.headers', reason: 'baseOnly' },
+      ]);
+    });
+  });
+
+  it("splits a plan above maxChangeOps into batches, each named by the previous one's revision", async () => {
+    api.current!.reportMeta(batchMeta({ maxChangeOps: 2 }));
+    await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.startBalance', value: 5 },
+      { op: 'set', path: 'memory.tokenLimit', value: 6 },
+      { op: 'set', path: 'interface.presets', value: false },
+    ]);
+    expect(posts().map((request) => request.body?.ops?.length)).toEqual([2, 1]);
+    expect(posts().map((request) => request.body?.expectedRevision)).toEqual([
+      'absent',
+      'role-__base__:1',
+    ]);
+    expect(api.current!.stored()).toEqual({
+      balance: { startBalance: 5 },
+      memory: { tokenLimit: 6 },
+      interface: { presets: false },
+    });
+  });
+
+  describe('a split save, by sections', () => {
+    const switchAgent: t.ConfigChange[] = [
+      { op: 'set', path: 'memory.agent.provider', value: 'openAI' },
+      { op: 'set', path: 'memory.agent.model', value: 'gpt-4o-mini' },
+      { op: 'tombstone', path: 'memory.agent.id' },
+    ];
+
+    beforeEach(() => {
+      api.current = createFakeAdminApi({ ...yaml, memory: { agent: { id: 'agent_yaml' } } });
+      api.current.judgeEndStates();
+    });
+
+    it("keeps a section's changes in one batch, so each batch's end state is valid", async () => {
+      api.current!.reportMeta(batchMeta({ maxChangeOps: 3 }));
+      const result = await applyConfigChanges(base, [
+        { op: 'set', path: 'balance.startBalance', value: 5 },
+        ...switchAgent,
+      ]);
+      expect(result).toMatchObject({ applied: 4, failed: [], issues: [], skipped: [] });
+      expect(posts().map((request) => request.body?.ops)).toEqual([
+        [
+          { op: 'tombstone', fieldPath: 'memory.agent.id' },
+          { op: 'set', fieldPath: 'memory.agent.provider', value: 'openAI' },
+          { op: 'set', fieldPath: 'memory.agent.model', value: 'gpt-4o-mini' },
+        ],
+        [{ op: 'set', fieldPath: 'balance.startBalance', value: 5 }],
+      ]);
+      expect(api.current!.stored()).toEqual({
+        balance: { startBalance: 5 },
+        memory: { agent: { provider: 'openAI', model: 'gpt-4o-mini' } },
+      });
+      expect(api.current!.tombstones()).toEqual(['memory.agent.id']);
+    });
+
+    it('judges a batch that hides the agent ID alone, the end state a split must avoid', async () => {
+      const response = await api.current!.fetch('/api/admin/config/role/__base__/changes', {
+        method: 'POST',
+        body: JSON.stringify({ ops: [{ op: 'tombstone', fieldPath: 'memory.agent.id' }] }),
+      });
+      expect(response.status).toBe(400);
+      expect(api.current!.stored()).toBeUndefined();
+    });
+
+    it('refuses a section with more changes than one batch takes, writing nothing', async () => {
+      api.current!.reportMeta(batchMeta({ maxChangeOps: 2 }));
+      const result = await applyConfigChanges(base, [
+        { op: 'set', path: 'balance.startBalance', value: 5 },
+        ...switchAgent,
+      ]);
+      expect(result).toMatchObject({ applied: 0, issues: [] });
+      expect(result.partiallyWritten).toBeUndefined();
+      expect(result.failed).toEqual([
+        {
+          path: 'memory',
+          code: 'TOO_MANY_CHANGES',
+          message:
+            'has 3 changes, more than the 2 LibreChat takes in one save: save some of them first, then the rest',
+          params: { count: 3, limit: 2 },
+        },
+      ]);
+      expect(api.current!.writes()).toEqual([]);
+    });
+  });
+
+  it('reports a split save that failed after an earlier batch was written', async () => {
+    api.current!.reportMeta(batchMeta({ maxChangeOps: 1 }));
+    api.current!.setOverride((request) =>
+      request.path.endsWith('/changes') && request.body?.expectedRevision !== 'absent'
+        ? { status: 500, body: { error: 'Failed to apply config changes' } }
+        : undefined,
+    );
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.startBalance', value: 5 },
+      { op: 'set', path: 'memory.tokenLimit', value: 6 },
+    ]);
+    expect(result).toMatchObject({ partiallyWritten: true, applied: 0 });
+    expect(result.failed.map((issue) => issue.message)).toEqual(['Failed to apply config changes']);
+    expect(api.current!.stored()).toEqual({ balance: { startBalance: 5 } });
+  });
+
+  it('reports a conflict on a later batch as a partial write, not as nothing saved', async () => {
+    api.current!.reportMeta(batchMeta({ maxChangeOps: 1 }));
+    const loaded = api.current!.revision();
+    api.current!.setOverride((request) =>
+      request.path.endsWith('/changes') && request.body?.expectedRevision !== 'absent'
+        ? {
+            status: 409,
+            body: {
+              error: 'Config was modified by another request',
+              code: 'CONFIG_VERSION_CONFLICT',
+            },
+          }
+        : undefined,
+    );
+    const result = await applyConfigChanges(
+      base,
+      [
+        { op: 'set', path: 'balance.startBalance', value: 5 },
+        { op: 'set', path: 'memory.tokenLimit', value: 6 },
+      ],
+      loaded ?? 'absent',
+    );
+    expect(result).toMatchObject({ partiallyWritten: true, applied: 0 });
+    expect(result.conflict).toBeUndefined();
+    expect(result.failed.map((issue) => issue.code)).toEqual(['CONFIG_VERSION_CONFLICT']);
+    expect(api.current!.stored()).toEqual({ balance: { startBalance: 5 } });
+  });
+
+  it('keeps an edit inside a server shown again in the same batch', async () => {
+    const url = 'https://eng-cloudflare.example.com/mcp';
+    const scope: t.WriteTargetRef = {
+      type: 'scope',
+      scope: { principalType: 'role' as t.ConfigScope['principalType'], principalId: 'USER' },
+    };
+    api.current!.seed('role/USER', {}, ['mcpServers.cloudflare']);
+    const result = await applyConfigChanges(
+      scope,
+      [
+        { op: 'untombstone', path: 'mcpServers.cloudflare' },
+        { op: 'set', path: 'mcpServers.cloudflare.url', value: url },
+      ],
+      api.current!.revision('role/USER')!,
+    );
+    expect(result).toMatchObject({ applied: 2, issues: [], failed: [], skipped: [] });
+    expect(posts()).toHaveLength(1);
+    expect(posts()[0].body?.ops).toEqual([
+      { op: 'unset', fieldPath: 'mcpServers.cloudflare' },
+      { op: 'set', fieldPath: 'mcpServers.cloudflare.url', value: url },
+    ]);
+    expect(api.current!.stored('role/USER')).toEqual({ mcpServers: { cloudflare: { url } } });
+    expect(api.current!.tombstones('role/USER')).toEqual([]);
+  });
+
+  it('keeps a server hidden when a field inside it is edited in the same batch', async () => {
+    api.current!.seed('role/USER', {
+      mcpServers: { cloudflare: { url: 'https://user-cloudflare.example.com/mcp' } },
+    });
+    const result = await applyConfigChanges(
+      {
+        type: 'scope',
+        scope: { principalType: 'role' as t.ConfigScope['principalType'], principalId: 'USER' },
+      },
+      [
+        { op: 'set', path: 'mcpServers.cloudflare.url', value: 'https://other.example.com/mcp' },
+        { op: 'tombstone', path: 'mcpServers.cloudflare' },
+      ],
+      api.current!.revision('role/USER')!,
+    );
+    expect(result).toMatchObject({ applied: 1, issues: [], failed: [], skipped: [] });
+    expect(posts()[0].body?.ops).toEqual([{ op: 'tombstone', fieldPath: 'mcpServers.cloudflare' }]);
+    expect(api.current!.stored('role/USER')).toEqual({});
+    expect(api.current!.tombstones('role/USER')).toEqual(['mcpServers.cloudflare']);
+  });
+
+  it('keeps separate field writes on a server without changesBatch', async () => {
+    api.current!.reportMeta({ features: { expectedRevision: true, prunesEmptyParents: true } });
+    api.current!.seed('role/__base__', { balance: { startBalance: 5 } });
+    await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.refillAmount', value: 6 },
+      { op: 'reset', path: 'balance.startBalance' },
+    ]);
+    expect(api.current!.writes().map((request) => request.method)).toEqual(['PATCH', 'DELETE']);
+    expect(api.current!.writes()[1].path).toContain('fieldPath=balance.startBalance');
+  });
+
+  it('writes a union switch as one batch, validated on its end state', async () => {
+    api.current = createFakeAdminApi({ ...yaml, memory: { agent: { id: 'agent_yaml' } } });
+    api.current.reportMeta(batchMeta());
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'memory.agent.provider', value: 'openAI' },
+      { op: 'set', path: 'memory.agent.model', value: 'gpt-4o-mini' },
+      { op: 'tombstone', path: 'memory.agent.id' },
+    ]);
+    expect(result).toMatchObject({ failed: [], issues: [] });
+    expect(posts()).toHaveLength(1);
+    expect(api.current.tombstones()).toEqual(['memory.agent.id']);
+  });
+
+  it('blocks hiding a librechat.yaml value alone when the section is left invalid', async () => {
+    api.current = createFakeAdminApi({ ...yaml, memory: { agent: { id: 'agent_yaml' } } });
+    api.current.reportMeta(batchMeta());
+    const result = await applyConfigChanges(base, [{ op: 'tombstone', path: 'memory.agent.id' }]);
+    expect(result.issues.length).toBeGreaterThan(0);
+    expect(result.issues.every((issue) => issue.path.startsWith('memory.agent'))).toBe(true);
+    expect(api.current.writes()).toEqual([]);
   });
 });
