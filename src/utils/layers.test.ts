@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
 import {
   setConfigPath,
@@ -6,6 +7,7 @@ import {
   removeConfigPath,
   createBaseLayers,
   overlayPendingEdits,
+  estimateConfigPreview,
 } from './layers';
 import { applyConfigEdit, buildSavePayload } from '@/components/configuration/edits';
 import { scopeLayersFixture, baseConfigFixture } from '@/test/layers';
@@ -242,5 +244,75 @@ describe('profile edits are diffed against the effective (inherited) value', () 
     );
     expect(plan.saves).toEqual([]);
     expect(plan.resets).toEqual([]);
+  });
+});
+
+describe('estimateConfigPreview', () => {
+  const base: t.BaseConfigData = {
+    config: { interface: { customWelcome: 'Base hi', bookmarks: true }, version: '1.3.3' },
+    yamlConfig: { interface: { customWelcome: 'YAML hi', bookmarks: true }, version: '1.3.3' },
+    yamlPaths: [],
+    dbOverrides: { interface: { customWelcome: 'Base hi' } },
+    dbTombstones: [],
+    schemaDefaults: {},
+  };
+  const profile: t.ConfigScope = {
+    principalType: PrincipalType.ROLE,
+    principalId: 'USER',
+    name: 'USER',
+    priority: 10,
+    isActive: true,
+  };
+  const own: t.ResolvedConfigData = {
+    resolvedConfig: {},
+    changedPaths: [],
+    overrides: { interface: { customWelcome: 'Role hi' } },
+    tombstones: ['interface.bookmarks'],
+  };
+
+  it('is Base alone, with its document, for everyone or a principal without a profile', () => {
+    const preview = estimateConfigPreview({ base });
+    expect(preview.source).toBe('panel');
+    expect(preview.yaml).toBe(base.yamlConfig);
+    expect(preview.resolved).toBe(base.config);
+    expect(preview.layers).toEqual([
+      {
+        principalType: 'role',
+        principalId: '__base__',
+        priority: 0,
+        isActive: true,
+        overrides: base.dbOverrides,
+        tombstones: [],
+        ignored: [],
+      },
+    ]);
+  });
+
+  it('merges the principal profile over Base, its tombstones removing what they hide', () => {
+    const preview = estimateConfigPreview({ base, scope: profile, own });
+    expect(preview.resolved).toEqual({
+      interface: { customWelcome: 'Role hi' },
+      version: '1.3.3',
+    });
+    expect(preview.layers.map((layer) => layer.principalId)).toEqual(['__base__', 'USER']);
+    expect(preview.layers[1]).toMatchObject({ priority: 10, isActive: true, ignored: [] });
+  });
+
+  it('lists an inactive profile without merging it, as LibreChat skips it', () => {
+    const preview = estimateConfigPreview({
+      base,
+      scope: { ...profile, isActive: false },
+      own,
+    });
+    expect(preview.resolved).toBe(base.config);
+    expect(preview.layers[1].isActive).toBe(false);
+  });
+
+  it('lists no Base document when there is none', () => {
+    const preview = estimateConfigPreview({
+      base: { ...base, dbOverrides: undefined, yamlConfig: undefined },
+    });
+    expect(preview.layers).toEqual([]);
+    expect(preview.yaml).toEqual({});
   });
 });

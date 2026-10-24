@@ -2,12 +2,6 @@ import { useMemo } from 'react';
 import { queryOptions, useQuery } from '@tanstack/react-query';
 import type * as t from '@/types';
 import {
-  baseConfigOptions,
-  getResolvedConfigFn,
-  getLangfuseConnectionFn,
-  LANGFUSE_CONNECTION_QUERY_KEY,
-} from '@/server';
-import {
   flattenObject,
   getValueAtPath,
   withScopeLayer,
@@ -15,11 +9,17 @@ import {
   overlayPendingEdits,
   overriddenEntryKeys,
 } from '@/utils';
-import { KEYED_COLLECTIONS } from '@/constants';
-import { useConfigWriteRules } from './contract';
+import {
+  baseConfigOptions,
+  getResolvedConfigFn,
+  getLangfuseConnectionFn,
+  LANGFUSE_CONNECTION_QUERY_KEY,
+} from '@/server';
 import { collectFieldPaths, withLangfuseConfiguredPath } from '@/components/configuration/counts';
 import { mergeIndexedArrayEdits } from '@/components/configuration/edits';
 import { getFieldMeta } from '@/components/configuration/meta';
+import { useConfigWriteRules } from './contract';
+import { KEYED_COLLECTIONS } from '@/constants';
 
 const INDEXED_EDIT_PATH = /\.\d+$/;
 
@@ -28,9 +28,10 @@ export function runtimeDefaultAt(path: string): t.ConfigValue {
   return getFieldMeta(path)?.runtimeDefault;
 }
 
-export function resolvedConfigOptions(scope: t.ScopeSelection) {
-  const principalType = scope.type === 'SCOPE' ? scope.scope.principalType : null;
-  const principalId = scope.type === 'SCOPE' ? scope.scope.principalId : null;
+/** A profile's own config document (its overrides and tombstones); idle without a principal. */
+export function scopeConfigOptions(principal: t.ConfigPrincipal | null) {
+  const principalType = principal?.principalType ?? null;
+  const principalId = principal?.principalId ?? null;
   return queryOptions({
     queryKey: ['resolvedConfig', principalType, principalId] as const,
     queryFn: () =>
@@ -43,6 +44,10 @@ export function resolvedConfigOptions(scope: t.ScopeSelection) {
     enabled: principalType != null && principalId != null,
     staleTime: 60_000,
   });
+}
+
+export function resolvedConfigOptions(scope: t.ScopeSelection) {
+  return scopeConfigOptions(scope.type === 'SCOPE' ? scope.scope : null);
 }
 
 /**

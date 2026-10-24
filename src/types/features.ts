@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import type { ConfigRecord, SchemaField, OptionSource, FieldMetaGroup } from './config';
+import type { ProvenanceSource, SettingRow } from './values';
 import type { FieldRendererProps } from './config-ui';
 import type { FieldControlProps } from './controls';
-import type { ProvenanceSource, SettingRow } from './values';
 
 /** What an allowlist entry may look like, and the copy its control shows (WS13 FX-16). */
 export interface DomainListPolicy {
@@ -207,7 +207,7 @@ export type StatusTone = 'muted' | 'ok' | 'warn';
 /** The status line of a web search credential. */
 export interface CredentialStatusLine {
   tone: StatusTone;
-  icon: 'key' | 'lock' | 'warning';
+  icon: 'key' | 'lock' | 'warning' | 'user';
   text: string;
 }
 

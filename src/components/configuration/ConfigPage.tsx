@@ -35,6 +35,7 @@ import {
   createPathIndex,
   formatScopeParam,
   findScopeByParam,
+  toScopeCandidate,
   getKeyedCollection,
   isConfigValueEqual,
 } from '@/utils';
@@ -65,6 +66,7 @@ import { HeaderActions } from './HeaderActions';
 import { ConfigTabBar } from './ConfigTabBar';
 import { searchConfigIndex } from './search';
 import { revealConfigPath } from './reveal';
+import { PreviewDrawer } from './preview';
 import { ScopeBar } from './ScopeBar';
 
 const routeApi = getRouteApi('/_app/configuration/');
@@ -305,6 +307,16 @@ export function ConfigPage({
   });
   const backToBase = useCallback(() => selectScope({ type: 'BASE' }), [selectScope]);
 
+  /** The preview opens on whom the page edits: the open profile's principal, or everyone. */
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewTarget = useMemo(
+    (): t.PreviewTarget =>
+      editingScope
+        ? { type: 'PRINCIPAL', principal: toScopeCandidate(editingScope) }
+        : { type: 'BASE' },
+    [editingScope],
+  );
+
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
   const [tocEl, setTocEl] = useState<HTMLElement | null>(null);
   const setActiveSection = useActiveSection(scrollEl, tocEl, activeTab);
@@ -531,6 +543,8 @@ export function ConfigPage({
               resetDisabled={isDirty || !canManageConfig}
               resetTitle={resetBaseTitle}
               onResetClick={resetBase.openResetBase}
+              showPreview={isReady && permissions.canView}
+              onPreviewClick={() => setPreviewOpen(true)}
               showScope={permissions.canView}
               scopeSelection={selectedScope}
               scopeLoading={isResolvingScope && !scopeLoadError}
@@ -679,6 +693,12 @@ export function ConfigPage({
             permissions={permissions}
             onError={notifyError}
             isDirty={isDirty}
+          />
+
+          <PreviewDrawer
+            open={previewOpen}
+            onClose={() => setPreviewOpen(false)}
+            initialTarget={previewTarget}
           />
 
           <ImportYamlDialog

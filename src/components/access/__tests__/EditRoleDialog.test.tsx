@@ -1,21 +1,27 @@
 import { PrincipalType } from 'librechat-data-provider';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type * as t from '@/types';
 import { BUNDLED_CONFIG_FEATURES } from '@/constants';
 import { EditRoleDialog } from '../EditRoleDialog';
+import { updateRoleFn } from '@/server';
 
 const state = vi.hoisted(() => ({
   features: {} as Record<string, boolean>,
   scopes: [] as Array<Pick<t.ConfigScope, 'principalType' | 'principalId'>>,
 }));
 
-vi.mock('@/hooks', () => ({
-  useLocalize: () => (key: string, options?: Record<string, string | number>) =>
-    options ? `${key}(${Object.values(options).join(',')})` : key,
-  useConfigFeatures: () => state.features,
-}));
+vi.mock('@/hooks', async () => {
+  const { useRefreshScopes } =
+    await vi.importActual<typeof import('@/hooks/config/scope')>('@/hooks/config/scope');
+  return {
+    useLocalize: () => (key: string, options?: Record<string, string | number>) =>
+      options ? `${key}(${Object.values(options).join(',')})` : key,
+    useConfigFeatures: () => state.features,
+    useRefreshScopes,
+  };
+});
 
 vi.mock('@/server', () => ({
   MEMBERS_PAGE_SIZE: 20,
@@ -49,13 +55,14 @@ const role: t.Role = {
   permissions: {},
 } as t.Role;
 
-function renderDialog() {
+function renderDialog(): QueryClient {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
       <EditRoleDialog role={role} canManage onClose={vi.fn()} />
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 async function rename(name: string) {
@@ -99,5 +106,24 @@ describe('EditRoleDialog rename note', () => {
     await rename('WRITERS');
     await act(async () => {});
     expect(screen.queryByText(/com_access_rename_profile/)).not.toBeInTheDocument();
+  });
+});
+
+describe('EditRoleDialog save', () => {
+  it("refreshes the profiles and every server-resolved read, since a user's role resolves their config", async () => {
+    vi.mocked(updateRoleFn).mockResolvedValue({ role: { ...role, name: 'WRITERS' } });
+    const queryClient = renderDialog();
+    queryClient.setQueryData(['configPreview', 'user', 'u1'], { ok: true });
+    queryClient.setQueryData(['configCatalog', 'role', 'EDITORS'], {});
+    queryClient.setQueryData(['envStatus'], {});
+    await rename('WRITERS');
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_save' }));
+    await waitFor(() =>
+      expect(queryClient.getQueryState(['configPreview', 'user', 'u1'])?.isInvalidated).toBe(true),
+    );
+    expect(queryClient.getQueryState(['configCatalog', 'role', 'EDITORS'])?.isInvalidated).toBe(
+      true,
+    );
+    expect(queryClient.getQueryState(['envStatus'])?.isInvalidated).toBe(true);
   });
 });

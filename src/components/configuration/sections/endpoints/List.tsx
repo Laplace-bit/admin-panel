@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type * as t from '@/types';
 import { DecorativeIcon, KebabMenu, WarningList } from '@/components/shared';
-import { useLocalize, useValuesScope } from '@/hooks';
+import { useLocalize, useValuesScope, useCatalogEndpoint } from '@/hooks';
+import { CATALOG_ENDPOINT_REASON_KEYS } from '@/constants';
 import { sourceLabel } from '../../values';
 import { describeIssue } from './issues';
 import { isUnserved } from './model';
@@ -124,6 +125,26 @@ export function StatusBadge({ issues }: { issues: t.EndpointIssue[] }) {
     <Badge tone="error" label={localize('com_config_ce_status_unserved')} description={summary} />
   ) : (
     <Badge tone="error" label={localize('com_config_ce_status_invalid')} description={summary} />
+  );
+}
+
+/**
+ * "Not served" for a saved endpoint LibreChat does not serve the edit
+ * target's users, from the scope catalog (`catalogApi`) with its reason: a
+ * key the merge dropped, say, which the list's own checks can't see. Nothing
+ * while the row has unsaved changes or problems of its own, or without the catalog.
+ */
+function ServedBadge({ row }: t.EndpointServedBadgeProps) {
+  const localize = useLocalize();
+  const entry = useCatalogEndpoint(row.identity ?? '');
+  const ownErrors = row.issues.some((issue) => issue.severity === 'error');
+  if (!entry || entry.enabled || row.isNew || row.edited || ownErrors) return null;
+  return (
+    <Badge
+      tone="error"
+      label={localize('com_config_ce_status_not_served')}
+      description={localize(CATALOG_ENDPOINT_REASON_KEYS[entry.reason ?? 'unknown'])}
+    />
   );
 }
 
@@ -288,6 +309,7 @@ function EndpointListRow({
           <SourceBadge row={row} />
           <PendingBadge row={row} />
           <StatusBadge issues={row.issues} />
+          <ServedBadge row={row} />
         </div>
         <span
           id={detailsId}

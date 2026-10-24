@@ -5,12 +5,13 @@ import type { AdminUserSearchResult } from '@librechat/data-schemas';
 import type * as t from '@/types';
 import { SelectedMemberList, UserSearchInline } from '@/components/shared';
 import { addGroupMemberFn, createGroupFn } from '@/server';
+import { useLocalize, useRefreshScopes } from '@/hooks';
 import { cn, notifySuccess, notifyError } from '@/utils';
-import { useLocalize } from '@/hooks';
 
 export function CreateGroupDialog({ open, onClose }: t.CreateGroupDialogProps) {
   const localize = useLocalize();
   const queryClient = useQueryClient();
+  const refreshScopes = useRefreshScopes();
   const [activeTab, setActiveTab] = useState<t.CreateGroupTab>('details');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -39,7 +40,7 @@ export function CreateGroupDialog({ open, onClose }: t.CreateGroupDialogProps) {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['groups'] });
       queryClient.invalidateQueries({ queryKey: ['groupMembers'] });
-      queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
+      void refreshScopes();
       queryClient.invalidateQueries({ queryKey: ['groupAssignments'] });
       notifySuccess(localize('com_toast_group_created', { name: data.name }));
       resetAndClose();

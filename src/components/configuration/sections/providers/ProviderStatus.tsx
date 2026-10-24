@@ -1,20 +1,23 @@
 import type * as t from '@/types';
-import { useLocalize, useEndpointModels, useEndpointStatus } from '@/hooks';
-import { STATUS_KEYS, providerStatus } from './status';
+import { useLocalize, useEndpointModels, useEndpointStatus, useCatalogEndpoint } from '@/hooks';
+import { STATUS_KEYS, providerStatus, statusDescriptionKey } from './status';
+import { EnvStatusNote } from '../../fields/EnvStatus';
 
 /**
- * Active / Not enabled badge of a provider card header (AP-5), from
- * `/api/endpoints`. Nothing while the status loads; the explanation and the
- * controlling environment variables are in its tooltip and the card's
- * status row.
+ * Active / Not enabled badge of a provider card header (AP-5), from the edit
+ * target's scope catalog (`catalogApi`) or `/api/endpoints`. Nothing while
+ * the status loads; the explanation and the controlling environment
+ * variables are in its tooltip and the card's status row.
  */
 export function ProviderStatusBadge({ provider }: t.ProviderStatusBadgeProps) {
   const localize = useLocalize();
   const { data, isLoading, isError } = useEndpointStatus();
+  const catalogEntry = useCatalogEndpoint(provider);
   if (isLoading || (!data && !isError)) return null;
   const status = providerStatus(provider, data);
   const keys = STATUS_KEYS[status.kind];
-  const hint = [localize(keys.desc), status.credentialsKey && localize(status.credentialsKey)]
+  const descKey = statusDescriptionKey(status.kind, catalogEntry);
+  const hint = [localize(descKey), status.credentialsKey && localize(status.credentialsKey)]
     .filter(Boolean)
     .join(' ');
   return (
@@ -28,16 +31,21 @@ export function ProviderStatusBadge({ provider }: t.ProviderStatusBadgeProps) {
 
 /**
  * The "Status" row at the top of a provider card (AP-5, "Status &
- * credentials"): whether LibreChat serves the provider, where its credentials
- * come from, and how many models it offers. Built-in providers take their
- * credentials from the server environment, so this is read-only.
+ * credentials"): whether LibreChat serves the provider to the edit target's
+ * users, where its credentials come from, and how many models it offers.
+ * With the scope catalog (`catalogApi`) a provider that is not served says
+ * why, and with `envStatus` each environment variable it reads says whether
+ * the server has it set. Built-in providers take their credentials from the
+ * server environment, so this is read-only.
  */
 export function ProviderStatusRow({ provider }: t.ProviderStatusRowProps) {
   const localize = useLocalize();
   const { data, isError } = useEndpointStatus();
   const models = useEndpointModels();
+  const catalogEntry = useCatalogEndpoint(provider);
   const status = providerStatus(provider, data);
   const keys = STATUS_KEYS[status.kind];
+  const descKey = statusDescriptionKey(status.kind, catalogEntry);
   const modelCount = models.data?.[provider]?.length;
   const showsCount = modelCount != null && modelCount > 0 && status.kind !== 'disabled';
   const loading = !data && !isError;
@@ -56,7 +64,7 @@ export function ProviderStatusRow({ provider }: t.ProviderStatusRowProps) {
                 {localize(keys.label)}
               </span>
               {status.kind !== 'active' && (
-                <span className="text-(--cui-color-text-muted)"> {localize(keys.desc)}</span>
+                <span className="text-(--cui-color-text-muted)"> {localize(descKey)}</span>
               )}
             </span>
           )}
@@ -68,12 +76,15 @@ export function ProviderStatusRow({ provider }: t.ProviderStatusRowProps) {
               {localize('com_config_providers_status_models', { count: modelCount })}
             </span>
           )}
-          {status.kind === 'disabled' && (
+          {status.kind === 'disabled' && !catalogEntry?.reason && (
             <span className="settings-help m-0">
               {localize('com_config_providers_status_endpoints_note')}
             </span>
           )}
         </p>
+        {catalogEntry && catalogEntry.envVars.length > 0 && (
+          <EnvStatusNote names={catalogEntry.envVars} optional />
+        )}
       </div>
     </div>
   );

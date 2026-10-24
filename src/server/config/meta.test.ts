@@ -17,8 +17,19 @@ import { getAdminConfigMetaFn, readConfigContract } from './meta';
 const META = {
   metaVersion: 1,
   versions: { librechat: 'v0.8.9-rc1', dataProvider: '0.8.528', configSchema: '1.3.18' },
-  features: { dottedKeys: true, webSearchStoredKeys: true, roleRenameMovesProfile: true },
-  limits: { maxPatchEntries: 100, maxChangeOps: 1000, overrideCacheTtlMs: 60000 },
+  features: {
+    dottedKeys: true,
+    webSearchStoredKeys: true,
+    roleRenameMovesProfile: true,
+    resolvedApi: true,
+    catalogApi: true,
+  },
+  limits: {
+    maxPatchEntries: 100,
+    maxChangeOps: 1000,
+    overrideCacheTtlMs: 60000,
+    catalogModelsTtlMs: 90000,
+  },
   rules: {
     arrayMergeKeys: { 'endpoints.custom': 'name', 'endpoints.azureOpenAI.groups': 'group' },
     recordSecretFields: [
@@ -47,6 +58,9 @@ describe('readConfigContract', () => {
       dottedKeys: true,
       webSearchStoredKeys: true,
       roleRenameMovesProfile: true,
+      resolvedApi: true,
+      catalogApi: true,
+      envStatus: false,
       changesBatch: false,
     });
     expect(contract.limits).toEqual(META.limits);

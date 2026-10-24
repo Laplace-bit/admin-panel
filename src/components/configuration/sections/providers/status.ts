@@ -1,5 +1,5 @@
 import type * as t from '@/types';
-import { PROVIDER_CREDENTIALS_KEYS } from '@/constants';
+import { PROVIDER_CREDENTIALS_KEYS, CATALOG_ENDPOINT_REASON_KEYS } from '@/constants';
 
 /**
  * A provider's runtime status from `/api/endpoints` (AP-5): served (with the
@@ -37,3 +37,18 @@ export const STATUS_KEYS: Readonly<Record<t.ProviderStatusKind, { label: string;
       desc: 'com_config_providers_status_unknown_desc',
     },
   };
+
+/**
+ * Locale key of a status kind's explanation: for a provider the scope catalog
+ * says is not served, why (`ENDPOINTS` leaves it out, or its credentials are
+ * missing); else the kind's own.
+ */
+export function statusDescriptionKey(
+  kind: t.ProviderStatusKind,
+  catalogEntry: t.CatalogEndpoint | undefined,
+): string {
+  if (kind === 'disabled' && catalogEntry?.reason) {
+    return CATALOG_ENDPOINT_REASON_KEYS[catalogEntry.reason];
+  }
+  return STATUS_KEYS[kind].desc;
+}

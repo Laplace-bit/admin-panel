@@ -5,12 +5,15 @@ import type * as t from '@/types';
 import {
   toolOptionsQuery,
   baseConfigOptions,
+  configCatalogOptions,
+  configContractOptions,
   endpointStatusOptions,
   endpointModelsOptions,
 } from '@/server';
-import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
-import { MODEL_PROVIDERS, BUILT_IN_PROVIDERS } from '@/constants';
+import { BASE_PRINCIPAL, MODEL_PROVIDERS, BUILT_IN_PROVIDERS } from '@/constants';
 import { getValueAtPath, isConfigRecord, foldsEndpointReferences } from '@/utils';
+import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
+import { ScopeActionsContext } from '@/contexts/ScopeContext';
 import { useConfigContract } from './contract';
 import { useLocalize } from '../useLocalize';
 import { useFieldState } from './field';
@@ -29,11 +32,46 @@ let inertClient: QueryClient | null = null;
  * The page's query client, or an idle one where none is provided (isolated
  * component tests): queries are then disabled and nothing is fetched.
  */
-function useClient(): { client: QueryClient; live: boolean } {
+export function useLiveQueryClient(): { client: QueryClient; live: boolean } {
   const provided = useContext(QueryClientContext);
   if (provided) return { client: provided, live: true };
   inertClient ??= new QueryClient();
   return { client: inertClient, live: false };
+}
+
+/** The principal the page edits: the open profile's, else (and outside the page) Base. */
+export function useEditPrincipal(): t.ConfigPrincipal {
+  const scope = useContext(ScopeActionsContext)?.editingScope;
+  const principalType = scope?.principalType;
+  const principalId = scope?.principalId;
+  return useMemo(
+    () => (principalType && principalId ? { principalType, principalId } : BASE_PRINCIPAL),
+    [principalType, principalId],
+  );
+}
+
+/**
+ * The edit target's scope catalog (`catalogApi`): what the open profile (or
+ * Base) serves, resolved for that scope instead of for the signed-in admin.
+ * `usesCatalog` is false on an older server, whose end-user routes are read
+ * instead (`readsRoutes`); the catalog is fetched only while `wanted`. Until
+ * the server's contract is known neither is read, so a server with the
+ * catalog never gets the end-user calls it replaces while the page loads.
+ */
+function useScopeCatalog(client: QueryClient, live: boolean, wanted: boolean) {
+  const contract = useConfigContract();
+  const principal = useEditPrincipal();
+  const contractQuery = useQuery({ ...configContractOptions, enabled: false }, client);
+  const known = contract.source === 'server' || contractQuery.isFetched;
+  const usesCatalog = contract.features.catalogApi;
+  const query = useQuery(
+    {
+      ...configCatalogOptions(principal, contract.limits.catalogModelsTtlMs),
+      enabled: live && wanted && usesCatalog,
+    },
+    client,
+  );
+  return { usesCatalog, readsRoutes: live && known && !usesCatalog, query };
 }
 
 /** When the base configuration was last loaded: saves refetch it, and endpoint data follows. */
@@ -45,34 +83,65 @@ function useConfigVersion(client: QueryClient, live: boolean): number {
   return live ? dataUpdatedAt : 0;
 }
 
-/** Enabled endpoints from LibreChat (`/api/endpoints`), refetched after each save. */
+/**
+ * Enabled endpoints of the edit target: from its scope catalog (`catalogApi`),
+ * else as LibreChat serves them to the signed-in admin (`/api/endpoints`).
+ * Refetched after each save.
+ */
 export function useEndpointStatus(): t.QueryState<t.EndpointStatusMap> {
-  const { client, live } = useClient();
+  const { client, live } = useLiveQueryClient();
   const version = useConfigVersion(client, live);
-  const query = useQuery(
-    { ...endpointStatusOptions(version), enabled: live, placeholderData: (prev) => prev },
-    client,
-  );
-  return { data: query.data, isLoading: live && query.isLoading, isError: query.isError };
-}
-
-/** Model names per endpoint from LibreChat (`/api/models`), refetched after each save. */
-export function useEndpointModels(enabled = true): t.QueryState<t.EndpointModelsMap> {
-  const { client, live } = useClient();
-  const version = useConfigVersion(client, live);
+  const catalog = useScopeCatalog(client, live, true);
   const query = useQuery(
     {
-      ...endpointModelsOptions(version),
-      enabled: live && enabled,
+      ...endpointStatusOptions(version),
+      enabled: catalog.readsRoutes,
       placeholderData: (prev) => prev,
     },
     client,
   );
+  const source = catalog.usesCatalog ? catalog.query : query;
   return {
-    data: query.data,
-    isLoading: live && enabled && query.isLoading,
-    isError: query.isError,
+    data: catalog.usesCatalog ? catalog.query.data?.status : query.data,
+    isLoading: live && source.isLoading,
+    isError: source.isError,
   };
+}
+
+/**
+ * Model names per endpoint of the edit target: its scope catalog's served
+ * models (`catalogApi`), else `/api/models` as the admin. Refetched after each save.
+ */
+export function useEndpointModels(enabled = true): t.QueryState<t.EndpointModelsMap> {
+  const { client, live } = useLiveQueryClient();
+  const version = useConfigVersion(client, live);
+  const catalog = useScopeCatalog(client, live, enabled);
+  const query = useQuery(
+    {
+      ...endpointModelsOptions(version),
+      enabled: catalog.readsRoutes && enabled,
+      placeholderData: (prev) => prev,
+    },
+    client,
+  );
+  const source = catalog.usesCatalog ? catalog.query : query;
+  return {
+    data: catalog.usesCatalog ? catalog.query.data?.models : query.data,
+    isLoading: live && enabled && source.isLoading,
+    isError: source.isError,
+  };
+}
+
+/**
+ * One endpoint of the edit target's scope catalog: whether it is served, why
+ * not, and the env names it reads. Undefined on a server without the
+ * catalog, while it loads, or for an endpoint it does not list.
+ */
+export function useCatalogEndpoint(name: string): t.CatalogEndpoint | undefined {
+  const { client, live } = useLiveQueryClient();
+  const catalog = useScopeCatalog(client, live, true);
+  if (!catalog.usesCatalog) return undefined;
+  return entryOf(catalog.query.data?.endpoints, name);
 }
 
 /** Distinct names of an `endpoints.custom` list. */
@@ -144,10 +213,9 @@ export function buildEndpointOptions(
   return options;
 }
 
-/** An endpoint's models, matching LibreChat's normalized names (`Ollama` is served as `ollama`). */
-function modelsOf(models: t.EndpointModelsMap | undefined, endpoint: string): string[] | undefined {
-  if (!models) return undefined;
-  return models[endpoint] ?? models[normalizeEndpointName(endpoint)];
+/** An endpoint's entry of a per-endpoint map, matching LibreChat's normalized names (`Ollama` is served as `ollama`). */
+function entryOf<T>(map: Readonly<Record<string, T>> | undefined, endpoint: string): T | undefined {
+  return map?.[endpoint] ?? map?.[normalizeEndpointName(endpoint)];
 }
 
 function recordKeys(root: t.ConfigValue, path: string): string[] {
@@ -188,15 +256,17 @@ export function useOptionSources(source?: t.OptionSource): t.OptionSourceResult 
   const localize = useLocalize();
   const foldsNames = foldsEndpointReferences(useConfigContract());
   const root = useShownConfig();
-  const { client, live } = useClient();
+  const { client, live } = useLiveQueryClient();
   const version = useConfigVersion(client, live);
   const wantsStatus = source === 'endpoints' || source === 'providers';
   const wantsModels = source?.startsWith(MODELS_PREFIX) ?? false;
   const wantsTools = source === 'tools';
+  const catalog = useScopeCatalog(client, live, wantsStatus || wantsModels || wantsTools);
+  const routes = catalog.readsRoutes;
   const status = useQuery(
     {
       ...endpointStatusOptions(version),
-      enabled: live && wantsStatus,
+      enabled: routes && wantsStatus,
       placeholderData: (prev) => prev,
     },
     client,
@@ -204,52 +274,72 @@ export function useOptionSources(source?: t.OptionSource): t.OptionSourceResult 
   const models = useQuery(
     {
       ...endpointModelsOptions(version),
-      enabled: live && wantsModels,
+      enabled: routes && wantsModels,
       placeholderData: (prev) => prev,
     },
     client,
   );
-  const tools = useQuery({ ...toolOptionsQuery, enabled: live && wantsTools }, client);
+  const tools = useQuery({ ...toolOptionsQuery, enabled: routes && wantsTools }, client);
+  const catalogData = catalog.usesCatalog ? catalog.query.data : undefined;
+  const statusData = catalog.usesCatalog ? catalogData?.status : status.data;
+  const modelsData = catalog.usesCatalog ? catalogData?.models : models.data;
+  const toolsData = catalog.usesCatalog ? catalogData?.tools : tools.data;
 
   const options = useMemo((): t.SelectOption[] => {
     if (!source) return NO_OPTIONS;
     if (source === 'endpoints' || source === 'providers') {
-      return buildEndpointOptions(status.data, root, localize, source === 'providers', foldsNames);
+      return buildEndpointOptions(statusData, root, localize, source === 'providers', foldsNames);
     }
     if (source === 'mcpServers') return toOptions(recordKeys(root, 'mcpServers'));
     if (source === 'specGroups') return toOptions(specGroups(root));
-    if (source === 'tools') return tools.data ?? NO_OPTIONS;
+    if (source === 'tools') return toolsData ?? NO_OPTIONS;
     const endpoint = source.slice(MODELS_PREFIX.length);
-    return toOptions(modelsOf(models.data, endpoint) ?? []);
-  }, [source, status.data, models.data, tools.data, root, localize, foldsNames]);
+    return toOptions(entryOf(modelsData, endpoint) ?? []);
+  }, [source, statusData, modelsData, toolsData, root, localize, foldsNames]);
 
-  const isLoading =
-    live &&
-    ((wantsStatus && status.isLoading) ||
+  const loading = catalog.usesCatalog
+    ? catalog.query.isLoading
+    : (wantsStatus && status.isLoading) ||
       (wantsModels && models.isLoading) ||
-      (wantsTools && tools.isLoading));
-  return { options, isLoading };
+      (wantsTools && tools.isLoading);
+  return { options, isLoading: live && (wantsStatus || wantsModels || wantsTools) && loading };
+}
+
+/** The catalog's lists as a model list field reads them: what the endpoint offers without a list, and every known name. */
+function catalogListDefaults(lists: t.CatalogModels | undefined): t.ModelListDefaults {
+  if (!lists) return { suggestions: [] };
+  const suggestions = [
+    ...new Set([...lists.served, ...(lists.defaults ?? []), ...(lists.configured ?? [])]),
+  ];
+  return lists.defaults ? { defaults: lists.defaults, suggestions } : { suggestions };
 }
 
 /**
- * Defaults and suggestions for a model list field (AP-2): the models
- * `/api/models` lists for the source's endpoint. They are the provider's
- * defaults only while the saved configuration sets no list (the API returns
- * the configured list otherwise), so `defaults` is left out then.
+ * Defaults and suggestions for a model list field (AP-2). From the edit
+ * target's scope catalog (`catalogApi`): the models the endpoint offers
+ * without a configured list, which the catalog reports whether or not one is
+ * saved. Else the models `/api/models` lists for the source's endpoint, which
+ * are the provider's defaults only while the saved configuration sets no list
+ * (the API returns the configured list otherwise), so `defaults` is left out then.
  */
 export function useModelListDefaults(
   path: string,
   source: t.OptionSource | undefined,
 ): t.ModelListDefaults {
   const endpoint = source?.startsWith(MODELS_PREFIX) ? source.slice(MODELS_PREFIX.length) : null;
-  const models = useEndpointModels(endpoint != null);
+  const { client, live } = useLiveQueryClient();
+  const catalog = useScopeCatalog(client, live, endpoint != null);
+  const models = useEndpointModels(endpoint != null && !catalog.usesCatalog);
   const state = useFieldState(path);
+  const catalogLists = catalog.usesCatalog ? catalog.query.data?.modelLists : undefined;
   return useMemo(() => {
-    const list = endpoint ? modelsOf(models.data, endpoint) : undefined;
+    if (!endpoint) return { suggestions: [] };
+    if (catalog.usesCatalog) return catalogListDefaults(entryOf(catalogLists, endpoint));
+    const list = entryOf(models.data, endpoint);
     if (!list) return { suggestions: [] };
     const savedList = state.isOverride || Array.isArray(state.effective);
     return savedList ? { suggestions: list } : { defaults: list, suggestions: list };
-  }, [endpoint, models.data, state.isOverride, state.effective]);
+  }, [endpoint, catalog.usesCatalog, catalogLists, models.data, state.isOverride, state.effective]);
 }
 
 /** Siblings that name the endpoint a model field's model runs on, nearest first. */

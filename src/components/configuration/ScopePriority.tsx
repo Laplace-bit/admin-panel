@@ -1,10 +1,9 @@
 import { useId, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import { Button, NumberField } from '@clickhouse/click-ui';
 import type * as t from '@/types';
+import { useLocalize, useRefreshScopes } from '@/hooks';
 import { MAX_SCOPE_PRIORITY } from '@/constants';
 import { setScopePriorityFn } from '@/server';
-import { useLocalize } from '@/hooks';
 import { errorText } from '@/utils';
 
 const PRIORITY_FORMAT = new Intl.NumberFormat();
@@ -30,7 +29,7 @@ function priorityProblem(text: string, localize: t.LocalizeFn): string | null {
  */
 export function ScopePriorityEditor({ scope, onError }: t.ScopePriorityEditorProps) {
   const localize = useLocalize();
-  const queryClient = useQueryClient();
+  const refreshScopes = useRefreshScopes();
   const inputId = useId();
   const errorId = useId();
   const [draft, setDraft] = useState<string | null>(null);
@@ -59,7 +58,7 @@ export function ScopePriorityEditor({ scope, onError }: t.ScopePriorityEditorPro
       await setScopePriorityFn({
         data: { principalType: scope.principalType, principalId: scope.principalId, priority },
       });
-      await queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
+      await refreshScopes();
       close();
     } catch (err) {
       onError?.(errorText(err, localize('com_scope_priority_error'), localize));

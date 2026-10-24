@@ -19,8 +19,8 @@ import {
 } from '@/server';
 import { cn, errorText, notifySuccess, notifyError } from '@/utils';
 import { Avatar, TrashButton } from '@/components/shared';
+import { useLocalize, useRefreshScopes } from '@/hooks';
 import { ConfirmDialog } from '@/components/access';
-import { useLocalize } from '@/hooks';
 
 const CONFIRM_TITLE_KEYS: Record<t.RemoveTarget['kind'], string> = {
   role: 'com_users_remove_role_title',
@@ -45,6 +45,7 @@ export function UserDetailDialog({
 }: t.UserDetailDialogProps) {
   const localize = useLocalize();
   const queryClient = useQueryClient();
+  const refreshScopes = useRefreshScopes();
 
   const [view, setView] = useState<'main' | 'add'>('main');
   const [removeTarget, setRemoveTarget] = useState<t.RemoveTarget | null>(null);
@@ -86,7 +87,7 @@ export function UserDetailDialog({
     queryClient.invalidateQueries({ queryKey: ['groups'] });
     queryClient.invalidateQueries({ queryKey: ['roleMembers'] });
     queryClient.invalidateQueries({ queryKey: ['groupMembers'] });
-    queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
+    void refreshScopes();
   };
 
   const handleError = (err: Error) => notifyError(errorText(err, err.message, localize));

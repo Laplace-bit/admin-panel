@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
-import { resolveWriteRules } from '@/constants';
 import {
   isSameScope,
   applyScopeGates,
@@ -16,8 +15,12 @@ import {
   compareScopePrecedence,
   scopeGateSkipReason,
   scopeOverrideEntries,
+  isBasePrincipal,
+  toScopeCandidate,
   listScopeOverrideItems,
+  countDocumentOverrides,
 } from './scopes';
+import { resolveWriteRules } from '@/constants';
 
 function scope(overrides: Partial<t.ConfigScope> & Pick<t.ConfigScope, 'principalId'>) {
   return {
@@ -125,7 +128,8 @@ describe('formatScopeName', () => {
 describe('isCurrentSelection / isSameScope', () => {
   const eng = scope({ principalId: 'eng' });
   it('treats the same principal as the same profile', () => {
-    expect(isSameScope(eng, { ...eng, name: 'renamed', priority: 5 })).toBe(true);
+    const renamed = scope({ ...eng, name: 'renamed', priority: 5 });
+    expect(isSameScope(eng, renamed)).toBe(true);
     expect(isSameScope(eng, scope({ principalId: 'design' }))).toBe(false);
   });
 
@@ -362,5 +366,59 @@ describe('scopeGateSkipReason', () => {
     expect(scopeGateSkipReason('rateLimits.fileUploads.ipMax', rules)).toBeUndefined();
     expect(scopeGateSkipReason('turnstile.siteKey', rules)).toBe('yamlOnly');
     expect(scopeGateSkipReason('registration.socialLogins', rules)).toBe('baseScope');
+  });
+});
+
+describe('countDocumentOverrides', () => {
+  it('counts each list entry, MCP server and leaf once, as a profile summary does', () => {
+    expect(
+      countDocumentOverrides({
+        endpoints: { custom: [{ name: 'Ollama', baseURL: 'x' }, { name: 'ollama' }] },
+        mcpServers: { github: { title: 'GitHub', timeout: 5 } },
+        interface: { customWelcome: 'Hi', temporaryChatRetention: 48 },
+      }),
+    ).toBe(5);
+  });
+
+  it('counts a withheld secret by its preview, but not a preview beside a kept reference', () => {
+    expect(
+      countDocumentOverrides({
+        webSearch: {
+          searchProvider: 'serper',
+          serperApiKey: '${SERPER_API_KEY}',
+          serperApiKeyPreview: '',
+          jinaApiKeyPreview: 'jina_...abcd',
+        },
+      }),
+    ).toBe(3);
+  });
+
+  it('counts nothing for an empty document', () => {
+    expect(countDocumentOverrides({})).toBe(0);
+  });
+});
+
+describe('toScopeCandidate / isBasePrincipal', () => {
+  it("lists a profile's principal with its name and a user's email", () => {
+    expect(
+      toScopeCandidate(
+        scope({ principalType: PrincipalType.USER, principalId: 'u1', name: 'Jane', email: 'j@x' }),
+      ),
+    ).toEqual({ principalType: 'user', principalId: 'u1', name: 'Jane', email: 'j@x' });
+    expect(toScopeCandidate(scope({ principalId: 'g1', name: 'Eng' }))).toEqual({
+      principalType: 'group',
+      principalId: 'g1',
+      name: 'Eng',
+    });
+  });
+
+  it('recognizes only the Base document', () => {
+    expect(isBasePrincipal({ principalType: PrincipalType.ROLE, principalId: '__base__' })).toBe(
+      true,
+    );
+    expect(isBasePrincipal({ principalType: PrincipalType.ROLE, principalId: 'USER' })).toBe(false);
+    expect(isBasePrincipal({ principalType: PrincipalType.GROUP, principalId: '__base__' })).toBe(
+      false,
+    );
   });
 });

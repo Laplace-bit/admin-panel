@@ -1,9 +1,10 @@
 import { PrincipalType } from 'librechat-data-provider';
+import type { AdminGroup, AdminUserSearchResult } from '@librechat/data-schemas';
 import type * as t from '@/types';
+import { BASE_PRINCIPAL, KEYED_COLLECTIONS, getScopeGateReason } from '@/constants';
 import { flattenObject, getValueAtPath, isConfigRecord } from './format';
-import { KEYED_COLLECTIONS, getScopeGateReason } from '@/constants';
 import { getEntryKey, getKeyedCollection } from './collections';
-import { isSecretPath } from './secrets';
+import { isSecretPath, isSecretPreviewPath } from './secrets';
 
 /** The skip reason a save in a profile gets when its section is gated (`getScopeGateReason`). */
 const GATE_SKIP_REASONS: Readonly<Record<t.ScopeGateReason, t.SkipReason>> = {
@@ -44,6 +45,8 @@ const SINGLE_MEMBERSHIP_TYPES: ReadonlySet<PrincipalType> = new Set([
 /** Record sections whose entries count as one override each (an MCP server, not its fields). */
 const ENTRY_COUNTED_SECTIONS: ReadonlySet<string> = new Set(['mcpServers']);
 
+const PREVIEW_SUFFIX = 'Preview';
+
 function isEmptyRecord(value: t.ConfigValue): boolean {
   return (
     value !== null &&
@@ -65,8 +68,55 @@ export function collectOverridePaths(overrides: t.ConfigRecord): string[] {
 }
 
 /** Whether two scope values point at the same profile. */
-export function isSameScope(a: t.ConfigScope, b: t.ConfigScope): boolean {
+export function isSameScope(a: t.ConfigPrincipal, b: t.ConfigPrincipal): boolean {
   return a.principalType === b.principalType && a.principalId === b.principalId;
+}
+
+/** A role as principal pickers list it. */
+export function roleCandidate(role: Pick<t.Role, 'id' | 'name' | 'description'>): t.ScopeCandidate {
+  return {
+    principalType: PrincipalType.ROLE,
+    principalId: role.id,
+    name: role.name,
+    description: role.description,
+  };
+}
+
+/** A group as principal pickers list it. */
+export function groupCandidate(
+  group: Pick<AdminGroup, 'id' | 'name' | 'description'>,
+): t.ScopeCandidate {
+  return {
+    principalType: PrincipalType.GROUP,
+    principalId: group.id,
+    name: group.name,
+    description: group.description,
+  };
+}
+
+/** A user search result as principal pickers list it: by name (else username or email), with the email. */
+export function userCandidate(user: AdminUserSearchResult): t.ScopeCandidate {
+  return {
+    principalType: PrincipalType.USER,
+    principalId: user.id,
+    name: user.name || user.username || user.email,
+    email: user.email,
+  };
+}
+
+/** A profile's principal as pickers list it: type, id, display name and a user's email. */
+export function toScopeCandidate(scope: t.ConfigScope): t.ScopeCandidate {
+  return {
+    principalType: scope.principalType as t.ScopePrincipalType,
+    principalId: scope.principalId,
+    name: scope.name,
+    ...(scope.email && { email: scope.email }),
+  };
+}
+
+/** Whether a principal is the Base document's (`role` `__base__`). */
+export function isBasePrincipal(principal: t.ConfigPrincipal): boolean {
+  return isSameScope(principal, BASE_PRINCIPAL);
 }
 
 /** Whether a scope selection already points at `next` (re-selecting it is a no-op). */
@@ -76,7 +126,7 @@ export function isCurrentSelection(current: t.ScopeSelection, next: t.ScopeSelec
 }
 
 /** "Bob Test (bob@test.local)" for a user profile with a known email, else the name. */
-export function formatScopeName(scope: t.ConfigScope): string {
+export function formatScopeName(scope: Pick<t.ConfigScope, 'name' | 'email'>): string {
   if (!scope.email || scope.email === scope.name) return scope.name;
   return `${scope.name} (${scope.email})`;
 }
@@ -118,7 +168,9 @@ export function scopeOverrideEntries(
  * hidden path, each MCP server once however many of its fields are set, and
  * each entry of a list merged by entry (`scopeOverrideEntries`).
  */
-export function listScopeOverrideItems(scope: t.ConfigScope): t.ScopeOverrideItem[] {
+export function listScopeOverrideItems(
+  scope: Pick<t.ConfigScope, 'overridePaths' | 'overrideEntries' | 'tombstones'>,
+): t.ScopeOverrideItem[] {
   const items = new Map<string, t.ScopeOverrideItem>();
   for (const path of scope.overridePaths ?? []) {
     const entries = scope.overrideEntries?.[path];
@@ -141,6 +193,20 @@ export function listScopeOverrideItems(scope: t.ConfigScope): t.ScopeOverrideIte
 /** Number of settings a profile changes (see `listScopeOverrideItems`). */
 export function countScopeOverrides(scope: t.ConfigScope): number {
   return listScopeOverrideItems(scope).length;
+}
+
+/**
+ * Number of settings a config document's overrides change, counted as a
+ * profile's are, its tombstones apart. A secret's masked preview stands in
+ * for the secret a read withholds, and is not counted beside one it keeps.
+ */
+export function countDocumentOverrides(overrides: t.ConfigRecord): number {
+  const paths = collectOverridePaths(overrides);
+  const present = new Set(paths);
+  const overridePaths = paths.filter(
+    (path) => !isSecretPreviewPath(path) || !present.has(path.slice(0, -PREVIEW_SUFFIX.length)),
+  );
+  return listScopeOverrideItems({ overridePaths, ...scopeOverrideEntries(overrides) }).length;
 }
 
 /** Every path a profile overrides or hides. */

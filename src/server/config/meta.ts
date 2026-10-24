@@ -54,6 +54,7 @@ const metaSchema = z.object({
       maxPatchEntries: lenient(z.number().int().positive()),
       maxChangeOps: lenient(count),
       overrideCacheTtlMs: lenient(count),
+      catalogModelsTtlMs: lenient(count),
     }),
   ),
   rules: lenient(rulesSchema),

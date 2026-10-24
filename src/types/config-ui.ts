@@ -271,6 +271,9 @@ export interface HeaderActionsProps {
   resetDisabled: boolean;
   resetTitle?: string;
   onResetClick: () => void;
+  /** Offers "Preview", the configuration a role, group or user gets. */
+  showPreview?: boolean;
+  onPreviewClick?: () => void;
   showScope: boolean;
   scopeSelection: ScopeSelection;
   /** The profile a `?scope=` link names is still being looked up. */

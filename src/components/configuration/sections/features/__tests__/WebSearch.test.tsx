@@ -1,9 +1,10 @@
+import '@/locales/i18n';
 import { describe, it, expect } from 'vitest';
+import { QueryClient } from '@tanstack/react-query';
 import { fireEvent, screen } from '@testing-library/react';
 import { otherServices, selectedServices, webSearchTocItems } from '../services';
 import { WebSearchRenderer } from '../WebSearch';
 import { renderSection } from './harness';
-import '@/locales/i18n';
 
 const YAML = {
   webSearch: {
@@ -72,6 +73,69 @@ describe('WebSearchRenderer', () => {
       screen.getByText(
         'Not set here: LibreChat reads the COHERE_API_KEY environment variable on the server.',
       ),
+    ).toBeInTheDocument();
+  });
+
+  it('says whether the environment variable each credential reads is set on the server (envStatus)', () => {
+    const client = new QueryClient();
+    client.setQueryData(['envStatus'], {
+      TAVILY_API_KEY: { set: true, userProvided: false, sources: ['yaml'] },
+      COHERE_API_KEY: { set: false, userProvided: false, sources: ['default'] },
+      TAVILY_SEARCH_URL: { set: false, userProvided: false, sources: ['default'] },
+    });
+    renderSection(WebSearchRenderer, {
+      section: 'webSearch',
+      yaml: YAML,
+      features: { envStatus: true },
+      client,
+    });
+    expect(
+      screen.getByText(
+        'Read from the TAVILY_API_KEY environment variable, which is set on the server.',
+      ),
+    ).toBeInTheDocument();
+    const cohere = screen.getByText(
+      'Not set here: LibreChat reads the COHERE_API_KEY environment variable, which is not set on the server.',
+    );
+    expect(cohere.parentElement).toHaveClass('text-(--settings-warn-fg)');
+    const searchUrl = screen.getByText(
+      'Not set here: LibreChat reads the TAVILY_SEARCH_URL environment variable, which is not set on the server.',
+    );
+    expect(searchUrl.parentElement).toHaveClass('text-(--settings-muted-fg)');
+    expect(
+      screen.getByText(
+        'Not set here: LibreChat reads the TAVILY_EXTRACT_URL environment variable on the server.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("warns that a reference outside the server's override allowlist leaves a needed key empty", () => {
+    const client = new QueryClient();
+    client.setQueryData(['envStatus'], {
+      TAVILY_API_KEY: { set: true, userProvided: false, sources: ['yaml'] },
+      PROFILE_TAVILY: { set: true, userProvided: false, sources: ['override'] },
+    });
+    renderSection(WebSearchRenderer, {
+      section: 'webSearch',
+      yaml: YAML,
+      overrides: { webSearch: { tavilyApiKey: '${PROFILE_TAVILY}' } },
+      features: { envStatus: true, envAllowlist: true },
+      client,
+    });
+    const line = screen.getByText(
+      "Read from the PROFILE_TAVILY environment variable, which is not in the server's allowlist for overrides, so the value is empty.",
+    );
+    expect(line.parentElement).toHaveClass('text-(--settings-warn-fg)');
+  });
+
+  it('names the environment variable only, on a server without env status', () => {
+    const client = new QueryClient();
+    client.setQueryData(['envStatus'], {
+      TAVILY_API_KEY: { set: false, userProvided: false, sources: ['yaml'] },
+    });
+    renderSection(WebSearchRenderer, { section: 'webSearch', yaml: YAML, client });
+    expect(
+      screen.getByText('Read from the TAVILY_API_KEY environment variable on the server.'),
     ).toBeInTheDocument();
   });
 

@@ -18,14 +18,15 @@ import {
   TrashButton,
   UserSearchInline,
 } from '@/components/shared';
+import { useLocalize, useRefreshScopes } from '@/hooks';
 import { cn, notifySuccess, notifyError } from '@/utils';
-import { useLocalize } from '@/hooks';
 
 type EditGroupTab = 'details' | 'members';
 
 export function EditGroupDialog({ group, canManage, onClose }: t.EditGroupDialogProps) {
   const localize = useLocalize();
   const queryClient = useQueryClient();
+  const refreshScopes = useRefreshScopes();
   const [activeTab, setActiveTab] = useState<EditGroupTab>('details');
   const [name, setName] = useState(group?.name ?? '');
   const [description, setDescription] = useState(group?.description ?? '');
@@ -101,6 +102,7 @@ export function EditGroupDialog({ group, canManage, onClose }: t.EditGroupDialog
       queryClient.invalidateQueries({ queryKey: ['groups'] });
       queryClient.invalidateQueries({ queryKey: ['groupAssignments'] });
       queryClient.invalidateQueries({ queryKey: ['groupMembers', group?.id] });
+      void refreshScopes();
       notifySuccess(localize('com_toast_group_updated', { name: data.name }));
       onClose();
     },

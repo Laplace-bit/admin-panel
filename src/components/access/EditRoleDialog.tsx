@@ -23,8 +23,8 @@ import {
   TrashButton,
   UserSearchInline,
 } from '@/components/shared';
+import { useLocalize, useRefreshScopes, useConfigFeatures } from '@/hooks';
 import { RolePermissionsPanel } from './RolePermissionsPanel';
-import { useLocalize, useConfigFeatures } from '@/hooks';
 import { cn, notifySuccess, notifyError } from '@/utils';
 
 type EditRoleTab = 'details' | 'permissions' | 'members';
@@ -32,6 +32,7 @@ type EditRoleTab = 'details' | 'permissions' | 'members';
 export function EditRoleDialog({ role, canManage, onClose }: t.EditRoleDialogProps) {
   const localize = useLocalize();
   const queryClient = useQueryClient();
+  const refreshScopes = useRefreshScopes();
   const [activeTab, setActiveTab] = useState<EditRoleTab>('details');
   const [name, setName] = useState(role?.name ?? '');
   const [description, setDescription] = useState(role?.description ?? '');
@@ -159,9 +160,7 @@ export function EditRoleDialog({ role, canManage, onClose }: t.EditRoleDialogPro
       if (data.roleId !== role?.id) {
         queryClient.invalidateQueries({ queryKey: ['roleMembers', data.roleId] });
       }
-      if (hasProfile && data.name !== role?.name) {
-        queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
-      }
+      void refreshScopes();
       notifySuccess(localize('com_toast_role_updated', { name: data.name }));
       onClose();
     },

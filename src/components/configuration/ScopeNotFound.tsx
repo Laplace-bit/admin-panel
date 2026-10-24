@@ -1,12 +1,12 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Button, Icon } from '@clickhouse/click-ui';
 import { PrincipalType } from 'librechat-data-provider';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type * as t from '@/types';
 import { allRolesQueryOptions, createScopeFn } from '@/server';
+import { useLocalize, useRefreshScopes } from '@/hooks';
 import { notifyError, parseScopeParam } from '@/utils';
 import { principalTypeLabel } from './review/group';
-import { useLocalize } from '@/hooks';
 
 /** "Role: ADMIN" for a `?scope=` value; a group or user id is shown as given. */
 function describeParam(value: string, localize: t.LocalizeFn): string {
@@ -24,7 +24,7 @@ function describeParam(value: string, localize: t.LocalizeFn): string {
  */
 export function ScopeNotFound({ scopeParam, onEditBase, onCreated }: t.ScopeNotFoundProps) {
   const localize = useLocalize();
-  const queryClient = useQueryClient();
+  const refreshScopes = useRefreshScopes();
   const [creating, setCreating] = useState(false);
   const param = parseScopeParam(scopeParam);
   const roleParam =
@@ -43,7 +43,7 @@ export function ScopeNotFound({ scopeParam, onEditBase, onCreated }: t.ScopeNotF
       const { scope } = await createScopeFn({
         data: { principalType: PrincipalType.ROLE, principalId: role, name: role },
       });
-      await queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
+      await refreshScopes();
       onCreated(scope);
     } catch (err) {
       notifyError(err instanceof Error ? err.message : localize('com_scope_create_error'));

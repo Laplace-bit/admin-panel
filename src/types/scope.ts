@@ -111,6 +111,12 @@ export interface ScopePermissions {
 /** Principal types that can have config scopes (excludes PUBLIC). */
 export type ScopePrincipalType = PrincipalType.ROLE | PrincipalType.GROUP | PrincipalType.USER;
 
+/** A kind of principal as a picker lists it: its type and the locale key of its heading. */
+export interface ScopePrincipalGroup {
+  type: ScopePrincipalType;
+  headingKey: string;
+}
+
 export interface ScopeTypeConfigEntry {
   icon: IconName;
   color: string;

@@ -6,6 +6,7 @@ export * from './cn';
 export * from './collections';
 export * from './contract';
 export * from './domains';
+export * from './env';
 export * from './errors';
 export * from './fallback';
 export * from './focus';

@@ -315,6 +315,11 @@ export interface PricingRowProps {
   chips?: ReactNode;
 }
 
+/** Props of a list row's "Not served" chip, from the scope catalog. */
+export interface EndpointServedBadgeProps {
+  row: Pick<EndpointRow, 'identity' | 'isNew' | 'edited' | 'issues'>;
+}
+
 /** Props of one row of the endpoint list. */
 export interface EndpointListRowProps extends Pick<
   EndpointListProps,

@@ -1,6 +1,7 @@
 import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
 import { BUNDLED_WRITE_RULES, DEDICATED_CONFIG_SECTIONS, getConfigSection } from './config';
+import { BASE_CONFIG_PRINCIPAL_ID } from './capabilities';
 
 export const SCOPE_TYPE_CONFIG: Record<t.ScopePrincipalType | 'BASE', t.ScopeTypeConfigEntry> = {
   BASE: {
@@ -65,3 +66,19 @@ export function getScopeGateReason(
   if (DEDICATED_CONFIG_SECTIONS.has(section)) return 'tenantWide';
   return rules.readOnlySections.get(section);
 }
+
+/** The admin user search needs at least this many characters. */
+export const MIN_USER_SEARCH_LENGTH = 2;
+
+/** The principal of the Base document: the admin overrides that apply to everyone. */
+export const BASE_PRINCIPAL: t.ConfigPrincipal = {
+  principalType: PrincipalType.ROLE,
+  principalId: BASE_CONFIG_PRINCIPAL_ID,
+};
+
+/** The kinds of principal a profile can be for, in the order pickers list them, with their headings. */
+export const SCOPE_PRINCIPAL_GROUPS: ReadonlyArray<t.ScopePrincipalGroup> = [
+  { type: PrincipalType.ROLE, headingKey: 'com_scope_roles' },
+  { type: PrincipalType.GROUP, headingKey: 'com_scope_groups' },
+  { type: PrincipalType.USER, headingKey: 'com_scope_users' },
+];

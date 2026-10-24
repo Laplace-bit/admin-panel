@@ -1,5 +1,6 @@
 export type * from './access';
 export type * from './auth';
+export type * from './catalog';
 export type * from './changes';
 export type * from './config';
 export type * from './config-ui';
@@ -13,6 +14,7 @@ export type * from './grant';
 export type * from './hooks';
 export type * from './layout';
 export type * from './mcp';
+export type * from './preview';
 export type * from './review';
 export type * from './providers';
 export type * from './role';
