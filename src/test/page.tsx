@@ -59,6 +59,8 @@ export interface TabHarnessOptions {
   yaml?: t.ConfigRecord;
   /** The base admin overrides. */
   overrides?: t.ConfigRecord;
+  /** The base admin tombstones (none by default). */
+  tombstones?: string[];
   /** Press "Expand all" once rendered: every collapsible opens, lazily mounted ones too. */
   expandAll?: boolean;
   /** The connected server's admin config contract; the bundled one (an older server) by default. */
@@ -78,14 +80,28 @@ export interface TabHarness {
   plan: () => t.WritePlan;
 }
 
+const NO_TOMBSTONES: string[] = [];
+
 interface HarnessProps extends Required<Omit<TabHarnessOptions, 'expandAll' | 'profiles'>> {
   expandAll: boolean;
   state: { edits: t.ConfigEditsState | null; plan: (() => t.WritePlan) | null };
 }
 
-function TabPage({ tab, tree, yaml, overrides, expandAll, contract, state }: HarnessProps) {
+function TabPage({
+  tab,
+  tree,
+  yaml,
+  overrides,
+  tombstones,
+  expandAll,
+  contract,
+  state,
+}: HarnessProps) {
   const schemaPathSet = useMemo(() => new Set(collectFieldPaths(tree)), [tree]);
-  const config = useMemo(() => mergeScopeLayer(yaml, overrides), [yaml, overrides]);
+  const config = useMemo(
+    () => mergeScopeLayer(yaml, overrides, tombstones, getWriteRules(contract)),
+    [yaml, overrides, tombstones, contract],
+  );
   const layers = useMemo(
     () =>
       createBaseLayers(
@@ -94,13 +110,13 @@ function TabPage({ tab, tree, yaml, overrides, expandAll, contract, state }: Har
           yamlConfig: yaml,
           yamlPaths: collectLeafPaths(yaml),
           dbOverrides: overrides,
-          dbTombstones: [],
+          dbTombstones: tombstones,
           schemaDefaults: SCHEMA_DEFAULTS,
         },
         schemaPathSet,
         runtimeDefaultAt,
       ),
-    [config, yaml, overrides, schemaPathSet],
+    [config, yaml, overrides, tombstones, schemaPathSet],
   );
   const flatBaseline = useMemo(() => flattenObject(config), [config]);
   const edits = useConfigEdits({
@@ -154,7 +170,7 @@ function TabPage({ tab, tree, yaml, overrides, expandAll, contract, state }: Har
     ];
     return planConfigChanges(
       ops,
-      { stored: overrides, tombstones: [], lower: yaml, lowerKind: 'yaml' },
+      { stored: overrides, tombstones, lower: yaml, lowerKind: 'yaml' },
       contract.features,
       getWriteRules(contract),
       contract.limits,
@@ -210,6 +226,7 @@ export function renderTab({
   tree = PAGE_TREE,
   yaml = {},
   overrides = {},
+  tombstones = NO_TOMBSTONES,
   expandAll = false,
   contract = BUNDLED_CONFIG_CONTRACT,
   profiles = [],
@@ -227,6 +244,7 @@ export function renderTab({
           tree={tree}
           yaml={yaml}
           overrides={overrides}
+          tombstones={tombstones}
           expandAll={expandAll}
           contract={contract}
           state={state}

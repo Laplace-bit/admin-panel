@@ -25,6 +25,7 @@ export * from './removals';
 export * from './schema';
 export * from './scopes';
 export * from './secrets';
+export * from './specs';
 export * from './toast';
 export * from './validation';
 export * from './values';

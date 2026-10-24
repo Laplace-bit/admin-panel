@@ -669,6 +669,33 @@ describe('buildReviewModel', () => {
     ).toMatch(/› us\.anthropic\.claude-sonnet-4-6$/);
   });
 
+  it('keeps a dotted model name of an Azure group whole, beside one it starts with', () => {
+    const models = { 'gpt-4': { deploymentName: 'gpt4' }, 'gpt-4.1': { deploymentName: 'gpt41' } };
+    const saves: t.SaveEntry[] = [
+      {
+        fieldPath: 'endpoints.azureOpenAI.groups',
+        value: [{ group: 'eastus', instanceName: 'east', version: 'v1', models }],
+      },
+    ];
+    expect(
+      describePath('endpoints.azureOpenAI.groups.0.models.gpt-4.1.deploymentName', ctx(saves)),
+    ).toMatch(/› eastus › Models › gpt-4\.1 › Deployment name$/);
+  });
+
+  it("labels a change of an Azure group's whole model by the model's name alone", () => {
+    const before = { group: 'eastus', models: { 'gpt-5.2-chat': { deploymentName: 'dep' } } };
+    const groups = 'endpoints.azureOpenAI.groups';
+    const saves: t.SaveEntry[] = [
+      { fieldPath: groups, value: [{ group: 'eastus', models: { 'gpt-5.2-chat': true } }] },
+    ];
+    const items = summarizeChanges(
+      makeInput({ baseline: { endpoints: { azureOpenAI: { groups: [before] } } }, saves }),
+    );
+    const model = buildReviewModel(items, ctx(saves));
+    const [group] = model.tabs.flatMap((tab) => tab.sections.flatMap((s) => s.entries));
+    expect(group.rows.map((row) => row.label)).toEqual(['gpt-5.2-chat']);
+  });
+
   it("labels a merged-back entry key on the entry's own tab, not as raw segments", () => {
     expect(describePath('endpoints.custom.1.customParams.paramDefinitions', ctx([]))).toBe(
       'Custom endpoints › Zai 2 › Custom parameters › Parameter definitions',

@@ -32,10 +32,20 @@ export type ConfigFeatureFlag =
   | 'issueParams'
   | 'resolvedApi'
   | 'catalogApi'
-  | 'envStatus';
+  | 'envStatus'
+  | 'azureGroupMergeKey'
+  | 'customParamsExpansion'
+  | 'specInterfaceRederive'
+  | 'endpointRederive';
 
 /** Which admin config behaviours the server has; a flag it does not report is `false`. */
 export type ConfigFeatures = Readonly<Record<ConfigFeatureFlag, boolean>>;
+
+/** The features that decide where the panel may write (`resolveWriteRules`). */
+export type WriteRuleFeatures = Pick<
+  ConfigFeatures,
+  'preAuthBaseOverrides' | 'endpointRederive' | 'azureGroupMergeKey' | 'azureGroupSecrets'
+>;
 
 export interface ConfigLimits {
   /** Most entries one `PATCH /fields` accepts. */
@@ -108,6 +118,8 @@ export interface ConfigRules {
   atomicMergePaths: string[];
   /** Override sections the resolved config holds under another name. */
   overrideKeyMap: Readonly<Record<string, string>>;
+  /** Fields the server derives from others (`endpoints.anthropic.vertexConfig`); writes there are skipped. */
+  derivedPaths: string[];
   secretFields: ConfigSecretFieldRule[];
   arraySecretFields: ConfigArraySecretFieldRule[];
   recordSecretFields: ConfigRecordSecretFieldRule[];
@@ -151,6 +163,8 @@ export interface ConfigWriteRules {
   yamlManagedFields: ReadonlySet<string>;
   /** Of `yamlManagedFields`, those LibreChat reads only once, at startup. */
   startupOnlyFields: ReadonlySet<string>;
+  /** Of `yamlManagedFields`, those the server keeps from librechat.yaml whatever an override stores (`baseOnlyPaths`). */
+  baseOnlyFields: ReadonlySet<string>;
 }
 
 /** Which renames and duplicates keep the secrets their source stores (see `getSecretCarry`). */

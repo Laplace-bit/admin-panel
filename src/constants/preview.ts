@@ -11,6 +11,7 @@ export const PREVIEW_IGNORE_REASON_KEYS: Readonly<Record<t.PreviewIgnoreReason, 
   interface_permission: 'com_config_preview_ignored_interface_permission',
   runtime_stop: 'com_config_preview_ignored_runtime_stop',
   azure_groups_unresolved: 'com_config_preview_ignored_azure_groups_unresolved',
+  endpoint_rederive_off: 'com_config_preview_ignored_endpoint_rederive_off',
   azure_unserved: 'com_config_preview_ignored_azure_unserved',
   secret_rebinding: 'com_config_preview_ignored_secret_rebinding',
   destination_restored: 'com_config_preview_ignored_destination_restored',
@@ -18,6 +19,17 @@ export const PREVIEW_IGNORE_REASON_KEYS: Readonly<Record<t.PreviewIgnoreReason, 
   invalid_theme: 'com_config_preview_ignored_invalid_theme',
   tenant_hidden: 'com_config_preview_ignored_tenant_hidden',
   unknown: 'com_config_preview_ignored_unknown',
+};
+
+/**
+ * The locale key of a reason worded otherwise for a hidden value (a
+ * tombstone): a hide inside an Azure group that leaves it unable to resolve
+ * drops that group alone.
+ */
+export const PREVIEW_HIDDEN_IGNORE_REASON_KEYS: Readonly<
+  Partial<Record<t.PreviewIgnoreReason, string>>
+> = {
+  azure_groups_unresolved: 'com_config_preview_ignored_azure_groups_unresolved_hidden',
 };
 
 /** The locale key that explains each reason the scope catalog gives for an endpoint it does not serve. */

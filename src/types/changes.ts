@@ -3,6 +3,7 @@ import type { SaveEntry, WriteTarget, SaveContext, SavePayload, SkippedChange } 
 import type { ConfigValue, ConfigRecord, FlatConfigMap, ZodSchemaLike } from './config';
 import type { ConfigScope, EntryOverrideNote } from './scope';
 import type { HiddenEndpointUses } from './endpoints';
+import type { ConfigFeatures } from './contract';
 import type { RevertTarget } from './values';
 
 /** One write operation of the save pipeline (WS1). */
@@ -433,6 +434,14 @@ export interface KeyedCollection {
   servedName?: (name: string) => string;
   /** Names LibreChat keeps for itself (its built-in endpoints). */
   reservedNames?: ReadonlySet<string>;
+  /**
+   * For a list the panel edits entry by entry only on some servers (Azure
+   * groups, `editsAzureGroups`): whether this one merges it by key and LibreChat
+   * applies it. Elsewhere the list is one value: the panel neither lists its
+   * entries as overrides nor writes them one by one. No keyed path
+   * (`keyedTombstones`) names the entries of such a list.
+   */
+  gate?: (features: ConfigFeatures) => boolean;
 }
 
 /**

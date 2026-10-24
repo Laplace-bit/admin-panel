@@ -43,6 +43,10 @@ export const CONFIG_FEATURE_FLAGS: readonly t.ConfigFeatureFlag[] = [
   'resolvedApi',
   'catalogApi',
   'envStatus',
+  'azureGroupMergeKey',
+  'customParamsExpansion',
+  'specInterfaceRederive',
+  'endpointRederive',
 ];
 
 /** A server without the meta route (or one that leaves a flag out) has none of these behaviours. */
@@ -112,7 +116,10 @@ const BUNDLED_SECRET_PATHS: ReadonlyArray<[path: string, allowEnvPlaceholder: bo
   ['endpoints.azureAssistants.apiKey', true],
 ];
 
-const keyedCollections = [...KEYED_COLLECTIONS.values()];
+/** The keyed lists LibreChat merged by key before it reported its rules (none behind a flag). */
+const keyedCollections = [...KEYED_COLLECTIONS.values()].filter(
+  (collection) => collection.gate === undefined,
+);
 
 /**
  * The write rules of a LibreChat server that does not report its own, as the
@@ -136,6 +143,7 @@ export const BUNDLED_CONFIG_RULES: t.ConfigRules = {
   overrideKeyMap: Object.fromEntries(
     Object.entries(APP_SERVICE_KEY_ALIASES).map(([alias, section]) => [section, alias]),
   ),
+  derivedPaths: [],
   secretFields: BUNDLED_SECRET_PATHS.map(([path, allowEnvPlaceholder]) => ({
     path,
     previewPath: `${path}Preview`,
@@ -182,7 +190,7 @@ export function getWriteRules(contract: t.ConfigContract): t.ConfigWriteRules {
   if (contract === BUNDLED_CONFIG_CONTRACT) return BUNDLED_WRITE_RULES;
   const cached = WRITE_RULES_CACHE.get(contract);
   if (cached) return cached;
-  const rules = resolveWriteRules(contract.rules, contract.features.preAuthBaseOverrides);
+  const rules = resolveWriteRules(contract.rules, contract.features);
   WRITE_RULES_CACHE.set(contract, rules);
   return rules;
 }

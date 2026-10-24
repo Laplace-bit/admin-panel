@@ -5,10 +5,10 @@ import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
 import { isSameScope, countDocumentOverrides, formatScopeName, isBasePrincipal } from '@/utils';
 import { allGroupsQueryOptions, availableScopesOptions } from '@/server';
-import { PREVIEW_IGNORE_REASON_KEYS } from '@/constants';
+import { PREVIEW_IGNORE_REASON_KEYS, PREVIEW_HIDDEN_IGNORE_REASON_KEYS } from '@/constants';
+import { useLocalize, useConfigFeatures } from '@/hooks';
 import { formatSegments } from './sections';
 import { sourceLabel } from '../values';
-import { useLocalize } from '@/hooks';
 
 /**
  * Display names of the principals a preview lists: the target's own, the
@@ -44,6 +44,12 @@ function usePrincipalLabel(
   }, [groups, scopes, target, localize]);
 }
 
+/** The locale key that says why `item` is not applied as written. */
+function reasonKey(item: t.PreviewIgnored): string {
+  const hidden = item.tombstone ? PREVIEW_HIDDEN_IGNORE_REASON_KEYS[item.reason] : undefined;
+  return hidden ?? PREVIEW_IGNORE_REASON_KEYS[item.reason];
+}
+
 function IgnoredList({ ignored }: t.PreviewIgnoredListProps) {
   const localize = useLocalize();
   return (
@@ -66,7 +72,7 @@ function IgnoredList({ ignored }: t.PreviewIgnoredListProps) {
                 : formatSegments(item.segments)}
             </code>
             <span className="text-(--cui-color-text-muted)">
-              {localize(PREVIEW_IGNORE_REASON_KEYS[item.reason], { code: item.code ?? '' })}
+              {localize(reasonKey(item), { code: item.code ?? '' })}
             </span>
           </li>
         ))}
@@ -77,7 +83,8 @@ function IgnoredList({ ignored }: t.PreviewIgnoredListProps) {
 
 function LayerRow({ layer, label }: t.PreviewLayerRowProps) {
   const localize = useLocalize();
-  const settings = countDocumentOverrides(layer.overrides);
+  const features = useConfigFeatures();
+  const settings = countDocumentOverrides(layer.overrides, features);
   const hidden = layer.tombstones.length;
   const details = [
     !isBasePrincipal(layer) && localize('com_scope_priority', { priority: layer.priority }),

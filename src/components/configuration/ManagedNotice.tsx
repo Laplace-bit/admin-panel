@@ -18,10 +18,11 @@ export function ManagedNotice({
   onRemoveOverride,
 }: t.ManagedNoticeProps) {
   const localize = useLocalize();
-  const text =
-    kind === 'startup'
-      ? localize('com_config_startup_only_field', { count })
-      : localize('com_config_yaml_managed_field');
+  const text = {
+    startup: localize('com_config_startup_only_field', { count }),
+    baseOnly: localize('com_config_base_only_field', { count }),
+    yaml: localize('com_config_yaml_managed_field'),
+  }[kind];
   return (
     <div className="mb-2 flex flex-col gap-2">
       <InfoBanner text={text} dismissible={false} />

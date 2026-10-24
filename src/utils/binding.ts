@@ -10,6 +10,7 @@ import {
 } from './format';
 import { getEntryKey, diffOverride, entriesByKey } from './collections';
 import { toSecretPreviewKey, isEnvReference } from './secrets';
+import { AZURE_GROUPS_PATH } from '@/constants';
 
 /** The secrets an MCP server stores, by the object that holds each (`apiKey.key`, `oauth.client_secret`). */
 const MCP_SECRETS: readonly t.McpSecretKey[] = [
@@ -74,6 +75,9 @@ const USER_CREDENTIAL_PLACEHOLDER =
 const USER_PROVIDED = 'user_provided';
 const REENTRY_CODE = 'secret_reentry_required';
 const CUSTOM_ENDPOINTS = 'endpoints.custom';
+
+/** Where an Azure group sends its key: its own base URL, or its instance's Azure host. */
+const AZURE_BINDING_KEYS = ['baseURL', 'instanceName'] as const;
 
 function text(value: t.ConfigValue): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -216,6 +220,30 @@ function changedEndpointFields(before: t.ConfigValue, after: t.ConfigValue): str
   return [
     ...new Set(changed.map((field) => (field.startsWith('dropParams.') ? 'dropParams' : field))),
   ];
+}
+
+/** An Azure group's destination setting as its client reads it: blank text is unset. */
+function azureDestination(value: t.ConfigValue): string | undefined {
+  const raw = text(value);
+  return raw === undefined || raw.trim() === '' ? undefined : normalizeUrl(raw, true);
+}
+
+/**
+ * The settings of an Azure group that decide where its key is sent
+ * (`baseURL`, `instanceName`) and differ between two definitions of it.
+ * LibreChat also compares deployment names a base URL takes its host from,
+ * and destination options in `addParams`; it reports those itself.
+ */
+function changedAzureFields(before: t.ConfigValue, after: t.ConfigValue): string[] {
+  const was = asConfigRecord(before);
+  const now = asConfigRecord(after);
+  return AZURE_BINDING_KEYS.filter(
+    (key) => azureDestination(was[key]) !== azureDestination(now[key]),
+  );
+}
+
+function groupsByName(root: t.ConfigValue): Map<string, t.ConfigValue> {
+  return entriesByKey(getValueAtPath(root, AZURE_GROUPS_PATH), 'group');
 }
 
 /** `override` over `base` as the config merge layers them: objects merge, anything else replaces. */
@@ -412,6 +440,34 @@ function endpointReentryIssues(input: t.CredentialBindingInput): t.ConfigIssue[]
 }
 
 /**
+ * Azure groups whose stored key the save keeps (the group omits it) while
+ * moving its instance or base URL (`secretRebinding`): LibreChat refuses
+ * that write until the key is entered again, comparing each group over the
+ * group of its name beneath.
+ */
+function azureReentryIssues(input: t.CredentialBindingInput): t.ConfigIssue[] {
+  const after = getValueAtPath(input.storedAfter, AZURE_GROUPS_PATH);
+  if (!Array.isArray(after)) return [];
+  const stored = groupsByName(input.stored);
+  const lower = groupsByName(input.lower);
+  return after.flatMap((entry, index): t.ConfigIssue[] => {
+    const name = getEntryKey(entry, 'group');
+    if (name === undefined || !isConfigRecord(entry) || entry.apiKey !== undefined) return [];
+    const origin = stored.get(name);
+    if (!keepsHidden(origin, 'apiKey')) return [];
+    const below = lower.get(name);
+    const changed = changedAzureFields(layer(below, origin), layer(below, entry));
+    if (changed.length === 0) return [];
+    const base = `${AZURE_GROUPS_PATH}.${index}`;
+    const issue = reentryIssue(
+      `${base}.apiKey`,
+      changed.map((field) => `${base}.${field}`),
+    );
+    return [{ ...issue, entryIdentity: name, entryPath: 'apiKey' }];
+  });
+}
+
+/**
  * OCR and speech keys the target stores while the save changes the URL or
  * instance beside them (`secretRebinding`): LibreChat refuses that write
  * until the key is entered again (`CONFIG_SECRET_REENTRY_REQUIRED`).
@@ -452,6 +508,7 @@ export function findSecretReentryIssues(
     ...(features.recordSecrets ? mcpReentryIssues(input) : []),
     ...(features.webSearchStoredKeys ? webSearchReentryIssues(input) : []),
     ...(features.secretRebinding ? endpointReentryIssues(input) : []),
+    ...(features.secretRebinding ? azureReentryIssues(input) : []),
     ...(features.secretRebinding ? scalarReentryIssues(input) : []),
   ];
 }
@@ -550,6 +607,45 @@ export function findDroppedCredentials(
     return [{ path: CUSTOM_ENDPOINTS, entry: name, secret: 'apiKey', moved }];
   });
   return [...servers, ...endpoints];
+}
+
+/** The Azure groups whose inherited key the target's overrides (`own`) drop, by name, with the settings that moved it. */
+function droppedGroupKeys(own: t.ConfigRecord, lower: t.ConfigRecord): Map<string, string[]> {
+  const below = groupsByName(lower);
+  return new Map(
+    [...groupsByName(own)].flatMap(([name, entry]): Array<[string, string[]]> => {
+      const moved = findDroppedGroupKey(below.get(name), entry);
+      return moved.length > 0 ? [[name, moved]] : [];
+    }),
+  );
+}
+
+/**
+ * Azure groups whose inherited key a save stops LibreChat from sending: the
+ * target moves the group's instance or base URL without entering a key
+ * (`secretRebinding`). Each is a key to enter, since no save restates one.
+ */
+function groupRebindingWarnings(input: t.CredentialBindingInput): t.ConfigWarning[] {
+  const before = droppedGroupKeys(input.stored, input.lower);
+  return [...droppedGroupKeys(input.storedAfter, input.lower)]
+    .filter(([name]) => !before.has(name))
+    .map(([name, moved]) => ({
+      path: AZURE_GROUPS_PATH,
+      entryIdentity: name,
+      warning: 'secretRebindingEnter',
+      keys: moved,
+    }));
+}
+
+/**
+ * The settings by which an Azure group moves the key the group of its name
+ * beneath holds (`below`) without entering one (`secretRebinding`):
+ * LibreChat drops that key at merge.
+ */
+export function findDroppedGroupKey(below: t.ConfigValue, own: t.ConfigValue): string[] {
+  if (!isConfigRecord(below) || !isConfigRecord(own)) return [];
+  if (!holdsCredential(below, 'apiKey') || setsCredential(own, 'apiKey')) return [];
+  return changedAzureFields(below, layer(below, own));
 }
 
 /**
@@ -765,7 +861,7 @@ export function findRebindingWarnings(
   const records = findDroppedCredentials(input.storedAfter, input.lower)
     .filter((dropped) => !before.has(credentialKey(dropped)))
     .map((dropped) => rebindingWarning(dropped, input.lower));
-  return [...records, ...settings];
+  return [...records, ...groupRebindingWarnings(input), ...settings];
 }
 
 /**

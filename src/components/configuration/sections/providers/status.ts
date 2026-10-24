@@ -1,16 +1,28 @@
+import { EModelEndpoint } from 'librechat-data-provider';
 import type * as t from '@/types';
-import { PROVIDER_CREDENTIALS_KEYS, CATALOG_ENDPOINT_REASON_KEYS } from '@/constants';
+import {
+  editsAzureGroups,
+  BUNDLED_CONFIG_FEATURES,
+  PROVIDER_CREDENTIALS_KEYS,
+  AZURE_GROUP_CREDENTIALS_KEY,
+  CATALOG_ENDPOINT_REASON_KEYS,
+} from '@/constants';
 
 /**
  * A provider's runtime status from `/api/endpoints` (AP-5): served (with the
  * server's credentials, or each user's), not enabled (left out of the list),
- * or unknown while the list is missing.
+ * or unknown while the list is missing. Where the panel edits Azure groups
+ * (`editsAzureGroups`), their keys can be stored here too.
  */
 export function providerStatus(
   provider: string,
   endpoints: t.EndpointStatusMap | undefined,
+  features: t.ConfigFeatures = BUNDLED_CONFIG_FEATURES,
 ): t.ProviderStatusInfo {
-  const credentialsKey = PROVIDER_CREDENTIALS_KEYS[provider];
+  const credentialsKey =
+    provider === EModelEndpoint.azureOpenAI && editsAzureGroups(features)
+      ? AZURE_GROUP_CREDENTIALS_KEY
+      : PROVIDER_CREDENTIALS_KEYS[provider];
   if (!endpoints) return { kind: 'unknown', credentialsKey };
   const entry = endpoints[provider];
   if (!entry) return { kind: 'disabled', credentialsKey };

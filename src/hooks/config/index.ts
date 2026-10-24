@@ -24,3 +24,4 @@ export * from './scope';
 export * from './sections';
 export * from './system';
 export * from './tabs';
+export * from './azure';

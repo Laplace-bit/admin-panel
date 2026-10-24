@@ -10,6 +10,8 @@ import {
   findEntryIndex,
   getKeyedCollection,
   overriddenEntryKeys,
+  mergesByKey,
+  mergedListPaths,
   resolveShadowedBy,
   flattenObject,
   isConfigRecord,
@@ -418,8 +420,13 @@ function withRemovedSecrets(
   return rows;
 }
 
-/** Collections whose entries profiles override by name (an MCP server, a custom endpoint). */
-const NAMED_ENTRY_COLLECTIONS: ReadonlySet<string> = new Set(['mcpServers', 'endpoints.custom']);
+/** The lists profiles override entries of by name where no server says which it merges: the custom endpoints. */
+const DEFAULT_MERGED_LISTS: ReadonlySet<string> = new Set(['endpoints.custom']);
+
+/** Whether profiles override the entries of `collection` by name: MCP servers, and each list LibreChat merges entry by entry. */
+function isNamedEntryCollection(collection: string, ctx: t.OverrideNoteContext): boolean {
+  return collection === 'mcpServers' || (ctx.mergedLists ?? DEFAULT_MERGED_LISTS).has(collection);
+}
 
 const NO_PROFILES: readonly t.ConfigScope[] = [];
 
@@ -438,12 +445,13 @@ function hasEntry(tree: t.ConfigValue, collection: string, name: string): boolea
   return findEntryIndex(value, getKeyedCollection(collection)?.key ?? 'name', name) >= 0;
 }
 
-/** A note on the profiles a change affects, when it affects any. */
+/** A note on the profiles a change to an entry of `collection` affects, when it affects any. */
 function noteOf(
   change: t.EntryOverrideChange,
   overrides: t.EntryOverride[],
+  collection: string,
 ): t.EntryOverrideNote[] {
-  return overrides.length > 0 ? [{ change, overrides }] : [];
+  return overrides.length > 0 ? [{ change, overrides, collection }] : [];
 }
 
 /**
@@ -458,7 +466,7 @@ function entryRowNotes(
   ctx: t.OverrideNoteContext,
 ): t.EntryOverrideNote[] {
   const { collectionPath: collection, entryIdentity: identity, previousIdentity } = item;
-  if (!collection || !NAMED_ENTRY_COLLECTIONS.has(collection) || item.entryPath !== item.path) {
+  if (!collection || !isNamedEntryCollection(collection, ctx) || item.entryPath !== item.path) {
     return [];
   }
   const lookup = (name: string) =>
@@ -467,13 +475,14 @@ function entryRowNotes(
   const took = (name: string) =>
     hasEntry(ctx.before, collection, name)
       ? []
-      : noteOf({ kind: 'took', name, sendsKeys: ctx.sendsKeys }, lookup(name));
+      : noteOf({ kind: 'took', name, sendsKeys: ctx.sendsKeys }, lookup(name), collection);
   if (item.kind === 'renamed' && previousIdentity !== undefined && identity !== undefined) {
     const taken = ctx.written.has(entryKey(collection, previousIdentity));
     return [
       ...noteOf(
         { kind: 'renamed', name: previousIdentity, next: identity, taken },
         lookup(previousIdentity),
+        collection,
       ),
       ...took(identity),
     ];
@@ -483,7 +492,7 @@ function entryRowNotes(
   if (item.kind !== 'removed') return [];
   /** A hide of a removed entry hides nothing once it is gone. */
   const left = lookup(identity).filter((override) => override.overrides);
-  return noteOf({ kind: 'removed', name: identity }, left);
+  return noteOf({ kind: 'removed', name: identity }, left, collection);
 }
 
 /**
@@ -546,7 +555,10 @@ function withOverrideNotes(
     const unbound = findUnboundOverrides(move.moves, found);
     const at = unbound.length > 0 ? keyMoveRow(rows, move) : -1;
     if (at < 0) continue;
-    notes[at] = [...notes[at], ...noteOf({ kind: 'moved', name: move.identity }, unbound)];
+    notes[at] = [
+      ...notes[at],
+      ...noteOf({ kind: 'moved', name: move.identity }, unbound, move.collection),
+    ];
   }
   return rows.map((item, i) => (notes[i].length > 0 ? { ...item, overrideNotes: notes[i] } : item));
 }
@@ -632,8 +644,10 @@ export function useChangeReview({
       fields: schemaTree,
       schemaPaths: schemaPathSet,
       renames: edits.renameEdits,
+      mergedLists: mergedListPaths(features),
     }),
     [
+      features,
       savePlan,
       baseline,
       isScope,
@@ -754,6 +768,7 @@ export function useChangeReview({
           sendsKeys: !features.secretRebinding,
           before: baseline,
           keyedTombstones: features.keyedTombstones,
+          mergedLists: mergedListPaths(features),
         });
     return rows.map((item) => {
       const found = drift.get(item.path);
@@ -1170,6 +1185,7 @@ export function useBaseOverrides({
           sendsKeys: !features.secretRebinding,
           before: configValues,
           keyedTombstones: features.keyedTombstones,
+          mergedLists: mergedListPaths(features),
         },
       ),
       { localize, fields: schemaTree, tree: overrides },
@@ -1181,10 +1197,15 @@ export function useBaseOverrides({
      */
     const units = new Set<string>();
     let entryCount = 0;
+    /** A list the server doesn't merge by entry here (Azure groups before it derives them) is one value. */
+    const countsByEntry = (collection: t.KeyedCollection) =>
+      collection.merge !== 'byKey' || mergesByKey(collection, features);
     for (const path of paths) {
-      if (!getKeyedCollection(path)) units.add(overrideCountUnit(path));
+      const collection = getKeyedCollection(path);
+      if (!collection || !countsByEntry(collection)) units.add(overrideCountUnit(path));
     }
     for (const collection of KEYED_COLLECTIONS.values()) {
+      if (!countsByEntry(collection)) continue;
       const keys = overriddenEntryKeys(
         collection,
         getValueAtPath(overrides, collection.path),

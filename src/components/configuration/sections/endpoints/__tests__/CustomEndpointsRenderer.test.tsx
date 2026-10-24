@@ -239,6 +239,38 @@ describe('CustomEndpointsRenderer', () => {
     expect(screen.getByDisplayValue('com_config_secret_hidden_yaml')).toBeInTheDocument();
   });
 
+  it("offers no revert or removal of a key Base stores over a hidden librechat.yaml key, which it can't restate", () => {
+    const withPreview = (root: t.ConfigRecord | undefined, preview: string): t.ConfigRecord => {
+      const endpoints = isConfigRecord(root?.endpoints) ? root.endpoints : {};
+      const list = Array.isArray(endpoints.custom) ? endpoints.custom : [];
+      const custom = list.map((entry) =>
+        isConfigRecord(entry) && entry.name === 'Claude'
+          ? { ...entry, apiKeyPreview: preview }
+          : entry,
+      );
+      return { ...root, endpoints: { ...endpoints, custom } };
+    };
+    const data = baseConfigFixture({
+      dbOverrides: { endpoints: { custom: [{ name: 'Claude', apiKeyPreview: '...5555' }] } },
+    });
+    const layers = baseLayersFixture({
+      ...data,
+      config: withPreview(data.config, '...5555'),
+      yamlConfig: withPreview(data.yamlConfig, '********'),
+    });
+    render(
+      <Harness
+        layers={layers}
+        contract={createServerContract({ yamlSecretPreview: true, recordSecrets: true })}
+      />,
+    );
+    const drawer = openRow('Claude');
+    expect(within(drawer).getByDisplayValue('...5555')).toBeInTheDocument();
+    expect(within(drawer).queryByText('com_config_ce_revert')).toBeNull();
+    expect(within(drawer).queryByText('com_config_ctl_secret_remove')).toBeNull();
+    expect(within(drawer).getByText('com_config_secret_replace')).toBeInTheDocument();
+  });
+
   it('offers to send an inherited ${VAR} key to the base URL an edit moves it to (secretRebinding)', () => {
     const withGpt = (root: t.ConfigRecord, gpt: t.ConfigRecord): t.ConfigRecord => {
       const endpoints = isConfigRecord(root.endpoints) ? root.endpoints : {};

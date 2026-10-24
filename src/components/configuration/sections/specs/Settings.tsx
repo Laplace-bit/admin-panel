@@ -7,7 +7,9 @@ import {
   cn,
   isRowVisible,
   stringItems,
+  isSetByLayer,
   isConfigRecord,
+  deriveSpecControl,
   selectsHiddenEndpoint,
   foldsEndpointReferences,
 } from '@/utils';
@@ -90,11 +92,20 @@ function modeLayerFormatter(
 
 /**
  * Whether the endpoint menu shows: `interface.modelSelect` when set, else
- * what LibreChat derives with specs configured (on only with added endpoints).
+ * what LibreChat derives with specs configured (on only with added
+ * endpoints). Before `specInterfaceRederive`, LibreChat derived it once, from
+ * librechat.yaml's specs, so the value it serves (`value`) stands; once it
+ * derives it again from the specs served (`derives`), a value no layer sets
+ * follows the specs shown here.
  */
-function modelSelectOn(value: t.ConfigValue, specCount: number, added: number): boolean {
-  if (typeof value === 'boolean') return value;
-  return specCount > 0 ? added > 0 : true;
+function modelSelectOn(
+  value: t.ConfigValue,
+  specCount: number,
+  added: number,
+  derives: boolean,
+): boolean {
+  if (typeof value === 'boolean' && !derives) return value;
+  return deriveSpecControl('modelSelect', specCount, added);
 }
 
 /** "Users will see: 3 specs, plus OpenAI and Agents in the endpoint menu. 1 more is hidden." */
@@ -181,8 +192,10 @@ export function SpecsSettings({
   showConfiguredOnly,
 }: t.SpecsSettingsProps) {
   const localize = useLocalize();
+  const contract = useConfigContract();
   /** A server that folds endpoint references matches `Ollama` to `ollama`: neither spelling "never matches". */
-  const foldsNames = foldsEndpointReferences(useConfigContract());
+  const foldsNames = foldsEndpointReferences(contract);
+  const { specInterfaceRederive } = contract.features;
   const navigate = useNavigate();
   const scope = useValuesScope();
   const rowFilter = useContext(RowFilterContext);
@@ -199,10 +212,17 @@ export function SpecsSettings({
   const servedAdded = added.filter((name) => !hiddenIds.has(normalizeEndpointName(name)));
   /**
    * The endpoint menu: LibreChat derives an unset `modelSelect` from the configured specs when it
-   * loads, and a profile's hides don't change that. A server that derives it again after the
-   * merge (`specInterfaceRederive`) sets it in the values read here.
+   * loads, and a profile's hides don't change that, unless the server derives it again after the
+   * merge (`specInterfaceRederive`), from the specs and added endpoints the members are served.
    */
-  const menuOn = modelSelectOn(getValue(MODEL_SELECT, undefined), items.length, added.length);
+  const modelSelectState = useFieldState(MODEL_SELECT);
+  const derivesMenu = specInterfaceRederive && !isSetByLayer(modelSelectState);
+  const menuOn = modelSelectOn(
+    getValue(MODEL_SELECT, undefined),
+    derivesMenu ? servedItems.length : items.length,
+    derivesMenu ? servedAdded.length : added.length,
+    derivesMenu,
+  );
   const canEdit = !disabled && permissions?.canEdit !== false;
   const isShown = (path: string) =>
     isRowVisible(rowFilter, path) &&

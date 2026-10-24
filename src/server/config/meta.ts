@@ -26,6 +26,7 @@ const rulesSchema = z.object({
   arrayMergeKeys: lenient(nameMap),
   atomicMergePaths: lenient(names),
   overrideKeyMap: lenient(nameMap),
+  derivedPaths: lenient(names),
   secretFields: lenient(
     z.array(z.object({ path: text, previewPath: text, allowEnvPlaceholder: z.boolean() })),
   ),

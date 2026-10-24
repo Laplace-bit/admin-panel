@@ -57,6 +57,7 @@ function principalKey(principalType: PrincipalType, principalId: string): string
  */
 function profileOverrides(
   config: t.ScopeConfigDoc,
+  features?: t.ConfigFeatures,
 ): Pick<
   t.ConfigScope,
   'overridePaths' | 'overrideEntries' | 'overrideEntryPaths' | 'storedSecrets'
@@ -66,7 +67,7 @@ function profileOverrides(
   const normalized = normalizeAppServiceKeys(visible);
   return {
     overridePaths: collectOverridePaths(normalized),
-    ...scopeOverrideEntries(normalized),
+    ...scopeOverrideEntries(normalized, features),
     storedSecrets: findStoredSecrets(normalizeAppServiceKeys(overrides)),
   };
 }
@@ -74,6 +75,7 @@ function profileOverrides(
 function apiConfigToScope(
   config: t.ScopeConfigDoc,
   directory?: ReadonlyMap<string, t.PrincipalDetails>,
+  features?: t.ConfigFeatures,
 ): t.ConfigScope {
   const details = directory?.get(principalKey(config.principalType, config.principalId));
   return {
@@ -85,7 +87,7 @@ function apiConfigToScope(
     ...(details?.memberCount != null && { memberCount: details.memberCount }),
     priority: config.priority,
     isActive: config.isActive,
-    ...profileOverrides(config),
+    ...profileOverrides(config, features),
     tombstones: config.tombstones ?? [],
   };
 }
@@ -195,14 +197,19 @@ export async function resolvePrincipals(
  * the user's email, member counts, and the paths it overrides or hides.
  */
 export const getAvailableScopesFn = createServerFn({ method: 'GET' }).handler(async () => {
-  const configRes = await apiFetch('/api/admin/config');
+  const [configRes, contract] = await Promise.all([
+    apiFetch('/api/admin/config'),
+    readConfigContract(),
+  ]);
   if (!configRes.ok) {
     throw new Error(`Failed to fetch scopes: ${configRes.status}`);
   }
   const { configs } = (await configRes.json()) as { configs: t.ScopeConfigDoc[] };
   const profiles = configs.filter((c) => c.principalId !== BASE_CONFIG_PRINCIPAL_ID);
   const directory = await resolvePrincipals(profiles);
-  const scopes: t.ConfigScope[] = profiles.map((c) => apiConfigToScope(c, directory));
+  const scopes: t.ConfigScope[] = profiles.map((c) =>
+    apiConfigToScope(c, directory, contract.features),
+  );
   return { scopes };
 });
 
@@ -380,7 +387,7 @@ export const createScopeFn = createServerFn({ method: 'POST' })
       : await createScopeLegacy(url, data, principalId, priority);
     return {
       scope: {
-        ...apiConfigToScope(config),
+        ...apiConfigToScope(config, undefined, features),
         name: data.name,
         ...(data.email && { email: data.email }),
         ...(data.principalType === PrincipalType.GROUP && { memberCount: 0 }),

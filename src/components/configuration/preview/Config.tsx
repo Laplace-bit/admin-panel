@@ -1,8 +1,8 @@
 import { useId, useMemo, useState } from 'react';
 import type * as t from '@/types';
-import { formatPreviewYaml, previewSections } from './sections';
+import { formatPreviewYaml, previewSections, mergesUnappliedSettings } from './sections';
+import { useLocalize, useConfigFeatures } from '@/hooks';
 import { SelectField } from '../fields/SelectField';
-import { useLocalize } from '@/hooks';
 
 /** Option value of "Every section"; never a config key. */
 const ALL_SECTIONS = '\u0000all';
@@ -11,9 +11,13 @@ const ALL_SECTIONS = '\u0000all';
  * The previewed config in librechat.yaml form, every section or one, with
  * the sections an admin override changes marked in the picker. Secrets are
  * shown as the server returns them (withheld, or as their masked preview).
+ * Where Azure groups or Vertex AI read as merged but LibreChat doesn't apply
+ * them yet (`mergesUnappliedSettings`), a note says members get
+ * librechat.yaml's.
  */
 export function PreviewConfig({ preview }: t.PreviewConfigProps) {
   const localize = useLocalize();
+  const features = useConfigFeatures();
   const selectId = useId();
   const [section, setSection] = useState(ALL_SECTIONS);
   const sections = useMemo(() => previewSections(preview, localize), [preview, localize]);
@@ -49,6 +53,11 @@ export function PreviewConfig({ preview }: t.PreviewConfigProps) {
           <p className="m-0 text-xs text-(--cui-color-text-muted)">
             {localize('com_config_preview_result_changed', { count: changedCount })}
           </p>
+          {mergesUnappliedSettings(preview, features) && (
+            <p className="m-0 text-xs text-(--settings-warn-fg)" data-preview-unapplied>
+              {localize('com_config_preview_result_rederive_off')}
+            </p>
+          )}
         </div>
         <label htmlFor={selectId} className="sr-only">
           {localize('com_config_preview_section_label')}

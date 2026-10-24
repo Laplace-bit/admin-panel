@@ -1,13 +1,28 @@
 import type * as t from '@/types';
-import { BASE_PRINCIPAL, BUNDLED_WRITE_RULES, DEDICATED_CONFIG_SECTIONS } from '@/constants';
+import {
+  BASE_PRINCIPAL,
+  KEYED_COLLECTIONS,
+  BUNDLED_WRITE_RULES,
+  DEDICATED_CONFIG_SECTIONS,
+} from '@/constants';
 import { deepSerializeKVPairs, getValueAtPath, isConfigRecord } from './format';
+import { withDerivedSpecControls, leavesSet } from './specs';
 import { collectLeafPaths, createPathIndex } from './paths';
 import { parseKeyedPath, removeKeyedValue } from './keyed';
 import { withoutUnservedEndpointUses } from './dependents';
+import { withoutShadowedSecret } from './collections';
 import { mapSecretPreviewPaths } from './secrets';
 
-/** Arrays LibreChat merges item by item on this key instead of replacing (`ARRAY_MERGE_KEYS`). */
-export const ARRAY_MERGE_KEYS: Readonly<Record<string, string>> = { 'endpoints.custom': 'name' };
+/**
+ * Arrays LibreChat merges item by item on their collection's key instead of
+ * replacing (`ARRAY_MERGE_KEYS`), by path. Azure groups merge by `group` only
+ * on a server with `azureGroupMergeKey`; before it, the panel never writes
+ * them and keeps Base's (they are librechat.yaml-managed), so merging them
+ * here changes nothing.
+ */
+const MERGED_COLLECTIONS: ReadonlyMap<string, t.KeyedCollection> = new Map(
+  [...KEYED_COLLECTIONS].filter(([, collection]) => collection.merge === 'byKey'),
+);
 
 /** Objects an override replaces whole instead of merging into (`ATOMIC_MERGE_PATHS`). */
 const ATOMIC_MERGE_PATHS: ReadonlySet<string> = new Set(['interface.theme']);
@@ -19,9 +34,10 @@ const INDEX_SEGMENT = /^\d+$/;
 function mergeArrayByKey(
   target: t.ConfigValue[],
   source: t.ConfigValue[],
-  keyField: string,
+  collection: t.KeyedCollection,
   path: string,
 ): t.ConfigValue[] {
+  const keyField = collection.key;
   const sourceByKey = new Map<t.ConfigValue, t.ConfigRecord>();
   for (const item of source) {
     if (isConfigRecord(item) && item[keyField] != null) sourceByKey.set(item[keyField], item);
@@ -32,7 +48,7 @@ function mergeArrayByKey(
     const override = item[keyField] != null ? sourceByKey.get(item[keyField]) : undefined;
     if (!override) return item;
     seen.add(item[keyField]);
-    return mergeRecords(item, override, path);
+    return mergeRecords(withoutShadowedSecret(item, override, collection), override, path);
   });
   for (const [key, item] of sourceByKey) {
     if (!seen.has(key)) result.push(item);
@@ -51,23 +67,15 @@ function mergeRecords(
     const childPath = path ? `${path}.${key}` : key;
     const sourceValue = source[key];
     const targetValue = result[key];
+    const merged = MERGED_COLLECTIONS.get(childPath);
     if (
       isConfigRecord(sourceValue) &&
       isConfigRecord(targetValue) &&
       !ATOMIC_MERGE_PATHS.has(childPath)
     ) {
       result[key] = mergeRecords(targetValue, sourceValue, childPath);
-    } else if (
-      Array.isArray(sourceValue) &&
-      Array.isArray(targetValue) &&
-      Object.hasOwn(ARRAY_MERGE_KEYS, childPath)
-    ) {
-      result[key] = mergeArrayByKey(
-        targetValue,
-        sourceValue,
-        ARRAY_MERGE_KEYS[childPath],
-        childPath,
-      );
+    } else if (Array.isArray(sourceValue) && Array.isArray(targetValue) && merged) {
+      result[key] = mergeArrayByKey(targetValue, sourceValue, merged, childPath);
     } else {
       result[key] = sourceValue;
     }
@@ -263,7 +271,26 @@ function withoutRemovalsInside(root: t.ConfigRecord, tombstones: Iterable<string
   return result;
 }
 
-/** `layers` with the open profile on top: its overrides merged over Base, minus its tombstones (EV-5). */
+/**
+ * `config` as LibreChat serves it once its merge removed custom endpoints one
+ * of the `defined` layers (librechat.yaml and each merged layer's own
+ * overrides) defines (`withoutUnservedEndpointUses`).
+ */
+function servedOf(config: t.ConfigRecord, defined: readonly t.ConfigValue[]): t.ConfigRecord {
+  return withoutUnservedEndpointUses(
+    config,
+    defined.map((layer) => getValueAtPath(layer, 'endpoints.custom')),
+  );
+}
+
+/**
+ * `layers` with the open profile on top: its overrides merged over Base,
+ * minus its tombstones (EV-5). With `specInterfaceRederive`, the interface
+ * controls model specs decide that no layer leaves set follow the specs the
+ * profile's members get, as LibreChat derives them after the merge: with
+ * `keyedTombstones`, without the specs that select an endpoint the profile
+ * hides.
+ */
 export function withScopeLayer(
   layers: t.ValueLayers,
   scope: Pick<t.ScopeLayer, 'principalType' | 'name'>,
@@ -271,7 +298,15 @@ export function withScopeLayer(
   schemaPaths: ReadonlySet<string>,
   rules?: t.ConfigWriteRules,
   keyedTombstones = false,
+  specInterfaceRederive = false,
 ): t.ValueLayers {
+  const merged = mergeScopeLayer(
+    layers.base ?? {},
+    data.overrides,
+    data.tombstones,
+    rules,
+    keyedTombstones,
+  );
   return {
     ...layers,
     scope: {
@@ -284,13 +319,15 @@ export function withScopeLayer(
     beneath: keyedTombstones
       ? withoutRemovalsInside(layers.base ?? {}, data.tombstones)
       : undefined,
-    effective: mergeScopeLayer(
-      layers.base ?? {},
-      data.overrides,
-      data.tombstones,
-      rules,
-      keyedTombstones,
-    ),
+    effective: specInterfaceRederive
+      ? withDerivedSpecControls(
+          merged,
+          (path) => leavesSet(path, layers, data),
+          keyedTombstones
+            ? servedOf(merged, [layers.yamlEffective, layers.baseOverrides, data.overrides])
+            : merged,
+        )
+      : merged,
   };
 }
 
@@ -331,12 +368,7 @@ export function estimateConfigPreview({
     ...(own && scope?.isActive ? [own.overrides] : []),
   ];
   const served = (config: t.ConfigRecord): t.ConfigRecord =>
-    keyedTombstones
-      ? withoutUnservedEndpointUses(
-          config,
-          defined.map((layer) => getValueAtPath(layer, 'endpoints.custom')),
-        )
-      : config;
+    keyedTombstones ? servedOf(config, defined) : config;
   if (!scope || !own) return { source: 'panel', yaml, layers, resolved: served(base.config) };
   const layer: t.PreviewLayer = {
     principalType: scope.principalType,

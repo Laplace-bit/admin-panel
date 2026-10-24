@@ -235,6 +235,20 @@ export interface BaseConfigData {
 }
 
 /**
+ * What the panel reads in place of values the server derives from
+ * librechat.yaml and the profiles above it (`normalizeAppServiceKeys`), so
+ * edits are diffed against what is configured rather than what it resolves to.
+ */
+export interface ConfiguredValues {
+  /** The config as written: librechat.yaml, with the layers the config holds merged over it. */
+  written: ConfigRecord;
+  /** The Azure groups as written, not the `groupMap` they resolve to (`editsAzureGroups`). */
+  azureGroups: boolean;
+  /** Custom endpoints' `customParams` as written, not expanded (`customParamsExpansion`). */
+  compactParams: boolean;
+}
+
+/**
  * An admin config document as the API returns it, including its tombstones
  * and (`expectedRevision`) its revision, `<id>:<configVersion>`.
  */

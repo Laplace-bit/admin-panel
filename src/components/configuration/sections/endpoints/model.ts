@@ -176,3 +176,24 @@ export function isUnserved(issues: readonly t.EndpointIssue[]): boolean {
 export function hasBlockingIssue(issues: readonly t.EndpointIssue[]): boolean {
   return issues.some((issue) => issue.severity === 'error');
 }
+
+const OPENROUTER = 'openrouter';
+
+function namesOpenRouter(value: t.ConfigValue): boolean {
+  return typeof value === 'string' && value.toLowerCase().includes(OPENROUTER);
+}
+
+/**
+ * Whether LibreChat adds OpenRouter's parameters to an endpoint
+ * (`customParamsExpansion`): one named for OpenRouter or pointing at it,
+ * unless its parameters take their defaults from another provider. It then
+ * uses OpenRouter's parameter set, with prompt caching on unless the
+ * endpoint defines it.
+ */
+export function addsOpenRouterDefaults(entry: t.ConfigValue): boolean {
+  if (!isConfigRecord(entry)) return false;
+  if (!namesOpenRouter(entry.name) && !namesOpenRouter(entry.baseURL)) return false;
+  const params = isConfigRecord(entry.customParams) ? entry.customParams : {};
+  const chosen = params.defaultParamsEndpoint;
+  return !hasText(chosen) || chosen === 'custom' || chosen === OPENROUTER;
+}

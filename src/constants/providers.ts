@@ -45,6 +45,12 @@ export const PROVIDER_CREDENTIALS_KEYS: Readonly<Record<string, string>> = {
   [EModelEndpoint.bedrock]: 'com_config_providers_creds_bedrock',
 };
 
+/**
+ * Where Azure OpenAI's credentials come from where the panel edits its groups
+ * (`editsAzureGroups`): a group added in the admin panel stores its own key.
+ */
+export const AZURE_GROUP_CREDENTIALS_KEY = 'com_config_providers_creds_azureOpenAI_groups';
+
 /** The step budget LibreChat gives an agent run when `endpoints.agents.recursionLimit` is unset. */
 export const DEFAULT_RECURSION_LIMIT = 50;
 
@@ -57,3 +63,29 @@ export const RUNTIME_NUMBER_LIMITS: Readonly<Record<string, t.FieldConstraints>>
   'endpoints.agents.recursionLimit': { min: 1, int: true, step: 1 },
   'endpoints.agents.maxRecursionLimit': { min: 1, int: true, step: 1 },
 };
+
+/**
+ * Sections of the Azure group editor, each with the group settings it places
+ * in order. A setting none places (a newer schema's) is listed under
+ * "Other settings", so every schema field stays editable.
+ */
+export const AZURE_GROUP_SECTIONS: readonly t.AzureGroupSectionDef[] = [
+  {
+    id: 'connection',
+    labelKey: 'com_config_providers_azure_section_connection',
+    descriptionKey: 'com_config_providers_azure_section_connection_desc',
+    fields: ['apiKey', 'serverless', 'instanceName', 'baseURL', 'deploymentName', 'version'],
+  },
+  {
+    id: 'models',
+    labelKey: 'com_config_providers_azure_section_models',
+    descriptionKey: 'com_config_providers_azure_section_models_desc',
+    fields: ['models', 'assistants'],
+  },
+  {
+    id: 'request',
+    labelKey: 'com_config_providers_azure_section_request',
+    descriptionKey: 'com_config_providers_azure_section_request_desc',
+    fields: ['additionalHeaders', 'addParams', 'dropParams'],
+  },
+];

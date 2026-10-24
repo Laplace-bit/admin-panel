@@ -4,6 +4,7 @@ import {
   getWriteRules,
   resolveWriteRules,
   getReadOnlyReason,
+  isBaseOnlyPath,
   isYamlManagedPath,
   isStartupOnlyPath,
   BUNDLED_WRITE_RULES,
@@ -13,6 +14,7 @@ import {
   BUNDLED_CONFIG_RULES,
   BUNDLED_CONFIG_LIMITS,
   BUNDLED_CONFIG_CONTRACT,
+  BUNDLED_CONFIG_FEATURES,
   READ_ONLY_CONFIG_SECTIONS,
 } from '@/constants';
 import { resolveConfigContract, foldsEndpointReferences } from './contract';
@@ -72,6 +74,33 @@ describe('resolveConfigContract', () => {
       envStatus: false,
     });
     expect(older.limits.catalogModelsTtlMs).toBe(BUNDLED_CONFIG_LIMITS.catalogModelsTtlMs);
+  });
+
+  it('reads the re-derive flags and the derived paths, off and none when left out', () => {
+    const contract = resolveConfigContract({
+      features: {
+        azureGroupMergeKey: true,
+        customParamsExpansion: true,
+        specInterfaceRederive: true,
+        endpointRederive: true,
+      },
+      rules: { derivedPaths: ['endpoints.anthropic.vertexConfig'] },
+    });
+    expect(contract.features).toMatchObject({
+      azureGroupMergeKey: true,
+      customParamsExpansion: true,
+      specInterfaceRederive: true,
+      endpointRederive: true,
+    });
+    expect(contract.rules.derivedPaths).toEqual(['endpoints.anthropic.vertexConfig']);
+    const older = resolveConfigContract({ features: { azureGroupSecrets: true } });
+    expect(older.features).toMatchObject({
+      azureGroupMergeKey: false,
+      customParamsExpansion: false,
+      specInterfaceRederive: false,
+      endpointRederive: false,
+    });
+    expect(older.rules.derivedPaths).toEqual([]);
   });
 
   it('reports versions only when all three are given', () => {
@@ -153,8 +182,9 @@ describe('write rules', () => {
         baseOnlySections: ['filters', 'mcpAppSandbox', 'turnstile'],
         baseOnlyPaths: ['endpoints.agents.pullRequests.provider'],
         deploymentOnlyPaths: DEPLOYMENT_ONLY,
+        derivedPaths: [],
       },
-      false,
+      { ...BUNDLED_CONFIG_FEATURES, preAuthBaseOverrides: false },
     );
     expect(getReadOnlyReason('includedTools', rules)).toBe('yamlOnly');
     expect(getReadOnlyReason('skillDeletion.intervalMs', rules)).toBe('yamlOnly');
@@ -176,6 +206,37 @@ describe('write rules', () => {
     expect(isYamlManagedPath('registration.socialLogins', after)).toBe(false);
     expect(isYamlManagedPath('registration.oauthStateTtlMs', after)).toBe(true);
     expect(isYamlManagedPath('endpoints.anthropic.vertex.region', after)).toBe(true);
+  });
+
+  it('lets the panel edit Azure groups and Vertex AI only where LibreChat derives them again', () => {
+    const groups = 'endpoints.azureOpenAI.groups.0.instanceName';
+    const vertex = 'endpoints.anthropic.vertex.projectId';
+    const inert = getWriteRules(
+      createServerContract({ azureGroupMergeKey: true, azureGroupSecrets: true }),
+    );
+    expect(isYamlManagedPath(groups, inert)).toBe(true);
+    expect(isYamlManagedPath(vertex, inert)).toBe(true);
+    const rederive = getWriteRules(
+      createServerContract(
+        { endpointRederive: true, azureGroupMergeKey: true, azureGroupSecrets: true },
+        {
+          baseOnlyPaths: [
+            'endpoints.anthropic.vertex.serviceKeyFile',
+            'endpoints.anthropic.vertex.region',
+          ],
+          derivedPaths: ['endpoints.anthropic.vertexConfig'],
+        },
+      ),
+    );
+    expect(isYamlManagedPath(groups, rederive)).toBe(false);
+    expect(isYamlManagedPath(vertex, rederive)).toBe(false);
+    expect(isYamlManagedPath('endpoints.anthropic.vertex.region', rederive)).toBe(true);
+    expect(isBaseOnlyPath('endpoints.anthropic.vertex.serviceKeyFile', rederive)).toBe(true);
+    expect(isBaseOnlyPath(vertex, rederive)).toBe(false);
+    expect(isYamlManagedPath('endpoints.anthropic.vertexConfig.models', rederive)).toBe(true);
+    const withoutMergeKey = getWriteRules(createServerContract({ endpointRederive: true }));
+    expect(isYamlManagedPath(groups, withoutMergeKey)).toBe(true);
+    expect(isYamlManagedPath(vertex, withoutMergeKey)).toBe(false);
   });
 
   it('builds the rules once per contract', () => {

@@ -166,19 +166,59 @@ export function stringItems(value: t.ConfigValue): string[] {
     : [];
 }
 
-/** Value at a dot-path, stepping into arrays by index. */
-export function getValueAtPath(root: t.ConfigValue, path: string): t.ConfigValue {
-  let current: t.ConfigValue = root;
-  for (const segment of path.split('.')) {
-    if (Array.isArray(current)) {
-      current = current[Number(segment)];
-    } else if (isConfigRecord(current)) {
-      current = current[segment];
-    } else {
-      return undefined;
-    }
+/**
+ * The value at `segments[index…]` in `current`. Where a record yields nothing
+ * by the segment alone, a key that holds dots (`gpt-4.1`, `us.anthropic.claude`)
+ * is matched whole: a path built by joining keys with dots reads it back.
+ */
+function readSegments(current: t.ConfigValue, segments: string[], index: number): t.ConfigValue {
+  if (index === segments.length) return current;
+  const segment = segments[index];
+  if (Array.isArray(current)) return readSegments(current[Number(segment)], segments, index + 1);
+  if (!isConfigRecord(current)) return undefined;
+  const direct = readSegments(current[segment], segments, index + 1);
+  if (direct !== undefined) return direct;
+  let key = segment;
+  for (let end = index + 1; end < segments.length; end++) {
+    key = `${key}.${segments[end]}`;
+    if (!Object.hasOwn(current, key)) continue;
+    const found = readSegments(current[key], segments, end + 1);
+    if (found !== undefined) return found;
   }
-  return current;
+  return undefined;
+}
+
+/** Value at a dot-path, stepping into arrays by index; a record key holding dots is read whole. */
+export function getValueAtPath(root: t.ConfigValue, path: string): t.ConfigValue {
+  return readSegments(root, path.split('.'), 0);
+}
+
+/** The last segment of the longest key at `start` of `segments` that `record` holds, else `start`. */
+function heldKeyEnd(record: t.ConfigRecord, segments: string[], start: number): number {
+  for (let end = segments.length - 1; end > start; end--) {
+    if (Object.hasOwn(record, segments.slice(start, end + 1).join('.'))) return end;
+  }
+  return start;
+}
+
+/**
+ * The keys a dot-path names in `root`, a record key holding dots (`gpt-4.1`)
+ * kept whole where `root` holds it (the longest such key); past what `root`
+ * holds, the path's own segments.
+ */
+export function splitPathIn(root: t.ConfigValue, path: string): string[] {
+  const segments = path.split('.');
+  const keys: string[] = [];
+  let current = root;
+  for (let start = 0; start < segments.length; start++) {
+    const end = isConfigRecord(current) ? heldKeyEnd(current, segments, start) : start;
+    const key = segments.slice(start, end + 1).join('.');
+    keys.push(key);
+    if (Array.isArray(current)) current = current[Number(key)];
+    else current = isConfigRecord(current) ? current[key] : undefined;
+    start = end;
+  }
+  return keys;
 }
 
 /** Deep equality for config values that ignores object key order. */

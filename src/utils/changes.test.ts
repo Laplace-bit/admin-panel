@@ -9,7 +9,14 @@ import {
   parseIndexedArrayPath,
 } from './changes';
 import { validateEntry, validateSection, validateField } from './validation';
-import { BUNDLED_CONFIG_FEATURES, BUNDLED_CONFIG_LIMITS, BUNDLED_WRITE_RULES } from '@/constants';
+import {
+  getWriteRules,
+  SECRET_PREVIEW_MASK,
+  BUNDLED_WRITE_RULES,
+  BUNDLED_CONFIG_LIMITS,
+  BUNDLED_CONFIG_FEATURES,
+} from '@/constants';
+import { createServerContract } from '@/test/fixtures';
 import { getValueAtPath } from './format';
 
 const yaml: t.ConfigRecord = {
@@ -1351,6 +1358,56 @@ describe('planConfigChanges — keyed tombstones', () => {
     ]);
   });
 
+  describe('a spec list that selects an endpoint the profile hides (specInterfaceRederive)', () => {
+    const derives: t.ConfigFeatures = { ...keyed, specInterfaceRederive: true };
+    const list: t.ConfigValue[] = [
+      { name: 'team', label: 'Team', preset: { endpoint: 'Gateway', model: 'm' } },
+      { name: 'gpt', label: 'GPT', preset: { endpoint: 'GPT', model: 'gpt-4o' } },
+    ];
+    const specs: t.ConfigChange = { op: 'set', path: 'modelSpecs.list', value: list };
+
+    it('names the spec LibreChat refuses, by the endpoint it selects', () => {
+      const plan = planConfigChanges([specs], profile({}, [gatewayHide]), derives);
+      expect(plan.issues).toEqual([
+        expect.objectContaining({
+          path: 'modelSpecs.list.0.preset.endpoint',
+          code: 'spec_endpoint_hidden',
+          params: { endpoint: 'Gateway' },
+          entryIdentity: 'team',
+          entryPath: 'preset.endpoint',
+        }),
+      ]);
+      const hiding = planConfigChanges(
+        [{ op: 'tombstone', path: gatewayHide }, specs],
+        profile(),
+        derives,
+      );
+      expect(hiding.issues.map((issue) => issue.code)).toEqual(['spec_endpoint_hidden']);
+    });
+
+    it('takes the specs along without an issue where the save hides the endpoint alone, or unhides it', () => {
+      const stored: t.ConfigRecord = { modelSpecs: { list } };
+      const hide = planConfigChanges(
+        [{ op: 'tombstone', path: gatewayHide }],
+        profile(stored),
+        derives,
+      );
+      expect(hide.issues).toEqual([]);
+      const shown = planConfigChanges(
+        [{ op: 'untombstone', path: gatewayHide }, specs],
+        profile({}, [gatewayHide]),
+        derives,
+      );
+      expect(shown.issues).toEqual([]);
+    });
+
+    it('leaves the spec to the server where it does not derive specs, or applies no keyed hides', () => {
+      expect(planConfigChanges([specs], profile({}, [gatewayHide]), keyed).issues).toEqual([]);
+      const older: t.ConfigFeatures = { ...before, specInterfaceRederive: true };
+      expect(planConfigChanges([specs], profile({}, [gatewayHide]), older).issues).toEqual([]);
+    });
+  });
+
   it('resets a reverted override by key instead of writing the list again', () => {
     const lowerGpt = ((base.endpoints as t.ConfigRecord).custom as t.ConfigValue[])[0];
     const revert: t.ConfigChange = {
@@ -1854,5 +1911,295 @@ describe('planConfigChanges — endpoint rename hints', () => {
       secretRebinding: true,
     });
     expect(plan.issues.map((issue) => issue.code)).toContain('secret_reentry_required');
+  });
+});
+
+describe('Azure groups (merged by `group` where LibreChat derives them again)', () => {
+  const REDERIVE: t.ConfigFeatures = {
+    ...BUNDLED_CONFIG_FEATURES,
+    endpointRederive: true,
+    azureGroupMergeKey: true,
+    azureGroupSecrets: true,
+    secretRebinding: true,
+    changesBatch: true,
+    expectedRevision: true,
+    prunesEmptyParents: true,
+  };
+  const groups: t.ConfigRecord = {
+    endpoints: {
+      azureOpenAI: {
+        groups: [
+          {
+            group: 'eastus',
+            apiKey: '${EASTUS_API_KEY}',
+            instanceName: 'librechat-eastus',
+            version: '2024-02-15-preview',
+            models: { 'gpt-4o': { deploymentName: 'gpt-4o' } },
+          },
+        ],
+      },
+    },
+  };
+  const PATH = 'endpoints.azureOpenAI.groups';
+  const upsert = (
+    key: string,
+    value: t.ConfigValue,
+    identity: string | null = key,
+    baseline?: t.ConfigValue,
+  ): t.ConfigChange => ({ op: 'upsertEntry', path: PATH, key, identity, value, baseline });
+  const plan = (
+    ops: t.ConfigChange[],
+    stored: t.ConfigRecord = {},
+    features: t.ConfigFeatures = REDERIVE,
+  ) =>
+    planConfigChanges(
+      ops,
+      { stored, tombstones: [], lower: groups, lowerKind: 'inherited' },
+      features,
+      getWriteRules(createServerContract(features)),
+    );
+  const lowerGroup = getValueAtPath(groups, `${PATH}.0`) as t.ConfigRecord;
+
+  it('stores only what a profile changes in an inherited group, by its name', () => {
+    const edited = {
+      ...lowerGroup,
+      models: { ...(lowerGroup.models as t.ConfigRecord), mini: { deploymentName: 'mini' } },
+    };
+    const written = plan([upsert('eastus', edited, 'eastus', lowerGroup)]);
+    expect(written.issues).toEqual([]);
+    expect(written.sets).toEqual([
+      {
+        fieldPath: PATH,
+        value: [{ group: 'eastus', models: { mini: { deploymentName: 'mini' } } }],
+      },
+    ]);
+  });
+
+  it('adds a group the profile defines, checked as LibreChat resolves groups', () => {
+    const incomplete = plan([
+      upsert('west', { group: 'west', apiKey: 'sk-1', models: { a: true } }, null),
+    ]);
+    expect(incomplete.issues.map((issue) => `${issue.entryPath}:${issue.code}`)).toEqual([
+      'instanceName:azure_instance_required',
+      'models:azure_model_unresolved',
+    ]);
+    const complete = plan([
+      upsert(
+        'west',
+        {
+          group: 'west',
+          apiKey: 'sk-1',
+          instanceName: 'west',
+          version: 'v1',
+          models: { a: { deploymentName: 'a' } },
+        },
+        null,
+      ),
+    ]);
+    expect(complete.issues).toEqual([]);
+    expect(complete.sets[0].value).toEqual([
+      {
+        group: 'west',
+        apiKey: 'sk-1',
+        instanceName: 'west',
+        version: 'v1',
+        models: { a: { deploymentName: 'a' } },
+      },
+    ]);
+  });
+
+  it('refuses a model another group serves, and a serverless group without a base URL', () => {
+    const written = plan([
+      upsert(
+        'west',
+        { group: 'west', apiKey: 'k', serverless: true, models: { 'gpt-4o': true } },
+        null,
+      ),
+    ]);
+    expect(written.issues.map((issue) => `${issue.entryPath}:${issue.code}`)).toEqual([
+      'baseURL:azure_base_url_required',
+      'models:azure_model_duplicate',
+    ]);
+    expect(written.issues[1].params).toEqual({ model: 'gpt-4o', group: 'eastus' });
+  });
+
+  it('keeps a group key the profile stores encrypted, required by the schema, when the group omits it', () => {
+    const stored = {
+      endpoints: {
+        azureOpenAI: {
+          groups: [
+            {
+              group: 'west',
+              apiKeyPreview: '...1234',
+              instanceName: 'west',
+              version: 'v1',
+              models: {},
+            },
+          ],
+        },
+      },
+    };
+    const before = getValueAtPath(stored, `${PATH}.0`) as t.ConfigRecord;
+    const written = plan(
+      [upsert('west', { ...before, models: { a: { deploymentName: 'a' } } }, 'west', before)],
+      stored,
+    );
+    expect(written.issues).toEqual([]);
+    expect(written.sets[0].value).toEqual([
+      {
+        group: 'west',
+        instanceName: 'west',
+        version: 'v1',
+        models: { a: { deploymentName: 'a' } },
+      },
+    ]);
+  });
+
+  it('asks for a stored group key again when the group moves its instance', () => {
+    const stored = {
+      endpoints: {
+        azureOpenAI: {
+          groups: [
+            {
+              group: 'west',
+              apiKeyPreview: '...1234',
+              instanceName: 'west',
+              version: 'v1',
+              models: { a: { deploymentName: 'a' } },
+            },
+          ],
+        },
+      },
+    };
+    const before = getValueAtPath(stored, `${PATH}.0`) as t.ConfigRecord;
+    const written = plan(
+      [upsert('west', { ...before, instanceName: 'elsewhere' }, 'west', before)],
+      stored,
+    );
+    expect(written.issues).toEqual([
+      expect.objectContaining({
+        code: 'secret_reentry_required',
+        entryIdentity: 'west',
+        entryPath: 'apiKey',
+      }),
+    ]);
+  });
+
+  it('warns that LibreChat stops sending an inherited group key the profile moves without one', () => {
+    const written = plan([
+      upsert('eastus', { ...lowerGroup, instanceName: 'elsewhere' }, 'eastus', lowerGroup),
+    ]);
+    expect(written.issues).toEqual([]);
+    expect(written.warnings).toContainEqual({
+      path: PATH,
+      entryIdentity: 'eastus',
+      warning: 'secretRebindingEnter',
+      keys: ['instanceName'],
+    });
+  });
+
+  it('lets a profile change an inherited group whose key the layer beneath holds hidden', () => {
+    const hidden = (preview: string): t.ConfigRecord => ({
+      group: 'west',
+      apiKeyPreview: preview,
+      instanceName: 'west',
+      version: 'v1',
+      models: { a: { deploymentName: 'a' } },
+    });
+    for (const [lower, lowerKind] of [
+      [hidden('...1234'), 'inherited'],
+      [hidden(SECRET_PREVIEW_MASK), 'yaml'],
+    ] as const) {
+      const written = planConfigChanges(
+        [upsert('west', { ...lower, version: 'v2' }, 'west', lower)],
+        {
+          stored: {},
+          tombstones: [],
+          lower: { endpoints: { azureOpenAI: { groups: [lower] } } },
+          lowerKind,
+        },
+        REDERIVE,
+        getWriteRules(createServerContract(REDERIVE)),
+      );
+      expect(written.issues).toEqual([]);
+      expect(written.sets).toEqual([
+        { fieldPath: PATH, value: [{ group: 'west', version: 'v2' }] },
+      ]);
+    }
+  });
+
+  it('takes back a key Base stores for a librechat.yaml group by restoring the librechat.yaml one', () => {
+    const stored = {
+      endpoints: { azureOpenAI: { groups: [{ group: 'eastus', apiKeyPreview: '...5555' }] } },
+    };
+    const { apiKey: _yamlKey, ...rest } = lowerGroup;
+    const baseline = { ...rest, apiKeyPreview: '...5555' };
+    const written = plan(
+      [upsert('eastus', { ...baseline, apiKey: lowerGroup.apiKey }, 'eastus', baseline)],
+      stored,
+    );
+    expect(written.issues).toEqual([]);
+    expect(written.sets).toEqual([]);
+    expect(written.resets).toEqual([PATH]);
+  });
+
+  it("refuses an edit of one group while another the profile stores doesn't resolve, as LibreChat refuses it", () => {
+    const leftover = { group: 'rv-west', version: 'v2' };
+    const stored = { endpoints: { azureOpenAI: { groups: [leftover] } } };
+    const written = plan(
+      [upsert('eastus', { ...lowerGroup, version: 'v3' }, 'eastus', lowerGroup)],
+      stored,
+    );
+    expect(
+      written.issues.map((issue) => `${issue.entryIdentity}:${issue.entryPath}:${issue.code}`),
+    ).toEqual(['rv-west:instanceName:azure_instance_required']);
+    const fixed = plan(
+      [
+        upsert('eastus', { ...lowerGroup, version: 'v3' }, 'eastus', lowerGroup),
+        { op: 'removeEntry', path: PATH, key: 'rv-west', identity: 'rv-west' },
+      ],
+      stored,
+    );
+    expect(fixed.issues).toEqual([]);
+  });
+
+  it("can't remove a group the layer beneath defines, and deletes the profile's own", () => {
+    const refused = plan([{ op: 'removeEntry', path: PATH, key: 'eastus', identity: 'eastus' }]);
+    expect(refused.issues.map((issue) => issue.code)).toEqual(['INHERITED_ENTRY_IMMUTABLE']);
+    const stored = { endpoints: { azureOpenAI: { groups: [{ group: 'west', models: {} }] } } };
+    const removed = plan(
+      [{ op: 'removeEntry', path: PATH, key: 'west', identity: 'west' }],
+      stored,
+    );
+    expect(removed.issues).toEqual([]);
+    expect(removed.resets).toEqual([PATH]);
+  });
+
+  it('writes the whole list, never a keyed path, also where keyed tombstones exist', () => {
+    const edited = { ...lowerGroup, version: 'v2' };
+    const written = plan(
+      [upsert('eastus', edited, 'eastus', lowerGroup)],
+      {},
+      {
+        ...REDERIVE,
+        keyedTombstones: true,
+      },
+    );
+    expect(written.sets.map((set) => set.fieldPath)).toEqual([PATH]);
+    expect(written.resets).toEqual([]);
+  });
+
+  it('skips a write of the groups on a server that does not derive them again', () => {
+    const written = plan(
+      [upsert('eastus', { ...lowerGroup, version: 'v2' }, 'eastus', lowerGroup)],
+      {},
+      {
+        ...BUNDLED_CONFIG_FEATURES,
+        azureGroupMergeKey: true,
+        azureGroupSecrets: true,
+      },
+    );
+    expect(written.sets).toEqual([]);
+    expect(written.skipped).toEqual([{ fieldPath: PATH, reason: 'yamlOnly' }]);
   });
 });

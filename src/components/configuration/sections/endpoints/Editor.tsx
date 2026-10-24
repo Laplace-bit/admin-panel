@@ -28,13 +28,14 @@ import {
   EndpointRefRow,
 } from './Fields';
 import { ConfigErrorsProvider, ConfigErrorsContext } from '@/contexts/ConfigErrorsContext';
+import { useLocalize, useConfigFeatures, useEntryKeyRemoval } from '@/hooks';
 import { EntryFieldChipsContext } from '@/contexts/EntryFieldChipsContext';
+import { EntryKeyRemovalContext } from '@/contexts/EntryKeyRemovalContext';
 import { SecretNotSentNotice } from '../../fields/SecretField';
 import { renderInlineField, toFieldId } from '../../renderer';
 import { RestatesContext } from '@/contexts/RestatesContext';
+import { modelNames, addsOpenRouterDefaults } from './model';
 import { ParamDefinitionsRow } from './ParamDefinitions';
-import { useLocalize, useConfigFeatures, useEntryKeyRemoval } from '@/hooks';
-import { EntryKeyRemovalContext } from '@/contexts/EntryKeyRemovalContext';
 import { UnknownSettings } from '../../UnknownSettings';
 import { FieldChips, ShadowChip } from './Chips';
 import { HeaderPlaceholders } from './Request';
@@ -43,7 +44,6 @@ import { EndpointSectionNav } from './Nav';
 import { labelForPath } from '../../meta';
 import { describeIssue } from './issues';
 import { PricingRow } from './Pricing';
-import { modelNames } from './model';
 import { Banner } from './Banner';
 
 /** Fields an endpoint added in the panel can't be served without (CE-3). */
@@ -155,7 +155,7 @@ export function EndpointEditor({
   onUnhideField,
 }: t.EndpointEditorProps) {
   const localize = useLocalize();
-  const { yamlSecretPreview, secretRebinding } = useConfigFeatures();
+  const { yamlSecretPreview, secretRebinding, customParamsExpansion } = useConfigFeatures();
   const keyRemoval = useEntryKeyRemoval({
     collectionPath: findKeyedCollectionEntry(path)?.collection.path ?? '',
     entryPath: path,
@@ -319,9 +319,16 @@ export function EndpointEditor({
       return <EndpointRefRow key={key} {...common} chips={refChips} self={name} />;
     }
     if (key === 'customParams.defaultParamsEndpoint') {
-      return <ParamSetRow key={key} {...common} />;
+      return (
+        <ParamSetRow
+          key={key}
+          {...common}
+          openRouter={customParamsExpansion && addsOpenRouterDefaults(value)}
+        />
+      );
     }
     if (key === 'customParams.paramDefinitions') {
+      const openRouter = customParamsExpansion && addsOpenRouterDefaults(value);
       return (
         <ParamDefinitionsRow
           key={key}
@@ -329,7 +336,9 @@ export function EndpointEditor({
           field={field}
           value={current}
           lowerKeys={definitionKeys(lowerEntry)}
-          paramSet={paramSetOf(value)}
+          paramSet={openRouter ? 'openrouter' : paramSetOf(value)}
+          compact={customParamsExpansion}
+          openRouterDefaults={openRouter}
           onChange={write}
           disabled={disabled}
           editSessionId={editSessionId}

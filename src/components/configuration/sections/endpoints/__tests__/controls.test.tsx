@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { configSchema, paramSettings } from 'librechat-data-provider';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { configSchema, paramSettings } from 'librechat-data-provider';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import type * as t from '@/types';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
@@ -42,10 +42,14 @@ function Params({
   initial,
   lowerKeys = new Set<string>(),
   onChange,
+  compact,
+  openRouterDefaults,
 }: {
   initial: t.ConfigValue[];
   lowerKeys?: ReadonlySet<string>;
   onChange?: (value: t.ConfigValue) => void;
+  compact?: boolean;
+  openRouterDefaults?: boolean;
 }) {
   const [value, setValue] = useState<t.ConfigValue>(initial);
   if (!paramDefinitionsField) throw new Error('no paramDefinitions field');
@@ -56,6 +60,8 @@ function Params({
       value={value}
       lowerKeys={lowerKeys}
       paramSet="custom"
+      compact={compact}
+      openRouterDefaults={openRouterDefaults}
       onChange={(next) => {
         onChange?.(next);
         setValue(next);
@@ -143,6 +149,28 @@ describe('ParamDefinitionsRow (CE-6)', () => {
     expandFirstCard(container);
     expect(screen.getByText('com_config_ce_param_override_note')).toBeInTheDocument();
     expect(container.querySelector(`#${PATH.replace(/\./g, '-')}-0-type`)).toBeNull();
+  });
+});
+
+describe('ParamDefinitionsRow, where LibreChat expands definitions (customParamsExpansion)', () => {
+  it('adds an override of a built-in parameter as librechat.yaml writes it, { key, default }', () => {
+    const onChange = vi.fn();
+    const { container } = render(<Params initial={[]} onChange={onChange} compact />);
+    expect(screen.getByText('com_config_ce_params_expanded')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('com_config_ce_param_add_builtin'), {
+      target: { value: 'temperature' },
+    });
+    const builtIn = paramSettings.custom?.find((setting) => setting.key === 'temperature');
+    expect(onChange.mock.lastCall?.[0]).toEqual([
+      { key: 'temperature', default: builtIn?.default },
+    ]);
+    expandFirstCard(container);
+    expect(screen.getByText('com_config_ce_param_override_note')).toBeInTheDocument();
+  });
+
+  it("says when LibreChat adds OpenRouter's parameters to the endpoint", () => {
+    render(<Params initial={[]} compact openRouterDefaults />);
+    expect(screen.getByText('com_config_ce_params_expanded_openrouter')).toBeInTheDocument();
   });
 });
 

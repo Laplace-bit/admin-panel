@@ -23,6 +23,7 @@ import {
   entryIdentityOf,
   hiddenEntriesOf,
   getKeyedCollection,
+  mergedListPaths,
   secretPreviewPath,
   withoutKeyedTombstones,
   stripSecretPreviewValues,
@@ -51,9 +52,6 @@ import { useConfigContract, useConfigWriteRules } from './contract';
 import { describeIssues } from '@/components/configuration/issues';
 import { resolvedConfigOptions, runtimeDefaultAt } from './layers';
 import { useLocalize } from '../useLocalize';
-
-/** Lists LibreChat merges with librechat.yaml by name; an import upserts their entries by name. */
-const MERGED_COLLECTIONS: ReadonlySet<string> = new Set(['endpoints.custom']);
 
 /** Why an imported secret is left out, as the preview words it. */
 const WITHHELD_REASON_KEYS: Readonly<Record<t.WithheldSecret['reason'], string>> = {
@@ -182,10 +180,12 @@ function isHiddenEntry(
 
 /**
  * The imported entries of a merged list that change what users get (each
- * merged over the effective entry of its name), definitions expanded; an
- * entry identical to the effective one is dropped, so it is neither shown
- * nor written as a change. A key the effective entry hides, or one that is
- * the mask itself, is left out (`left.withheld` gets its imported path):
+ * merged over the effective entry of its name), definitions expanded unless
+ * LibreChat expands an override's itself (`compactParams`,
+ * `customParamsExpansion`): then they are written as librechat.yaml writes
+ * them. An entry identical to the effective one is dropped, so it is neither
+ * shown nor written as a change. A key the effective entry hides, or one
+ * that is the mask itself, is left out (`left.withheld` gets its imported path):
  * importing librechat.yaml back would otherwise store its own key again as
  * an override. An entry the target hides whole (`hidden`) is left out too
  * (`left.hidden`): LibreChat takes a write of it as showing it again.
@@ -196,6 +196,7 @@ function changedEntries(
   incoming: t.ConfigValue,
   hidden: ReadonlySet<string>,
   left: t.ImportLeftOut,
+  compactParams: boolean,
 ): t.ConfigValue {
   if (!Array.isArray(incoming)) return incoming;
   const key = identityKeyFor(path, [...(Array.isArray(effective) ? effective : []), ...incoming]);
@@ -208,7 +209,7 @@ function changedEntries(
       return [];
     }
     const match = matchOf(effective, entry, key);
-    let expanded = withExpandedDefinitions(entry, match);
+    let expanded = compactParams ? entry : withExpandedDefinitions(entry, match);
     if (secret && isConfigRecord(expanded) && expanded[secret.key] !== undefined) {
       const reason = withheldReason(expanded[secret.key], hidesSecret(match, secret));
       if (reason) {
@@ -299,6 +300,8 @@ export function useImportPreview({
   const localize = useLocalize();
   const { features, limits } = useConfigContract();
   const writeRules = useConfigWriteRules();
+  /** Lists LibreChat merges with the layer beneath by name; an import upserts their entries by name. */
+  const mergedLists = useMemo(() => mergedListPaths(features), [features]);
   const { data: base, isLoading: baseLoading } = useQuery(baseConfigOptions);
   const existingScope = target?.type === 'scope' && target.exists ? target.scope : undefined;
   const { data: scopeData, isLoading: scopeLoading } = useQuery(
@@ -389,12 +392,19 @@ export function useImportPreview({
         left.withheld.push({ path, reason });
         return [];
       }
-      if (!MERGED_COLLECTIONS.has(path)) return [entry];
-      const value = changedEntries(path, effectiveAt(path), entry.value, hiddenAt(path), left);
+      if (!mergedLists.has(path)) return [entry];
+      const value = changedEntries(
+        path,
+        effectiveAt(path),
+        entry.value,
+        hiddenAt(path),
+        left,
+        features.customParamsExpansion,
+      );
       return Array.isArray(value) && value.length === 0 ? [] : [{ fieldPath: path, value }];
     });
     return { entries: written, ...left };
-  }, [plan, target, base, own, effectiveAt, hiddenAt]);
+  }, [plan, target, base, own, mergedLists, effectiveAt, hiddenAt, features.customParamsExpansion]);
 
   const groups = useMemo((): t.ImportPreviewGroup[] => {
     if (!plan || !target || !base) return [];
@@ -435,7 +445,7 @@ export function useImportPreview({
       const path = imported.fieldPath;
       if (left.has(path) || isAllLeftOut(imported)) continue;
       const entry = written.get(path) ?? { fieldPath: path, value: [] };
-      const isMerged = MERGED_COLLECTIONS.has(path);
+      const isMerged = mergedLists.has(path);
       /** What users get now: a profile's entries merge over the ones it inherits. */
       const existing = effectiveAt(path);
       /** Secret preview companions are read-only display values: neither side lists them. */
@@ -465,6 +475,7 @@ export function useImportPreview({
             isScope,
             fields: schemaTree,
             schemaPaths: schemaPathSet,
+            mergedLists,
           });
       const model = buildReviewModel(items, { localize, fields: schemaTree, tree: scoped });
       const location = locate(path, localize);
@@ -489,7 +500,14 @@ export function useImportPreview({
         replacesList: items.some((item) => item.warnings?.includes('ownershipChange')),
         hiddenNotes:
           items.length > 0
-            ? describeImportedHiddenUses(path, entry.value, hiddenEndpoints, targetLabel, localize)
+            ? describeImportedHiddenUses(
+                path,
+                entry.value,
+                hiddenEndpoints,
+                targetLabel,
+                localize,
+                features.specInterfaceRederive,
+              )
             : undefined,
       });
       sections.set(key, group);
@@ -510,6 +528,8 @@ export function useImportPreview({
     schemaTree,
     schemaPathSet,
     localize,
+    mergedLists,
+    features.specInterfaceRederive,
   ]);
 
   const skipped = useMemo((): t.ReviewSkippedRow[] => {
@@ -551,14 +571,14 @@ export function useImportPreview({
       entries
         .filter((entry) => included.has(entry.fieldPath))
         .map((entry) => {
-          if (!MERGED_COLLECTIONS.has(entry.fieldPath)) return entry;
+          if (!mergedLists.has(entry.fieldPath)) return entry;
           const ownList = getValueAtPath(own, entry.fieldPath);
           return {
             fieldPath: entry.fieldPath,
             value: upsertByName(entry.fieldPath, ownList, entry.value),
           };
         }),
-    [entries, own],
+    [entries, own, mergedLists],
   );
 
   /** The target's stored overrides and tombstones and the layer beneath, as the validated write reads them. */

@@ -37,6 +37,8 @@ import {
 import {
   getConfigSection,
   getReadOnlyReason,
+  AZURE_GROUPS_PATH,
+  SECRET_PREVIEW_MASK,
   TOO_MANY_CHANGES_CODE,
   BUNDLED_WRITE_RULES,
   BUNDLED_CONFIG_LIMITS,
@@ -44,9 +46,11 @@ import {
 } from '@/constants';
 import {
   validateEntry,
+  modelsByGroup,
   validateField,
   validateSection,
   describeIssueCode,
+  validateResolvableGroup,
   validateLoadableEndpoint,
 } from './validation';
 import {
@@ -74,6 +78,7 @@ import {
 import { findYamlManagedValues, getWriteSkipReason } from './writes';
 import { isBlankText, findBlankText, findUnsafeKeys } from './keys';
 import { getSecretCarry, usesChangeBatch } from './contract';
+import { selectsHiddenEndpoint } from './dependents';
 import { resolveSubSchema, unwrapSchema } from './schema';
 import { scopeGateSkipReason } from './scopes';
 
@@ -153,6 +158,15 @@ function findValueRuleIssues(
 }
 
 const BLANK_TEXT_CODES: ReadonlySet<string> = new Set(['BLANK_VALUE', 'BLANK_KEY']);
+
+/** The model spec list, whose specs LibreChat checks select a configured endpoint where a save writes it. */
+const SPEC_LIST = 'modelSpecs.list';
+
+/** The custom endpoints, which a profile can hide by name (`keyedTombstones`). */
+const CUSTOM_ENDPOINTS = 'endpoints.custom';
+
+/** A spec that selects a custom endpoint the target hides, which LibreChat refuses as unconfigured. */
+const SPEC_ENDPOINT_HIDDEN = 'spec_endpoint_hidden';
 
 /** A blank key named by the write path itself (an imported `headers: { "  ": … }` leaf). */
 function blankPathKeys(path: string): t.BlankConfigText[] {
@@ -377,7 +391,7 @@ function resolveCollections(state: PlanState): void {
       lower: getValueAtPath(state.snapshot.lower, path),
       lowerKind: state.snapshot.lowerKind,
       ops: list,
-      carriesSecrets: getSecretCarry(state.features).endpointRename,
+      carriesSecrets: carriesEntrySecrets(state, collection),
     });
     state.issues.push(...resolution.issues);
     if (usesChangeBatch(state.features)) state.renames.push(...resolution.renames);
@@ -402,14 +416,31 @@ function resolveCollections(state: PlanState): void {
   }
 }
 
+/**
+ * Whether a rename keeps the secret the entry stores: a batch `rename` moves
+ * the stored entry whole; a field PATCH's `renames` hint carries a custom
+ * endpoint's key (`renameHints`), but no hint names a gated list
+ * (Azure groups), so a renamed group needs its key again there.
+ */
+function carriesEntrySecrets(state: PlanState, collection: t.KeyedCollection): boolean {
+  if (collection.gate !== undefined) return usesChangeBatch(state.features);
+  return getSecretCarry(state.features).endpointRename;
+}
+
 /** A carried rename as the `renames` hint of the field PATCH that writes the renamed entry. */
 function toRenameHint({ path, from, to }: t.EntryRename): t.RenameHint {
   return { path, previousName: from, name: to };
 }
 
-/** Whether a collection's own entries are reset by key (`keyedTombstones`), never by rewriting or resetting the list. */
+/**
+ * Whether a collection's own entries are reset by key (`keyedTombstones`),
+ * never by rewriting or resetting the list. A list merged by key behind a
+ * gate (Azure groups) has no keyed paths, so its list is written whole.
+ */
 function usesKeyedResets(state: PlanState, collection: t.KeyedCollection): boolean {
-  return state.features.keyedTombstones && collection.merge === 'byKey';
+  return (
+    state.features.keyedTombstones && collection.merge === 'byKey' && collection.gate === undefined
+  );
 }
 
 /** An entry's identity as LibreChat matches it, or undefined for an entry without a key. */
@@ -1196,6 +1227,24 @@ function issueKey(issue: t.ConfigIssue): string {
   return `${issue.path}|${issue.code ?? ''}|${issue.entryIdentity ?? ''}`;
 }
 
+/**
+ * An entry as schema validation sees it: a secret held hidden (read back
+ * only as its preview) is present, so a schema that requires the key (an
+ * Azure group's `apiKey`) passes. LibreChat keeps a key the target stores
+ * encrypted for a write that omits it, and an entry merged over the layer
+ * beneath keeps that layer's key: one Base stores, or a librechat.yaml
+ * literal the server redacts.
+ */
+function withHeldSecret(
+  entry: t.ConfigValue,
+  collection: t.KeyedCollection,
+  held: boolean,
+): t.ConfigValue {
+  const key = collection.secret?.key;
+  if (!held || !key || !isConfigRecord(entry) || entry[key] !== undefined) return entry;
+  return { ...entry, [key]: SECRET_PREVIEW_MASK };
+}
+
 function validateCollectionSet(
   state: PlanState,
   collection: t.KeyedCollection,
@@ -1213,15 +1262,33 @@ function validateCollectionSet(
     ...state.renames.filter(({ path }) => path === collection.path).map(({ to }) => to),
     ...state.renameHints.filter(({ path }) => path === collection.path).map(({ name }) => name),
   ]);
+  const servedBy =
+    collection.path === AZURE_GROUPS_PATH
+      ? modelsByGroup(mergeConfigLayers(lowerList, value, collection.path))
+      : undefined;
   return value.flatMap((entry, index) => {
     const identity = getEntryKey(entry, collection.key);
-    if (touched && (identity === undefined || !touched.has(identity))) return [];
     const lowerEntry =
       collection.merge === 'byKey'
         ? lowerList.find((candidate) => getEntryKey(candidate, collection.key) === identity)
         : undefined;
     const merged = mergeConfigLayers(lowerEntry, entry);
-    const issues = validateEntry(collection.path, merged, index, identity);
+    /**
+     * LibreChat resolves the target's groups together and refuses a write
+     * where one doesn't, touched or not (a leftover of a group Base removed).
+     */
+    const unresolved = servedBy ? validateResolvableGroup(merged, index, identity, servedBy) : [];
+    if (touched && (identity === undefined || !touched.has(identity))) return unresolved;
+    const held =
+      (identity !== undefined && storedKeys.has(identity)) ||
+      hasHiddenSecret(lowerEntry, collection);
+    const issues = validateEntry(
+      collection.path,
+      withHeldSecret(merged, collection, held),
+      index,
+      identity,
+    );
+    if (servedBy) return [...issues, ...unresolved];
     /** The layer beneath owns its entries (and its literal keys are redacted on read): check only the target's own. */
     if (collection.path !== 'endpoints.custom' || lowerEntry !== undefined) return issues;
     return [
@@ -1420,6 +1487,51 @@ function changedLocations(state: PlanState): string[] {
 }
 
 /**
+ * Model specs a save writes that select a custom endpoint the target hides
+ * once the save is applied (`keyedTombstones`). A server that derives what
+ * specs offer (`specInterfaceRederive`) refuses a spec whose endpoint the
+ * target's layers leave unconfigured (`unknown_spec_endpoint`), and checks
+ * the list only where the save writes it: a hide alone takes the specs along.
+ */
+function findHiddenSpecEndpoints(state: PlanState, storedAfter: t.ConfigRecord): void {
+  const custom = getKeyedCollection(CUSTOM_ENDPOINTS);
+  const { specInterfaceRederive, keyedTombstones } = state.features;
+  if (!custom || !specInterfaceRederive || !keyedTombstones) return;
+  const sets = [...state.sets.keys()];
+  const written = [...sets, ...state.resets, ...state.tombstones];
+  const writesSpecs = written.some(
+    (path) => isAtOrUnder(path, SPEC_LIST) || isAtOrUnder(SPEC_LIST, path),
+  );
+  const specs = getValueAtPath(storedAfter, SPEC_LIST);
+  if (!writesSpecs || !Array.isArray(specs)) return;
+  const ownList = getValueAtPath(storedAfter, CUSTOM_ENDPOINTS);
+  const own = new Set(
+    (Array.isArray(ownList) ? ownList : []).flatMap((entry) => identityIn(custom, entry) ?? []),
+  );
+  const hidden = new Set(
+    [...hiddenIdentities(tombstonesAfter(state, sets), custom)].filter((id) => !own.has(id)),
+  );
+  if (hidden.size === 0) return;
+  state.issues.push(
+    ...specs.flatMap((spec, index): t.ConfigIssue[] => {
+      const endpoint = getValueAtPath(spec, 'preset.endpoint');
+      if (typeof endpoint !== 'string' || !selectsHiddenEndpoint(spec, hidden)) return [];
+      const params = { endpoint };
+      return [
+        {
+          path: `${SPEC_LIST}.${index}.preset.endpoint`,
+          code: SPEC_ENDPOINT_HIDDEN,
+          params,
+          message: describeIssueCode(SPEC_ENDPOINT_HIDDEN, params, SPEC_ENDPOINT_HIDDEN),
+          entryIdentity: getEntryKey(spec, 'name'),
+          entryPath: 'preset.endpoint',
+        },
+      ];
+    }),
+  );
+}
+
+/**
  * Duplicated MCP servers the plan writes without the stored secrets of the
  * server they copy (no `renames` hint carries them): a `secretNotCopied`
  * warning names the secrets each one uses but doesn't enter.
@@ -1525,6 +1637,7 @@ export function planConfigChanges(
   keepRemovalsInside(state);
   const storedAfter = pruneEmptyParents(state);
   validateSections(state, validateSets(state));
+  findHiddenSpecEndpoints(state, storedAfter);
   findMergedBackKeys(state);
   findBindingChanges(state, storedAfter);
   findUncopiedCopies(state, storedAfter);

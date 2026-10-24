@@ -5,14 +5,16 @@ import {
   setConfigPath,
   mergeScopeLayer,
   removeConfigPath,
+  withScopeLayer,
   createBaseLayers,
   overlayPendingEdits,
   estimateConfigPreview,
 } from './layers';
+import { resolveWriteRules, getWriteRules, BUNDLED_CONFIG_FEATURES } from '@/constants';
 import { applyConfigEdit, buildSavePayload } from '@/components/configuration/edits';
 import { scopeLayersFixture, baseConfigFixture } from '@/test/layers';
 import { flattenObject, getValueAtPath } from './format';
-import { resolveWriteRules } from '@/constants';
+import { createServerContract } from '@/test/fixtures';
 
 describe('mergeScopeLayer', () => {
   const base: t.ConfigRecord = {
@@ -80,8 +82,9 @@ describe('mergeScopeLayer', () => {
           'endpoints.agents.eventDriven': 'startup',
           'mcpSettings.catalogRecovery.maxStateEntries': 'startup',
         },
+        derivedPaths: [],
       },
-      true,
+      { ...BUNDLED_CONFIG_FEATURES, preAuthBaseOverrides: true },
     );
     const yaml: t.ConfigRecord = {
       endpoints: {
@@ -369,5 +372,172 @@ describe('estimateConfigPreview', () => {
     });
     expect(preview.layers).toEqual([]);
     expect(preview.yaml).toEqual({});
+  });
+});
+
+describe('Azure groups and re-derived values in a profile', () => {
+  const base: t.ConfigRecord = {
+    endpoints: {
+      azureOpenAI: {
+        groups: [
+          { group: 'eastus', instanceName: 'east', models: { 'gpt-4o': { deploymentName: 'a' } } },
+        ],
+      },
+    },
+  };
+  const overrides: t.ConfigRecord = {
+    endpoints: {
+      azureOpenAI: {
+        groups: [
+          { group: 'eastus', models: { mini: { deploymentName: 'm' } } },
+          { group: 'west', instanceName: 'west', models: {} },
+        ],
+      },
+    },
+  };
+
+  it("merges a profile's groups by name where LibreChat derives them again, else keeps Base's", () => {
+    const rederive = getWriteRules(
+      createServerContract({
+        endpointRederive: true,
+        azureGroupMergeKey: true,
+        azureGroupSecrets: true,
+      }),
+    );
+    expect(
+      getValueAtPath(
+        mergeScopeLayer(base, overrides, [], rederive),
+        'endpoints.azureOpenAI.groups',
+      ),
+    ).toEqual([
+      {
+        group: 'eastus',
+        instanceName: 'east',
+        models: { 'gpt-4o': { deploymentName: 'a' }, mini: { deploymentName: 'm' } },
+      },
+      { group: 'west', instanceName: 'west', models: {} },
+    ]);
+    expect(mergeScopeLayer(base, overrides)).toEqual(base);
+  });
+
+  it("reads a key a layer stores for an entry as that key's preview, never beside the lower key", () => {
+    const rederive = getWriteRules(
+      createServerContract({
+        endpointRederive: true,
+        azureGroupMergeKey: true,
+        azureGroupSecrets: true,
+      }),
+    );
+    const yaml: t.ConfigRecord = {
+      endpoints: {
+        azureOpenAI: {
+          groups: [
+            { group: 'eastus', apiKey: '${EASTUS_API_KEY}', instanceName: 'east' },
+            { group: 'west', apiKeyPreview: '...1234', instanceName: 'west' },
+            { group: 'north', apiKey: '${NORTH_API_KEY}', instanceName: 'north' },
+          ],
+        },
+        custom: [{ name: 'Moonshot', apiKey: '${MOONSHOT_API_KEY}', baseURL: 'https://m' }],
+      },
+    };
+    const stored: t.ConfigRecord = {
+      endpoints: {
+        azureOpenAI: {
+          groups: [
+            { group: 'eastus', apiKeyPreview: '...5555' },
+            { group: 'west', apiKey: 'sk-typed' },
+            { group: 'north', version: 'v2' },
+          ],
+        },
+        custom: [{ name: 'Moonshot', apiKeyPreview: '...9999' }],
+      },
+    };
+    const merged = mergeScopeLayer(yaml, stored, [], rederive);
+    expect(getValueAtPath(merged, 'endpoints.azureOpenAI.groups')).toEqual([
+      { group: 'eastus', apiKeyPreview: '...5555', instanceName: 'east' },
+      { group: 'west', apiKey: 'sk-typed', instanceName: 'west' },
+      { group: 'north', apiKey: '${NORTH_API_KEY}', instanceName: 'north', version: 'v2' },
+    ]);
+    expect(getValueAtPath(merged, 'endpoints.custom')).toEqual([
+      { name: 'Moonshot', apiKeyPreview: '...9999', baseURL: 'https://m' },
+    ]);
+  });
+
+  it('derives the spec controls no layer sets from the specs the profile gets (specInterfaceRederive)', () => {
+    const layers = createBaseLayers(baseConfigFixture(), new Set());
+    const scope = { principalType: PrincipalType.ROLE, name: 'USER' };
+    const hidesSpecs: t.ResolvedConfigData = {
+      resolvedConfig: {},
+      changedPaths: [],
+      overrides: {},
+      tombstones: ['modelSpecs'],
+    };
+    const derived = withScopeLayer(layers, scope, hidesSpecs, new Set(), undefined, false, true);
+    expect(derived.effective?.interface).toEqual({
+      parameters: true,
+      presets: true,
+      modelSelect: true,
+    });
+    const keeps = withScopeLayer(
+      layers,
+      scope,
+      { ...hidesSpecs, tombstones: [] },
+      new Set(),
+      undefined,
+      false,
+      true,
+    );
+    expect(keeps.effective?.interface).toEqual({
+      parameters: true,
+      presets: false,
+      modelSelect: false,
+    });
+    const before = withScopeLayer(layers, scope, hidesSpecs, new Set());
+    expect(before.effective?.interface).toEqual({ parameters: true });
+  });
+
+  it('derives the spec controls from the specs left once the profile hides their endpoint', () => {
+    const yaml = baseConfigFixture().yamlConfig ?? {};
+    const claudeSpec = { name: 'spec-c', preset: { endpoint: 'Claude' } };
+    const withSpecs = (specs: t.ConfigRecord): t.BaseConfigData => ({
+      ...baseConfigFixture(),
+      config: { ...yaml, modelSpecs: specs },
+      yamlConfig: { ...yaml, modelSpecs: specs },
+    });
+    const scope = { principalType: PrincipalType.ROLE, name: 'USER' };
+    const hidesClaude: t.ResolvedConfigData = {
+      resolvedConfig: {},
+      changedPaths: [],
+      overrides: {},
+      tombstones: ['endpoints.custom["Claude"]'],
+    };
+    const layersOf = (specs: t.ConfigRecord) => createBaseLayers(withSpecs(specs), new Set());
+    const derive = (
+      layers: t.ValueLayers,
+      data: t.ResolvedConfigData,
+      keyedTombstones = true,
+    ): t.ConfigValue =>
+      withScopeLayer(layers, scope, data, new Set(), undefined, keyedTombstones, true).effective
+        ?.interface;
+    const allOn = { parameters: true, presets: true, modelSelect: true };
+    const specsOff = { parameters: true, presets: false, modelSelect: false };
+
+    const onlyClaude = layersOf({ list: [claudeSpec] });
+    expect(derive(onlyClaude, hidesClaude)).toEqual(allOn);
+    expect(derive(onlyClaude, { ...hidesClaude, tombstones: [] })).toEqual(specsOff);
+    expect(derive(onlyClaude, hidesClaude, false)).toEqual(specsOff);
+
+    const both = layersOf({ list: [claudeSpec, { name: 'spec-g', preset: { endpoint: 'GPT' } }] });
+    expect(derive(both, hidesClaude)).toEqual(specsOff);
+
+    const ownList: t.ResolvedConfigData = {
+      ...hidesClaude,
+      changedPaths: ['modelSpecs.list'],
+      overrides: { modelSpecs: { list: [claudeSpec] } },
+    };
+    expect(derive(layersOf({ list: [{ name: 'spec-a' }] }), ownList)).toEqual(allOn);
+
+    const added = layersOf({ list: [claudeSpec], addedEndpoints: ['GPT', 'Claude'] });
+    expect(derive(added, hidesClaude)).toEqual(allOn);
   });
 });
