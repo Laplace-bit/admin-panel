@@ -572,6 +572,54 @@ describe('CustomEndpointsRenderer — hiding inherited endpoints by key (keyedTo
     expect(onUnhideField).toHaveBeenCalledWith('endpoints.custom["GPT"]');
   });
 
+  it('keeps the name of an endpoint shown again on save from a new endpoint', async () => {
+    vi.useFakeTimers();
+    try {
+      const layers = scopeLayersFixture(
+        scopeConfigFixture({ tombstones: ['endpoints.custom["GPT"]'] }),
+        withSpec,
+        true,
+      );
+      render(
+        <Harness
+          layers={layers}
+          contract={keyed}
+          visibilityEdits={{ 'endpoints.custom["GPT"]': 'unhide' }}
+          onHideField={vi.fn()}
+          onUnhideField={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'com_config_create_endpoint' }));
+      fireEvent.click(screen.getByRole('button', { name: /com_config_ce_template_blank_name/ }));
+      await typeInto('#endpoints-custom-9999-name', 'GPT');
+      expect(screen.getByText(/com_config_ce_issue_name_taken/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('says nothing matches when the filter matches no row, removal or hidden endpoint', () => {
+    const layers = scopeLayersFixture(
+      scopeConfigFixture({ tombstones: ['endpoints.custom["GPT"]'] }),
+      withSpec,
+      true,
+    );
+    const extra = ['E1', 'E2', 'E3', 'E4', 'E5'].map((name) => ({ ...ADMIN_ENTRY, name }));
+    render(
+      <Harness
+        layers={layers}
+        initial={[...savedList(layers), ...extra]}
+        contract={keyed}
+        onHideField={vi.fn()}
+        onUnhideField={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText('com_config_ce_filter_a11y'), {
+      target: { value: 'no such endpoint' },
+    });
+    expect(screen.getByRole('status').textContent).toContain('com_config_ce_filter_empty');
+  });
+
   it('says when an allow-list names only the endpoints the profile hides, so it allows none', () => {
     const base = baseConfigFixture({
       dbOverrides: {

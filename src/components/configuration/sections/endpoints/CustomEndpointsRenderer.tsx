@@ -115,11 +115,16 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
   const idPrefix = `section-${parentPath}-custom`;
   const scopeName = scope ? sourceLabel('scope', localize, scope) : '';
 
-  /** Names in the list, and those the profile hides: a new endpoint can't take one (LibreChat would show it again). */
+  /**
+   * Names in the list, and those the profile hides or shows again on save: a new endpoint can't
+   * take one (LibreChat would show it again, or the save would add it twice).
+   */
   const names = useMemo(
     () => [
       ...rows.flatMap((row) => (row.identity ? [row.identity] : [])),
-      ...[...hiddenEntries.hidden.values()].map((entry) => entry.name),
+      ...[...hiddenEntries.hidden.values(), ...hiddenEntries.unhiding.values()].map(
+        (entry) => entry.name,
+      ),
     ],
     [rows, hiddenEntries],
   );
@@ -256,6 +261,7 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
       (!configuredOnly || row.overridden || row.edited || row.origin === 'scope'),
   );
   const shownRemovals = removals.filter((removal) => matchesFilter(removal, trimmedQuery));
+  const shownHidden = hiddenItems.filter((item) => matchesFilter(item, trimmedQuery));
 
   const closeDrawer = () => {
     setOpenKey(null);
@@ -590,11 +596,8 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
             removalNotes={removalNotes}
             idPrefix={idPrefix}
           />
-          <EndpointHiddenList
-            items={hiddenItems.filter((item) => matchesFilter(item, trimmedQuery))}
-            onToggle={toggleHidden}
-          />
-          {visible.length === 0 && shownRemovals.length === 0 && hiddenItems.length === 0 && (
+          <EndpointHiddenList items={shownHidden} onToggle={toggleHidden} />
+          {visible.length === 0 && shownRemovals.length === 0 && shownHidden.length === 0 && (
             <p className="m-0 py-2 text-sm text-(--cui-color-text-muted)" role="status">
               {configuredOnly && trimmedQuery === ''
                 ? localize('com_config_ce_none_set_in_scope', { scope: scopeName })

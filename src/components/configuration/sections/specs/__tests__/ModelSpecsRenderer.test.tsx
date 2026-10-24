@@ -420,6 +420,20 @@ describe('ModelSpecsRenderer', () => {
     expect(document.body.textContent).toContain('com_config_specs_preview_added');
   });
 
+  it("warns that a profile hiding every spec's endpoint leaves its members nothing to pick (keyedTombstones)", () => {
+    const specs = [{ name: 'gw', label: 'Gateway spec', preset: { endpoint: 'GPT' } }];
+    const base = baseConfigFixture({ dbOverrides: { modelSpecs: { list: specs } } });
+    const scope = scopeConfigFixture({ tombstones: ['endpoints.custom["GPT"]'] });
+    const data = valuesDataFixture(scopeLayersFixture(scope, base, true));
+    const keyed = createServerContract({ keyedTombstones: true });
+    const { unmount } = renderSpecs({ list: specs }, { data, contract: keyed });
+    expect(document.body.textContent).toContain('com_config_specs_preview_none_menu_off');
+    expect(document.body.textContent).toContain('com_config_specs_empty_menu_off');
+    unmount();
+    renderSpecs({ list: specs }, { data });
+    expect(document.body.textContent).not.toContain('com_config_specs_empty_menu_off');
+  });
+
   it('says an inherited endpoint list cannot be emptied in a profile (D3)', () => {
     const base = baseConfigFixture({ dbOverrides: { modelSpecs: { addedEndpoints: ['openAI'] } } });
     const data = valuesDataFixture(scopeLayersFixture(undefined, base));

@@ -192,12 +192,17 @@ export function SpecsSettings({
   const prioritize = asBool(getValue(PRIORITIZE, undefined), true);
   const mode = modeOf(enforce, prioritize);
   const added = stringItems(getValue(ADDED, undefined));
-  const menuOn = modelSelectOn(getValue(MODEL_SELECT, undefined), items.length, added.length);
   /** What the profile's members get: LibreChat leaves out the specs and added endpoints it hides (`keyedTombstones`). */
   const { hidden: hiddenEndpoints } = useHiddenEntries('endpoints.custom');
   const hiddenIds = new Set(hiddenEndpoints.keys());
   const servedItems = items.filter((spec) => !selectsHiddenEndpoint(spec, hiddenIds));
   const servedAdded = added.filter((name) => !hiddenIds.has(normalizeEndpointName(name)));
+  /**
+   * The endpoint menu: LibreChat derives an unset `modelSelect` from the configured specs when it
+   * loads, and a profile's hides don't change that. A server that derives it again after the
+   * merge (`specInterfaceRederive`) sets it in the values read here.
+   */
+  const menuOn = modelSelectOn(getValue(MODEL_SELECT, undefined), items.length, added.length);
   const canEdit = !disabled && permissions?.canEdit !== false;
   const isShown = (path: string) =>
     isRowVisible(rowFilter, path) &&
@@ -324,15 +329,15 @@ export function SpecsSettings({
       {showsMode && enforce && !prioritize && (
         <SpecNote tone="warning">{localize('com_config_specs_mode_mixed')}</SpecNote>
       )}
-      {items.length === 0 && !menuOn && (
+      {servedItems.length === 0 && !menuOn && (
         <SpecNote tone="warning" action={modelSelectLink}>
           {localize('com_config_specs_empty_menu_off')}
         </SpecNote>
       )}
-      {showsMode && mode === 'enforce' && items.length === 0 && menuOn && (
+      {showsMode && mode === 'enforce' && servedItems.length === 0 && menuOn && (
         <SpecNote tone="info">{localize('com_config_specs_enforce_empty')}</SpecNote>
       )}
-      {showsMode && mode === 'enforce' && items.length > 0 && menuOn && (
+      {showsMode && mode === 'enforce' && servedItems.length > 0 && menuOn && (
         <SpecNote tone="warning" action={modelSelectLink}>
           {localize('com_config_specs_enforce_menu_on')}
         </SpecNote>
