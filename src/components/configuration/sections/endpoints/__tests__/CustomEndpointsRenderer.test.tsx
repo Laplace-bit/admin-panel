@@ -234,6 +234,42 @@ describe('CustomEndpointsRenderer', () => {
     expect(within(saved).queryByRole('button', { name: 'com_config_secret_restate' })).toBeNull();
   });
 
+  it.each([
+    ['as is (no yamlSecretPreview)', { apiKey: 'sk-yaml-literal-0123456789' }, {}],
+    ['as the fixed mask', { apiKeyPreview: '********' }, { yamlSecretPreview: true }],
+  ])(
+    'asks for a key instead of offering to send an inherited literal one read back %s',
+    (_label, key, flags) => {
+      const yaml = baseConfigFixture().yamlConfig ?? {};
+      const endpoints = isConfigRecord(yaml.endpoints) ? yaml.endpoints : {};
+      const list = Array.isArray(endpoints.custom) ? endpoints.custom : [];
+      const custom = list.map((entry) =>
+        isConfigRecord(entry) && entry.name === 'GPT' ? { ...entry, ...key } : entry,
+      );
+      const yamlConfig = { ...yaml, endpoints: { ...endpoints, custom } };
+      const contract = createServerContract({ secretRebinding: true, ...flags });
+      const onRestate = vi.fn();
+      const layers = baseLayersFixture(baseConfigFixture({ yamlConfig, config: yamlConfig }));
+      const moved = savedList(layers).map((entry) =>
+        isConfigRecord(entry) && entry.name === 'GPT'
+          ? { ...entry, baseURL: 'https://proxy.example.com' }
+          : entry,
+      );
+      render(
+        <RestatesContext.Provider value={{ restates: {}, onRestate }}>
+          <Harness layers={layers} initial={moved} contract={contract} />
+        </RestatesContext.Provider>,
+      );
+      const drawer = openRow('GPT');
+      expect(within(drawer).getByText('com_config_secret_not_sent')).toBeInTheDocument();
+      expect(within(drawer).queryByText('com_config_secret_not_sent_restatable')).toBeNull();
+      expect(
+        within(drawer).queryByRole('button', { name: 'com_config_secret_restate' }),
+      ).toBeNull();
+      expect(onRestate).not.toHaveBeenCalled();
+    },
+  );
+
   it('lets an endpoint added in the panel be renamed and deleted', () => {
     const onChange = vi.fn();
     render(<Harness layers={baseLayers()} onChange={onChange} />);

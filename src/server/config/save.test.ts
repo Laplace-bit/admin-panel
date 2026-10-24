@@ -1728,4 +1728,36 @@ describe('applyConfigChanges — custom endpoint keys sent to a new destination'
       },
     });
   });
+
+  it.each([
+    ['reads it back as is (no yamlSecretPreview)', false],
+    ['reads it back as the fixed mask (yamlSecretPreview)', true],
+  ])(
+    'never writes a librechat.yaml literal key into an override where the server %s',
+    async (_label, yamlSecretPreview) => {
+      const literal = 'sk-yaml-literal-0123456789';
+      const vault = { name: 'Vault', baseURL: 'https://vault.dev/v1', models };
+      const read = yamlSecretPreview
+        ? { ...vault, apiKeyPreview: '********' }
+        : { ...vault, apiKey: literal };
+      api.current = createFakeAdminApi({ endpoints: { custom: [read] } });
+      api.current.reportMeta({
+        features: {
+          changesBatch: true,
+          expectedRevision: true,
+          secretRebinding: true,
+          yamlSecretPreview,
+        },
+      });
+      const result = await applyConfigChanges(base, [
+        upsert('Vault', 'Vault', { ...read, baseURL: 'https://proxy.dev/v1' }, read),
+        { op: 'restate', path: 'endpoints.custom', entry: 'Vault', secret: 'apiKey' },
+      ]);
+      expect(result).toMatchObject({ issues: [], failed: [] });
+      expect(api.current.stored()).toEqual({
+        endpoints: { custom: [{ name: 'Vault', baseURL: 'https://proxy.dev/v1' }] },
+      });
+      expect(JSON.stringify(api.current.writes())).not.toContain(literal);
+    },
+  );
 });

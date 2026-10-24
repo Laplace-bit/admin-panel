@@ -676,14 +676,17 @@ export function useChangeReview({
 
   /**
    * Discards every pending edit; Undo puts them all back, renamed and
-   * duplicated entries included, against the revision they were made against
-   * (`rebase`: against the target as it is loaded next, after Reload). The
-   * edits belong to the edit session Discard starts: once another starts (a
-   * profile opened, a save), Undo restores nothing and says why, so edits
-   * and typed secrets never land in another target.
+   * duplicated entries included, against the revision they were made against.
+   * After Reload (`reloaded`, settled once the target is read again) Undo
+   * rebases them instead: it waits for that read, so they are restored over
+   * the target as the page then loads it, never over the version loaded
+   * before, which the next Save would meet as a conflict again. The edits
+   * belong to the edit session Discard starts: once another starts (a profile
+   * opened, a save), Undo restores nothing and says why, so edits and typed
+   * secrets never land in another target.
    */
   const discard = useCallback(
-    (rebase: boolean) => {
+    (reloaded?: Promise<void>) => {
       const { edits: current, save: saved } = latest.current;
       const { snapshot, editSessionId } = current;
       const { values, visibility, restates } = snapshot.pending;
@@ -694,29 +697,32 @@ export function useChangeReview({
         : localize('com_scope_base_config');
       current.handleDiscard();
       if ([values, visibility, restates].every((edits) => Object.keys(edits).length === 0)) return;
+      const restore = (rebase: boolean) => {
+        const now = latest.current;
+        if (now.edits.editSessionId !== editSessionId + 1) {
+          notifyInfo(localize('com_config_review_undo_expired', { target }));
+          return;
+        }
+        if (!rebase) now.save.holdRevision(revision);
+        now.edits.handleRestoreEdits(snapshot);
+      };
       notifyUndo(
         localize('com_config_review_discarded', { count }),
         localize('com_config_review_undo'),
         () => {
-          const now = latest.current;
-          if (now.edits.editSessionId !== editSessionId + 1) {
-            notifyInfo(localize('com_config_review_undo_expired', { target }));
-            return;
-          }
-          if (!rebase) now.save.holdRevision(revision);
-          now.edits.handleRestoreEdits(snapshot);
+          if (reloaded) void reloaded.then(() => restore(true));
+          else restore(false);
         },
       );
     },
     [model.count, editingScope, localize],
   );
-  const discardAll = useCallback(() => discard(false), [discard]);
+  const discardAll = useCallback(() => discard(), [discard]);
 
   const { reloadLatest: reloadTarget, cancelReview: closeAfterReload } = save;
   const reloadLatest = useCallback(() => {
-    discard(true);
+    discard(reloadTarget().catch(() => undefined));
     closeAfterReload();
-    void reloadTarget();
   }, [discard, closeAfterReload, reloadTarget]);
 
   /** A review that lists no change saves nothing, so nothing in it can block that. */

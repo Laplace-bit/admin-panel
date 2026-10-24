@@ -105,7 +105,7 @@ export interface EntryKeyMoveInput {
 
 /** An inherited credential an editor's overrides move, as the editor shows it under the credential. */
 export interface MovedCredential extends DroppedCredential {
-  /** The inherited value the target can restate (a `${VAR}` reference); absent for a hidden one. */
+  /** The inherited value the target can restate (a whole `${VAR}` reference); absent for a literal or a hidden key. */
   restatable?: string;
   /** The pending edits restate it, so LibreChat sends it to the new destination too. */
   restated: boolean;

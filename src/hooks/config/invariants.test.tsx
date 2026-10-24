@@ -3,8 +3,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import { Button, createToast } from '@clickhouse/click-ui';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { configSchema, PrincipalType } from 'librechat-data-provider';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, fireEvent, renderHook } from '@testing-library/react';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { act, render, screen, waitFor, fireEvent, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import {
@@ -144,15 +144,20 @@ interface TargetProps {
   targetRevision?: string | null;
 }
 
+/** No server read: the target's revision comes from the props. */
+const unread = async (): Promise<string | null> => null;
+
 /**
  * The page's edit, save and review hooks over Base or Role USER's profile, as
  * `ConfigPage` wires them: opening another target starts a new edit session
- * and closes the review.
+ * and closes the review. With `read`, Base's revision is what that server read
+ * returns, loaded and re-read (Reload, a save) through the base config query.
  */
 function renderTargets(
   contract: t.ConfigContract,
   initialProps: TargetProps = {},
   profiles: t.ConfigScope[] = [],
+  read?: () => Promise<string | null>,
 ) {
   const client = new QueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -174,6 +179,11 @@ function renderTargets(
   );
   return renderHook(
     ({ scope, targetRevision }: TargetProps) => {
+      const loaded = useQuery({
+        queryKey: ['baseConfig'],
+        queryFn: read ?? unread,
+        enabled: read !== undefined,
+      });
       const isEditingScope = scope !== undefined;
       const valueLayers = useMemo(
         () => (scope ? withScopeLayer(baseLayers, scope, userProfile, schemaPathSet) : baseLayers),
@@ -200,7 +210,7 @@ function renderTargets(
         overridePaths: new Set(Object.keys(flattenObject(own))),
         valueLayers,
         baseActiveConfigValues: active,
-        targetRevision,
+        targetRevision: read ? loaded.data : targetRevision,
       };
       const save = useConfigSave({
         schemaTree: tree,
@@ -297,6 +307,26 @@ function clickUndo() {
   const button = render(<Button htmlType="button" label={undo.label} onClick={undo.onClick} />);
   fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
   button.unmount();
+}
+
+/** A server storing Base at `revision`: it answers reads at once, or, after `hold()`, once `answer()` is called. */
+function heldReads(initial: string) {
+  let gate = Promise.resolve();
+  let release: () => void = () => undefined;
+  const server = {
+    revision: initial,
+    read: async (): Promise<string | null> => {
+      await gate;
+      return server.revision;
+    },
+    hold: () => {
+      gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+    answer: () => release(),
+  };
+  return server;
 }
 
 const sentOps = () =>
@@ -795,9 +825,64 @@ describe("Discard's Undo stays in its target (c)", () => {
     act(() => result.current.review.reloadLatest());
     rerender({ targetRevision: 'base:5' });
     clickUndo();
+    await waitFor(() =>
+      expect(result.current.edits.editedValues).toEqual({ 'mcpServers.acme.title': 'Acme 2' }),
+    );
     act(() => result.current.save.openReview());
     await act(() => result.current.review.confirm());
     expect(sentOps().map((call) => call.expectedRevision)).toEqual(['base:4', 'base:5']);
+  });
+
+  it('waits for the re-read Reload starts, and restores over the version it loads', async () => {
+    const server = heldReads('base:4');
+    applyMock.mockImplementation(async (call) => {
+      const { expectedRevision } = (call as { data: t.ApplyConfigChangesRequest }).data;
+      return expectedRevision === server.revision
+        ? saved
+        : { ...saved, applied: 0, conflict: true };
+    });
+    const { result } = renderTargets(batch, {}, [], server.read);
+    await waitFor(() => expect(result.current.save.editRevision).toBe('base:4'));
+    act(() => result.current.edits.handleFieldChange('mcpServers.acme.title', 'Acme 2'));
+    server.revision = 'base:5';
+    act(() => result.current.save.openReview());
+    await act(() => result.current.review.confirm());
+    expect(result.current.review.conflict).toBe(true);
+
+    server.revision = 'base:6';
+    server.hold();
+    act(() => result.current.review.reloadLatest());
+    clickUndo();
+    await act(async () => undefined);
+    expect(result.current.edits.editedValues).toEqual({});
+    await act(async () => server.answer());
+    await waitFor(() =>
+      expect(result.current.edits.editedValues).toEqual({ 'mcpServers.acme.title': 'Acme 2' }),
+    );
+    expect(result.current.save.editRevision).toBe('base:6');
+    act(() => result.current.save.openReview());
+    await act(() => result.current.review.confirm());
+    expect(sentOps().map((call) => call.expectedRevision)).toEqual(['base:4', 'base:6']);
+    expect(result.current.review.conflict).toBe(false);
+    expect(result.current.edits.editedValues).toEqual({});
+  });
+
+  it('restores nothing once another target opens while that re-read loads', async () => {
+    const server = heldReads('base:4');
+    const { result, rerender } = renderTargets(batch, {}, [], server.read);
+    await waitFor(() => expect(result.current.save.editRevision).toBe('base:4'));
+    act(() => result.current.edits.handleFieldChange('mcpServers.acme.title', 'Acme 2'));
+    server.hold();
+    act(() => result.current.review.reloadLatest());
+    clickUndo();
+    rerender({ scope: userRole });
+    await act(async () => server.answer());
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: expect.stringMatching(/^Nothing restored/) }),
+      ),
+    );
+    expect(result.current.edits.editedValues).toEqual({});
   });
 
   it('holds the revision of a restate alone, which is a pending edit too', () => {

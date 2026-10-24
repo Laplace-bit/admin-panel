@@ -9,8 +9,7 @@ import {
   isConfigValueEqual,
 } from './format';
 import { getEntryKey, diffOverride, entriesByKey } from './collections';
-import { SECRET_PREVIEW_MASK } from '@/constants';
-import { toSecretPreviewKey } from './secrets';
+import { toSecretPreviewKey, isEnvReference } from './secrets';
 
 /** The secrets an MCP server stores, by the object that holds each (`apiKey.key`, `oauth.client_secret`). */
 const MCP_SECRETS: readonly t.McpSecretKey[] = [
@@ -554,13 +553,15 @@ export function findDroppedCredentials(
 }
 
 /**
- * An inherited credential the target can restate: one it can read (a
- * `${VAR}` reference, not a hidden secret's preview or the fixed mask) and
- * LibreChat binds to where it is sent.
+ * An inherited credential the target can restate: a whole `${VAR}`
+ * reference, which names the key without holding it. Anything else is never
+ * copied into an override, whatever a server reads back for it: a literal
+ * (a librechat.yaml key a server shows as is, without `yamlSecretPreview`),
+ * a reference within other text, the fixed mask, a value each user enters.
+ * Only entering a key sends one to the new destination then.
  */
 function restatableValue(value: t.ConfigValue): string | undefined {
-  if (typeof value !== 'string' || value.trim() === '' || isUserEntered(value)) return undefined;
-  return value === SECRET_PREVIEW_MASK ? undefined : value;
+  return typeof value === 'string' && isEnvReference(value) ? value : undefined;
 }
 
 /** The credential the layer beneath holds for `ref`, when the target can restate it. */

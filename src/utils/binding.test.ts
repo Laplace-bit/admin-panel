@@ -536,6 +536,39 @@ describe('restating inherited credentials', () => {
     expect(restatableCredential(user, ref)).toBeUndefined();
   });
 
+  it('offers no literal a server reads back, nor a reference within other text', () => {
+    const offered = (apiKey: string) =>
+      restatableCredential({ endpoints: { custom: [{ ...moonshot, apiKey }] } }, ref);
+    const unsafe = [
+      'sk-live-0123456789abcdef',
+      'Bearer ${MS_KEY}',
+      '${MS_KEY}-2',
+      ' ${MS_KEY}',
+      '********',
+      '{{MS_KEY}}',
+    ];
+    expect(unsafe.map(offered)).toEqual(unsafe.map(() => undefined));
+    const literal = { ...moonshot, apiKey: 'sk-live-0123456789abcdef' };
+    const moved = { ...literal, baseURL: 'https://evil.dev' };
+    expect(findMovedEndpointKey(literal, moved, undefined, {})).toEqual({
+      ...ref,
+      moved: ['baseURL'],
+      restatable: undefined,
+      restated: false,
+    });
+    const github = {
+      type: 'http',
+      url: 'https://gh.dev/mcp',
+      apiKey: { key: 'ghp_0123456789abcdef' },
+    };
+    const servers = findMovedServerCredentials(
+      { github: { url: 'https://evil.dev/mcp' } },
+      { github },
+      {},
+    );
+    expect(servers.get('github')?.get('apiKey.key')).toMatchObject({ restatable: undefined });
+  });
+
   it('shows a moved endpoint key, restated or kept by the stored override', () => {
     const edited = { ...moonshot, baseURL: 'https://evil.dev' };
     expect(findMovedEndpointKey(moonshot, edited, undefined, {})).toEqual({
@@ -657,6 +690,58 @@ describe('planConfigChanges — restated inherited credentials (restate)', () =>
     const older = { ...features, secretRebinding: false };
     const plan = planConfigChanges([edit(moved), restate], snapshot(), older);
     expect(plan.sets[0].value).toEqual([{ name: 'Moonshot', baseURL: 'https://proxy.ms' }]);
+  });
+
+  it('never copies a literal key into the override, with or without a restate, and asks for one', () => {
+    const literal = { ...moonshot, apiKey: 'sk-live-0123456789abcdef' };
+    const plain: t.WriteSnapshot = { ...snapshot(), lower: { endpoints: { custom: [literal] } } };
+    const stored = { endpoints: { custom: [{ name: 'Moonshot', baseURL: 'https://proxy.ms' }] } };
+    const plans = [
+      planConfigChanges(
+        [edit({ ...literal, baseURL: 'https://proxy.ms' }, literal), restate],
+        plain,
+        features,
+      ),
+      planConfigChanges([restate], { ...plain, stored }, features),
+    ];
+    expect(plans.map((plan) => plan.sets)).toEqual([
+      [
+        {
+          fieldPath: 'endpoints.custom',
+          value: [{ name: 'Moonshot', baseURL: 'https://proxy.ms' }],
+        },
+      ],
+      [],
+    ]);
+    expect(plans[0].warnings).toEqual([
+      expect.objectContaining({ entryIdentity: 'Moonshot', warning: 'secretRebindingEnter' }),
+    ]);
+    expect(JSON.stringify(plans.map(({ sets, warnings }) => ({ sets, warnings })))).not.toContain(
+      'sk-live',
+    );
+  });
+
+  it('copies no MCP credential but a whole ${VAR} reference', () => {
+    const lower = (key: string): t.WriteSnapshot => ({
+      stored: {},
+      tombstones: [],
+      lower: {
+        mcpServers: { github: { type: 'http', url: 'https://gh.dev/mcp', apiKey: { key } } },
+      },
+      lowerKind: 'inherited',
+    });
+    const ops: t.ConfigChange[] = [
+      { op: 'set', path: 'mcpServers.github.url', value: 'https://proxy.github.dev/mcp' },
+      { op: 'restate', path: 'mcpServers', entry: 'github', secret: 'apiKey.key' },
+    ];
+    const written = (key: string) =>
+      planConfigChanges(ops, lower(key), features).sets.map(({ fieldPath }) => fieldPath);
+    expect(written('ghp_0123456789abcdef')).toEqual(['mcpServers.github.url']);
+    expect(written('Bearer ${GH_TOKEN}')).toEqual(['mcpServers.github.url']);
+    expect(written('${GH_TOKEN}')).toEqual([
+      'mcpServers.github.url',
+      'mcpServers.github.apiKey.key',
+    ]);
   });
 
   it("restates an inherited MCP credential into the server's override", () => {
