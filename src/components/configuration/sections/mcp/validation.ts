@@ -1,6 +1,6 @@
 import type * as t from '@/types';
-import { isSecretPath } from '../../review/diff';
 import { transportOf } from './transport';
+import { isSecretPath } from '@/utils';
 
 /** The missing field reported for an admin API key with no key, typed or stored. */
 export const ADMIN_API_KEY_FIELD = 'apiKey.key';
@@ -61,13 +61,13 @@ export function resolveEntryKey(
   return { entryKey: rest.slice(0, dotIdx), segments: rest.slice(dotIdx + 1).split('.') };
 }
 
-function lookupLeaf(obj: unknown, segments: string[]): t.ConfigValue | undefined {
-  let cursor: unknown = obj;
-  for (const seg of segments) {
-    if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) return undefined;
-    cursor = (cursor as Record<string, unknown>)[seg];
+function lookupLeaf(value: t.ConfigValue, segments: string[]): t.ConfigValue {
+  let cursor = value;
+  for (const segment of segments) {
+    if (!isPlainObject(cursor)) return undefined;
+    cursor = cursor[segment];
   }
-  return cursor as t.ConfigValue | undefined;
+  return cursor;
 }
 
 /** Merges leaf edits onto the baseline MCP entries (omitting deleted entries) so callers can validate the post-save state. `resetFallback`, when provided, supplies the value that an `undefined` leaf write would reveal after the actual save (e.g. in scope mode, a leaf reset removes the scope override and exposes the inherited base value). */
@@ -83,6 +83,7 @@ function mergeMcpEdits(
   const knownKeys = new Set(Object.keys(baseEntries));
   const deletedEntries = new Set<string>();
   const upsertEntries: Record<string, Record<string, t.ConfigValue>> = {};
+  const removedSecrets = new Map<string, Set<string>>();
 
   for (const [path, value] of edits) {
     if (!path.startsWith(ENTRY_PREFIX)) continue;
@@ -115,9 +116,10 @@ function mergeMcpEdits(
       const seed = baseEntries[entryKey];
       upsertEntries[entryKey] = seed ? deepClone(seed) : {};
     }
-    if (value === undefined && resetFallback) {
-      const inherited = lookupLeaf(resetFallback[entryKey], segments);
-      setLeaf(upsertEntries[entryKey], segments, inherited as t.ConfigValue);
+    if (value === undefined) {
+      resetLeaf(upsertEntries[entryKey], segments, resetFallback?.[entryKey]);
+      const removed = removedSecrets.get(entryKey) ?? new Set<string>();
+      removedSecrets.set(entryKey, removed.add(segments.join('.')));
     } else {
       setLeaf(upsertEntries[entryKey], segments, value);
     }
@@ -131,7 +133,7 @@ function mergeMcpEdits(
   }
   for (const [k, v] of Object.entries(upsertEntries)) {
     if (deletedEntries.has(k)) continue;
-    result[k] = v;
+    result[k] = keepStoredPreviews(baseline[k], v, removedSecrets.get(k));
   }
   return result;
 }
@@ -166,6 +168,59 @@ function hasText(value: t.ConfigValue | undefined): boolean {
   return typeof value === 'string' && value !== '';
 }
 
+/** Where a secret's masked preview is kept beside it (`apiKey.key` → `apiKey.keyPreview`). */
+function previewSegments(secret: string): string[] {
+  const segments = secret.split('.');
+  return [...segments.slice(0, -1), `${segments[segments.length - 1]}${PREVIEW_SUFFIX}`];
+}
+
+/**
+ * Writes what removing a server's own value at `segments` leaves: the value
+ * of the layer beneath (`below`), and for a secret its masked preview there
+ * too, as LibreChat removes a secret with its preview.
+ */
+export function resetLeaf(
+  target: Record<string, t.ConfigValue>,
+  segments: string[],
+  below: t.ConfigValue,
+): void {
+  setLeaf(target, segments, lookupLeaf(below, segments));
+  if (!isSecretPath(segments.join('.'))) return;
+  const preview = previewSegments(segments.join('.'));
+  setLeaf(target, preview, lookupLeaf(below, preview));
+}
+
+/**
+ * `next` (a server as a save leaves it) with the masked preview of each
+ * secret `saved` stores, in each holder (`apiKey`, `oauth`) `next` still
+ * writes without entering that secret: LibreChat keeps a stored secret the
+ * written object omits, so the server still has it after the save. A secret
+ * the edits remove themselves (`removed`, by its path in the server) goes.
+ */
+export function keepStoredPreviews(
+  saved: t.ConfigValue,
+  next: t.ConfigValue,
+  removed: ReadonlySet<string> = new Set(),
+): t.ConfigValue {
+  if (!isPlainObject(next)) return next;
+  const kept = storedSecrets(saved).filter((secret) => {
+    const segments = secret.split('.');
+    return (
+      !removed.has(secret) &&
+      isPlainObject(lookupLeaf(next, segments.slice(0, -1))) &&
+      !hasText(lookupLeaf(next, segments)) &&
+      !hasText(lookupLeaf(next, previewSegments(secret)))
+    );
+  });
+  if (kept.length === 0) return next;
+  const result = deepClone(next);
+  for (const secret of kept) {
+    const preview = previewSegments(secret);
+    setLeaf(result, preview, lookupLeaf(saved, preview));
+  }
+  return result;
+}
+
 /**
  * Whether an entry still configures the setting a secret belongs to: the
  * secret's object is still there (authentication not switched to None or to
@@ -179,25 +234,23 @@ export function usesSecret(entry: t.ConfigValue, secret: string): boolean {
 
 /** The first stored secret of the server an entry was renamed from that the entry still uses but neither re-enters nor still stores. */
 function lostSecret(entry: Record<string, t.ConfigValue>, original: t.ConfigValue): string | null {
-  const lost = storedSecrets(original).find((secret) => {
-    const segments = secret.split('.');
-    const preview = [...segments.slice(0, -1), `${segments[segments.length - 1]}${PREVIEW_SUFFIX}`];
-    return (
+  const lost = storedSecrets(original).find(
+    (secret) =>
       usesSecret(entry, secret) &&
-      !hasText(lookupLeaf(entry, segments)) &&
-      !hasText(lookupLeaf(entry, preview))
-    );
-  });
+      !hasText(lookupLeaf(entry, secret.split('.'))) &&
+      !hasText(lookupLeaf(entry, previewSegments(secret))),
+  );
   return lost ?? null;
 }
 
-/** Returns a list of validation errors for affected MCP entries after applying edits, so the save flow can block invalid transport-state combinations the per-leaf PATCH cannot catch. `resetFallback` is the inherited baseline (e.g. base config in scope mode) whose values get revealed when a scope reset removes an override. `renames` (`mcpServers.new` → `mcpServers.saved`) marks renamed servers: a secret the saved one stores can't move to the new name, so it must be entered again (`renamedFrom` is set on that error). */
+/** Returns a list of validation errors for affected MCP entries after applying edits, so the save flow can block invalid transport-state combinations the per-leaf PATCH cannot catch. `resetFallback` is the inherited baseline (e.g. base config in scope mode) whose values get revealed when a scope reset removes an override. `renames` (`mcpServers.new` → `mcpServers.saved`) marks renamed servers: a secret the saved one stores can't move to the new name, so it must be entered again (`renamedFrom` is set on that error). Servers in `carried` get the secrets of the server they were renamed or duplicated from on save (`getSecretCarry`), so they need none entered. */
 export function validateMcpCrossField(
   baseline: Record<string, t.ConfigValue>,
   edits: Array<[string, t.ConfigValue]>,
   resetFallback?: Record<string, t.ConfigValue>,
   renames: Readonly<Record<string, string>> = {},
-): Array<{ entryKey: string; missingField: string; renamedFrom?: string }> {
+  carried: ReadonlySet<string> = new Set(),
+): t.McpCrossFieldError[] {
   const merged = mergeMcpEdits(baseline, edits, resetFallback);
   const knownKeys = new Set(Object.keys(baseline));
   const affected = new Set<string>();
@@ -214,17 +267,19 @@ export function validateMcpCrossField(
       if (setsKey || !Object.hasOwn(baseline, parsed.entryKey)) keyChecked.add(parsed.entryKey);
     }
   }
-  const errors: Array<{ entryKey: string; missingField: string; renamedFrom?: string }> = [];
+  const errors: t.McpCrossFieldError[] = [];
   for (const entryKey of affected) {
     const entry = merged[entryKey];
     if (!isPlainObject(entry)) continue;
+    const isCarried = carried.has(entryKey);
     const missingField =
       missingTransportField(entry, baseline[entryKey]) ??
-      (keyChecked.has(entryKey) && lacksAdminKey(entry) ? ADMIN_API_KEY_FIELD : null);
+      (keyChecked.has(entryKey) && !isCarried && lacksAdminKey(entry) ? ADMIN_API_KEY_FIELD : null);
     if (missingField) {
       errors.push({ entryKey, missingField });
       continue;
     }
+    if (isCarried) continue;
     const original = renames[`${ENTRY_PREFIX}${entryKey}`]?.slice(ENTRY_PREFIX.length);
     const lost = original === undefined ? null : lostSecret(entry, baseline[original]);
     if (lost) errors.push({ entryKey, missingField: lost, renamedFrom: original });

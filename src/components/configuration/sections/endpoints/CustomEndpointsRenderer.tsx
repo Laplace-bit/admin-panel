@@ -1,15 +1,15 @@
 import { Button } from '@clickhouse/click-ui';
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type * as t from '@/types';
+import { useLocalize, useValuesScope, useEndpointRows, useEntryOverrideNotes } from '@/hooks';
 import { EndpointList, SourceBadge, StatusBadge, Badge, isDeletable } from './List';
-import { useLocalize, useValuesScope, useEndpointRows } from '@/hooks';
 import { RevealTargetContext } from '@/contexts/RevealTargetContext';
+import { describeOverrideNotes, sourceLabel } from '../../values';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { isConfigRecord, isRowVisible } from '@/utils';
 import { endpointHost, modelNames } from './model';
 import { SearchInput } from '@/components/shared';
 import { revealConfigPath } from '../../reveal';
-import { sourceLabel } from '../../values';
 import { EndpointCreator } from './Create';
 import { EndpointDrawer } from './Drawer';
 import { EndpointEditor } from './Editor';
@@ -68,6 +68,7 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
   const rowFilter = useContext(RowFilterContext);
   const revealTarget = useContext(RevealTargetContext);
   const path = `${parentPath}.custom`;
+  const overrideNotes = useEntryOverrideNotes(path);
   const customField = fields.find((field) => field.key === 'custom');
   const parentObj = isConfigRecord(parentValue) ? parentValue : {};
   const listValue = getValue(path, parentObj.custom ?? []);
@@ -92,6 +93,17 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
     const byName = new Map(rows.map((row) => [row.identity ?? '', modelNames(row.value)]));
     return (endpoint: string): readonly string[] => byName.get(endpoint) ?? [];
   }, [rows]);
+  /** The names the endpoints were loaded with, the ones a pending edit removes included. */
+  const loadedNames = useMemo(
+    () =>
+      new Set([
+        ...rows.flatMap((row) => (row.loadedName === undefined ? [] : [row.loadedName])),
+        ...removals.flatMap(({ value }) =>
+          isConfigRecord(value) && typeof value.name === 'string' ? [value.name] : [],
+        ),
+      ]),
+    [rows, removals],
+  );
   const inheritedNames = useMemo(
     () => rows.filter((row) => row.origin === 'inherited').map((row) => row.loadedName ?? ''),
     [rows],
@@ -237,7 +249,65 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
     open != null && open.origin === 'inherited' && !open.overridden && !overriding.has(open.key);
   const editable = open != null && !disabled && !readOnlyInherited;
 
+  const removalNotes = (removal: t.EndpointRemoval): string[] => {
+    const name = isConfigRecord(removal.value) ? removal.value.name : undefined;
+    return typeof name === 'string'
+      ? describeOverrideNotes(overrideNotes.left(name), localize)
+      : [];
+  };
+
+  /**
+   * What an endpoint's pending change in Base does to the profiles that
+   * override endpoints by name (`useEntryOverrideNotes`): a rename leaves
+   * their overrides under the saved name, a rename or new endpoint onto a
+   * name they still override takes theirs, and a moved destination stops the
+   * keys of their own they store for it.
+   */
+  const profileNotesOf = (row: t.EndpointRow): t.EntryOverrideNote[] => {
+    const { identity, loadedName } = row;
+    if (identity === undefined) return [];
+    const isSaved = loadedNames.has(identity);
+    if (loadedName !== undefined && loadedName !== identity) {
+      const taken = names.includes(loadedName);
+      const left = overrideNotes.left(loadedName, { next: identity, taken });
+      return isSaved ? left : [...left, ...overrideNotes.took(identity)];
+    }
+    if (!isSaved) return overrideNotes.took(identity);
+    return overrideNotes.moved(identity, {
+      lower: lowerEntry(identity),
+      before: row.saved,
+      after: row.value,
+    });
+  };
+
+  /** The notes of a pending change on the profiles that override the endpoint by name. */
+  const profileNotice = (row: t.EndpointRow) => {
+    const notes = describeOverrideNotes(profileNotesOf(row), localize);
+    if (notes.length === 0) return undefined;
+    return (
+      <Banner tone="warning" role="status">
+        <span className="flex flex-col gap-1">
+          {notes.map((note) => (
+            <span key={note}>{note}</span>
+          ))}
+        </span>
+      </Banner>
+    );
+  };
+
   const drawerNotice = (row: t.EndpointRow) => {
+    const origin = originNotice(row);
+    const profiles = profileNotice(row);
+    if (!profiles) return origin;
+    return (
+      <>
+        {origin}
+        {profiles}
+      </>
+    );
+  };
+
+  const originNotice = (row: t.EndpointRow) => {
     if (row.origin === 'yaml') {
       return (
         <Banner
@@ -404,6 +474,7 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
                 : undefined
             }
             onUndoRemoval={handleUndoRemoval}
+            removalNotes={removalNotes}
             idPrefix={idPrefix}
           />
           {visible.length === 0 && shownRemovals.length === 0 && (
@@ -449,6 +520,7 @@ export function CustomEndpointsRenderer(props: t.FieldRendererProps) {
             storedSecret={open.storedSecret}
             lowerEntry={open.loadedName ? lowerEntry(open.loadedName) : undefined}
             savedEntry={open.saved}
+            ownEntry={open.own}
             modelsOf={modelsOf}
             showChips={!open.isNew}
             revealField={revealField}

@@ -6,6 +6,8 @@ import type * as t from '@/types';
 import {
   toBatchOps,
   verifyWrite,
+  countSectionChanges,
+  findOversizedSections,
   getEntryKey,
   reportedPath,
   uniqueSkipped,
@@ -30,7 +32,6 @@ import {
   getConfigSection,
   MERGED_BACK_REASONS,
   VERSION_CONFLICT_CODE,
-  TOO_MANY_CHANGES_CODE,
   TERMS_NOT_ACCEPTED_CODE,
   TERMS_NOT_ACCEPTED_ISSUE,
 } from '@/constants';
@@ -172,13 +173,32 @@ function startsWith(segments: readonly string[], prefix: readonly string[]): boo
 }
 
 /**
+ * The sent entry a location inside a keyed collection names: an index there
+ * indexes the array that was sent, not the one the page shows (librechat.yaml
+ * entries first), so the issue is placed by the entry's identity and the
+ * path inside it.
+ */
+function locateSentEntry(
+  segments: readonly string[],
+  batch: t.SaveEntry[],
+): Pick<t.ConfigIssue, 'entryIdentity' | 'entryPath'> {
+  const sent = batch.find(({ fieldPath }) => startsWith(segments, fieldPath.split('.')));
+  const collection = sent ? getKeyedCollection(sent.fieldPath) : undefined;
+  const depth = sent ? sent.fieldPath.split('.').length : 0;
+  if (!sent || !collection || !Array.isArray(sent.value) || segments.length === depth) return {};
+  const [index, ...rest] = segments.slice(depth);
+  const identity = getEntryKey(sent.value[Number(index)], collection.key);
+  return { entryIdentity: identity, entryPath: reportedPath({ segments: rest }) };
+}
+
+/**
  * A rejected value the admin API reported. Its location is read key by key
  * where the server reports `segments` (`dottedKeys`), so a record key that
  * holds a dot stays one key; the issue shows on that key's record. An index
- * inside a keyed collection is mapped to the identity of that sent entry,
- * since it indexes the array that was sent. With `issueParams` the issue's
- * bounds and options word it ("must be at least 1"); without them a code
- * whose message needs one (`too_small`'s minimum) is worded without it.
+ * inside a keyed collection is mapped to the identity of that sent entry
+ * (`locateSentEntry`). With `issueParams` the issue's bounds and options
+ * word it ("must be at least 1"); without them a code whose message needs
+ * one (`too_small`'s minimum) is worded without it.
  */
 function attributeBackendIssue(
   issue: t.ReportedIssue,
@@ -193,21 +213,13 @@ function attributeBackendIssue(
   const params = features.issueParams ? issue.params : undefined;
   const described = classifyReportedIssue(issue.code, params);
   const message = describeIssueCode(described.code, described.params, 'is not a valid value');
-  const reported: t.ConfigIssue = {
+  return {
     path,
     code: params ? described.code : issue.code,
     message,
     ...(described.params && { params: described.params }),
+    ...locateSentEntry(segments, batch),
   };
-  const sent = batch.find(({ fieldPath }) => startsWith(segments, fieldPath.split('.')));
-  const collection = sent ? getKeyedCollection(sent.fieldPath) : undefined;
-  const depth = sent ? sent.fieldPath.split('.').length : 0;
-  if (!sent || !collection || !Array.isArray(sent.value) || segments.length === depth) {
-    return reported;
-  }
-  const [index, ...rest] = segments.slice(depth);
-  const identity = getEntryKey(sent.value[Number(index)], collection.key);
-  return { ...reported, entryIdentity: identity, entryPath: reportedPath({ segments: rest }) };
 }
 
 async function failureIssues(
@@ -220,6 +232,49 @@ async function failureIssues(
   return describeFailure(body, response.status, path, features, batch);
 }
 
+/** The MCP secret each re-entry code names, inside its server. */
+const MCP_REENTRY_SECRETS: Readonly<Record<string, string>> = {
+  MCP_API_KEY_REENTRY_REQUIRED: 'apiKey.key',
+  MCP_OAUTH_SECRET_REENTRY_REQUIRED: 'oauth.client_secret',
+};
+
+/**
+ * A secret the admin API wants entered again, shown on the secret: an MCP
+ * server's (`MCP_*_REENTRY_REQUIRED`, with the server and the settings that
+ * moved it), or one beside a destination the write changed
+ * (`CONFIG_SECRET_REENTRY_REQUIRED`, an issue per changed setting naming
+ * `secretPath`). A custom endpoint's key is named by its index in the list
+ * that was sent, so it is placed by the entry's name (`locateSentEntry`).
+ */
+function reentryIssues(body: t.PatchFieldsResponse, batch: t.SaveEntry[]): t.ConfigIssue[] | null {
+  const secret = body.code ? MCP_REENTRY_SECRETS[body.code] : undefined;
+  if (secret && typeof body.server === 'string') {
+    const fields = Array.isArray(body.fields) ? body.fields : [];
+    return [
+      {
+        path: `mcpServers.${body.server}.${secret}`,
+        code: 'secret_reentry_required',
+        message: describeIssueCode('secret_reentry_required', {}, body.error ?? ''),
+        params: { fieldPaths: fields.map((field) => `mcpServers.{}.${field}`).join('|') },
+      },
+    ];
+  }
+  if (body.code !== 'CONFIG_SECRET_REENTRY_REQUIRED' || !Array.isArray(body.issues)) return null;
+  const bySecret = new Map<string, string[]>();
+  for (const issue of body.issues) {
+    if (!issue.secretPath) continue;
+    const changed = reportedPath(issue);
+    bySecret.set(issue.secretPath, [...(bySecret.get(issue.secretPath) ?? []), changed]);
+  }
+  return [...bySecret].map(([path, changed]) => ({
+    path,
+    code: 'secret_reentry_required',
+    message: describeIssueCode('secret_reentry_required', {}, body.error ?? ''),
+    params: { fieldPaths: changed.join('|') },
+    ...locateSentEntry(path.split('.'), batch),
+  }));
+}
+
 /** A refused write as issues: the values it rejected, else the refusal itself, located at `path`. */
 function describeFailure(
   body: t.PatchFieldsResponse & { section?: string },
@@ -228,6 +283,8 @@ function describeFailure(
   features: t.ConfigFeatures,
   batch: t.SaveEntry[],
 ): t.ConfigIssue[] {
+  const reentry = reentryIssues(body, batch);
+  if (reentry && reentry.length > 0) return reentry;
   if (Array.isArray(body.issues) && body.issues.length > 0) {
     return body.issues.map((issue) => attributeBackendIssue(issue, batch, features));
   }
@@ -278,10 +335,24 @@ function fileWriteReport(
   }
 }
 
-/** Sets in PATCHes of at most the server's `maxPatchEntries` entries each. */
+/**
+ * The `renames` hints for a PATCH of `batch`: those whose entry it writes
+ * (the admin API refuses a hint for an entry the PATCH leaves out).
+ */
+function hintsFor(hints: readonly t.RenameHint[], batch: t.SaveEntry[]): t.RenameHint[] {
+  return hints.filter(({ path, name }) => {
+    const target = `${path}.${name}`;
+    return batch.some(
+      ({ fieldPath }) => fieldPath === target || fieldPath.startsWith(`${target}.`),
+    );
+  });
+}
+
+/** Sets in PATCHes of at most the server's `maxPatchEntries` entries each, with their `renames` hints. */
 async function patchFields(
   target: t.WriteTargetRef,
   entries: t.SaveEntry[],
+  hints: readonly t.RenameHint[],
   outcome: WriteOutcome,
   contract: t.ConfigContract,
   changed: t.PathIndex,
@@ -291,9 +362,14 @@ async function patchFields(
   const priority = target.type === 'base' ? { priority: 0 } : {};
   for (let i = 0; i < entries.length; i += maxEntries) {
     const batch = entries.slice(i, i + maxEntries);
+    const renames = hintsFor(hints, batch);
     const response = await apiFetch(`${targetConfigUrl(target)}/fields`, {
       method: 'PATCH',
-      body: JSON.stringify({ entries: batch, ...priority }),
+      body: JSON.stringify({
+        entries: batch,
+        ...priority,
+        ...(renames.length > 0 && { renames }),
+      }),
     });
     if (!response.ok) {
       outcome.failure = await failureIssues(response, batch[0].fieldPath, features, batch);
@@ -378,7 +454,7 @@ async function executePlan(
   const steps = [
     () => writeFieldOps(target, 'untombstone', plan.untombstones, outcome, features, changed),
     () => writeFieldOps(target, 'tombstone', plan.tombstones, outcome, features, changed),
-    () => patchFields(target, plan.sets, outcome, contract, changed),
+    () => patchFields(target, plan.sets, plan.renameHints, outcome, contract, changed),
     () => writeFieldOps(target, 'reset', plan.resets, outcome, features, changed),
   ];
   try {
@@ -561,16 +637,6 @@ function batchFailure(
   return describeFailure(body, status, (refused ?? ops[0]).fieldPath, features, sets);
 }
 
-/** How many changes of a batch fall in each config section, in the order the sections first appear. */
-function countSectionChanges(ops: t.ConfigBatchOp[]): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const { fieldPath } of ops) {
-    const section = getConfigSection(fieldPath);
-    counts.set(section, (counts.get(section) ?? 0) + 1);
-  }
-  return counts;
-}
-
 /** Sections packed in order into groups of at most `size` changes in all; a section is never split. */
 function packSections(counts: ReadonlyMap<string, number>, size: number): string[][] {
   const groups: string[][] = [];
@@ -587,16 +653,6 @@ function packSections(counts: ReadonlyMap<string, number>, size: number): string
   }
   if (group.length > 0) groups.push(group);
   return groups;
-}
-
-function tooManyChangesIssue(section: string, count: number, limit: number): t.ConfigIssue {
-  const params = { count, limit };
-  return {
-    path: section,
-    code: TOO_MANY_CHANGES_CODE,
-    message: describeIssueCode(TOO_MANY_CHANGES_CODE, params, 'has too many changes for one save'),
-    params,
-  };
 }
 
 /**
@@ -621,9 +677,7 @@ function splitPlan(
   const size = contract.limits.maxChangeOps;
   if (size <= 0 || ops.length <= size) return [ops];
   const counts = countSectionChanges(ops);
-  const oversized = [...counts]
-    .filter(([, count]) => count > size)
-    .map(([section, count]) => tooManyChangesIssue(section, count, size));
+  const oversized = findOversizedSections(counts, size);
   if (oversized.length > 0) return { ...planResult(plan), failed: oversized };
   const batches = packSections(counts, size).map((sections) => {
     const included = new Set(sections);
@@ -826,6 +880,19 @@ const configChangeSchema = z.discriminatedUnion('op', [
     path: safeFieldPath,
     key: z.string().min(1),
     identity: z.string().min(1),
+  }),
+  z.object({
+    op: z.literal('carry'),
+    path: safeFieldPath,
+    from: z.string().min(1),
+    to: z.string().min(1),
+    copy: z.boolean().optional(),
+  }),
+  z.object({
+    op: z.literal('restate'),
+    path: z.enum(['mcpServers', 'endpoints.custom']),
+    entry: z.string().min(1).max(200),
+    secret: z.enum(['apiKey', 'apiKey.key', 'oauth.client_secret']),
   }),
 ]);
 

@@ -15,7 +15,12 @@ import {
   VERSION_CONFLICT_CODE,
   DEFAULT_SCOPE_PRIORITY,
 } from '@/constants';
-import { collectOverridePaths, scopeOverrideEntries, stripSecretPreviewValues } from '@/utils';
+import {
+  findStoredSecrets,
+  collectOverridePaths,
+  scopeOverrideEntries,
+  stripSecretPreviewValues,
+} from '@/utils';
 import { normalizeAppServiceKeys } from '../config/normalize';
 import { apiErrorBodyMessage, apiErrorMessage, apiFetch } from '../utils/api';
 import { BASE_CONFIG_PRINCIPAL_ID } from '../constants';
@@ -46,17 +51,23 @@ function principalKey(principalType: PrincipalType, principalId: string): string
 
 /**
  * What a stored profile overrides: its leaf paths (secret previews and
- * permission fields left out) and the entries it stores in lists merged by entry.
+ * permission fields left out), the entries it stores in lists merged by
+ * entry with the settings each sets, and the secrets it stores (by where
+ * their previews are).
  */
 function profileOverrides(
   config: t.ScopeConfigDoc,
-): Pick<t.ConfigScope, 'overridePaths' | 'overrideEntries'> {
+): Pick<
+  t.ConfigScope,
+  'overridePaths' | 'overrideEntries' | 'overrideEntryPaths' | 'storedSecrets'
+> {
   const overrides = (config.overrides ?? {}) as t.ConfigRecord;
   const visible = stripSecretPreviewValues(overrides, '', getSchemaPathSet()) as t.ConfigRecord;
   const normalized = normalizeAppServiceKeys(visible);
   return {
     overridePaths: collectOverridePaths(normalized),
-    overrideEntries: scopeOverrideEntries(normalized),
+    ...scopeOverrideEntries(normalized),
+    storedSecrets: findStoredSecrets(normalizeAppServiceKeys(overrides)),
   };
 }
 

@@ -1,15 +1,18 @@
 import type * as t from '@/types';
 import {
+  isSecretPath,
   flattenObject,
   getValueAtPath,
   isConfigRecord,
   unflattenObject,
+  secretPreviewPath,
+  secretKeyForPreviewKey,
   stripSecretPreviewValues,
 } from '@/utils';
-import { SECRET_CONFIG_KEYS, TERMS_ACCEPTANCE_PATH } from '@/constants';
 import { isConfigValueEqual, normalizeForSave } from '../edits';
+import { TERMS_ACCEPTANCE_PATH } from '@/constants';
 import { findSchemaField } from '../controls';
-import { getFieldMeta } from '../meta';
+import { isPathUnder } from '../configMeta';
 
 /** Identity key of known keyed lists (D1/D2: entries are matched by it, never by index). */
 const IDENTITY_KEYS: Readonly<Record<string, string>> = {
@@ -60,20 +63,6 @@ export function stripIndices(path: string): string {
     .split('.')
     .filter((segment) => !INDEX_SEGMENT_RE.test(segment))
     .join('.');
-}
-
-/**
- * Whether a value at `path` must never be shown: a secret key (`apiKey`,
- * `client_secret`, …), the `key` of an `apiKey` object, or a field the
- * metadata registry marks secret.
- */
-export function isSecretPath(path: string): boolean {
-  const segments = path.split('.');
-  const last = segments[segments.length - 1];
-  if (SECRET_CONFIG_KEYS.has(last)) return true;
-  const parent = segments[segments.length - 2];
-  if (parent != null && SECRET_CONFIG_KEYS.has(parent) && last === 'key') return true;
-  return getFieldMeta(path)?.secret === true;
 }
 
 /** How the metadata registry names any key of a record. */
@@ -225,6 +214,17 @@ function leafKind(before: t.ConfigValue, after: t.ConfigValue): t.ChangeKind {
 }
 
 /**
+ * BEFORE of a secret the read hides: its masked preview (`apiKey.keyPreview`),
+ * all a server with `recordSecrets` returns of a stored MCP key, so entering
+ * a key over it reads as replacing it rather than setting one.
+ */
+function hiddenSecretBefore(path: string, before: t.ConfigValue, ctx: DiffContext): t.ConfigValue {
+  if (before != null || !isSecretPath(path)) return before;
+  const preview = getValueAtPath(ctx.input.baseline, secretPreviewPath(path));
+  return typeof preview === 'string' && preview !== '' ? preview : before;
+}
+
+/**
  * A change of one value. Outside collections, BEFORE is the target's own
  * value; when the target has none, `revertTarget` carries the value in effect
  * from the layer below (librechat.yaml or the default for Base, Base for a
@@ -232,11 +232,12 @@ function leafKind(before: t.ConfigValue, after: t.ConfigValue): t.ChangeKind {
  */
 function leafItem(
   path: string,
-  before: t.ConfigValue,
+  shown: t.ConfigValue,
   after: t.ConfigValue,
   ctx: DiffContext,
   entry: t.ChangeEntryRef | undefined,
 ): t.ChangeSummaryItem {
+  const before = hiddenSecretBefore(path, shown, ctx);
   const item: t.ChangeSummaryItem = {
     path,
     kind: leafKind(before, after),
@@ -573,13 +574,18 @@ function baselineAt(input: t.ChangeSummaryInput, path: string): t.ConfigValue {
   return normalizeForSave(stripped, findSchemaField(input.fields, path));
 }
 
-function resetItem(path: string, input: t.ChangeSummaryInput): t.ChangeSummaryItem {
-  const lower = input.lowerAt(path);
-  const entry = findEntry(
+/** The collection entry a reset is in (or is), read from the baseline or the target's own value. */
+function resetEntry(path: string, input: t.ChangeSummaryInput): t.ChangeEntryRef | undefined {
+  return findEntry(
     input.fields,
     path,
     (entryPath) => getValueAtPath(input.baseline, entryPath) ?? input.ownAt(entryPath),
   );
+}
+
+function resetItem(path: string, input: t.ChangeSummaryInput): t.ChangeSummaryItem {
+  const lower = input.lowerAt(path);
+  const entry = resetEntry(path, input);
   const before = input.ownAt(path);
   const item: t.ChangeSummaryItem = {
     path,
@@ -596,6 +602,66 @@ function resetItem(path: string, input: t.ChangeSummaryInput): t.ChangeSummaryIt
     return withEntry({ ...item, kind: 'removed', revertTarget: undefined }, entry);
   }
   return withEntry(item, entry);
+}
+
+/** Whether `key` of the object at `segments` is the preview of a secret the read hides. */
+function isHiddenSecret(segments: readonly string[], key: string): boolean {
+  const secret = secretKeyForPreviewKey(key);
+  return secret !== null && isSecretSegments([...segments, secret]);
+}
+
+/**
+ * The parts of the target's own value at `path` that a write of the whole
+ * path drops: each part no save writes at, above or under. A stored secret
+ * whose holder a save writes into stays (LibreChat keeps the secret an
+ * object omits), so only the parts beside it are dropped.
+ */
+function droppedParts(
+  path: string,
+  segments: string[],
+  own: t.ConfigValue,
+  written: readonly string[],
+  toRow: (path: string, segments: string[], before: t.ConfigValue) => t.ChangeSummaryItem,
+): t.ChangeSummaryItem[] {
+  if (own === undefined || written.some((save) => isPathUnder(path, save))) return [];
+  if (!written.some((save) => save.startsWith(`${path}.`))) return [toRow(path, segments, own)];
+  if (!isConfigRecord(own)) return [];
+  return Object.entries(own).flatMap(([key, value]) =>
+    isHiddenSecret(segments, key)
+      ? []
+      : droppedParts(`${path}.${key}`, [...segments, key], value, written, toRow),
+  );
+}
+
+/**
+ * The rows of a reset. One the save also writes under (an entry deleted,
+ * then written again under its name, which the plan sends as one set of
+ * it) lists what the target's own value there loses, each part removed or
+ * back to the layer beneath, stored secrets included. Revert undoes the
+ * removal.
+ */
+function resetItems(path: string, input: t.ChangeSummaryInput): t.ChangeSummaryItem[] {
+  const written = input.saves
+    .map(({ fieldPath }) => fieldPath)
+    .filter((fieldPath) => isPathUnder(fieldPath, path));
+  if (written.length === 0) return [resetItem(path, input)];
+  const entry = resetEntry(path, input);
+  const toRow = (part: string, segments: string[], before: t.ConfigValue): t.ChangeSummaryItem => {
+    const lower = input.lowerAt(part);
+    const reverts = lower?.value != null;
+    const item: t.ChangeSummaryItem = {
+      path: part,
+      ...(segments.some((segment) => segment.includes('.')) && { segments }),
+      kind: reverts ? 'reverted' : 'removed',
+      before,
+      after: undefined,
+      ...(reverts && { revertTarget: lower }),
+      sourcePath: path,
+      secret: isSecretSegments(segments) || undefined,
+    };
+    return withEntry(item, entry);
+  };
+  return droppedParts(path, path.split('.'), input.ownAt(path), written, toRow);
 }
 
 /**
@@ -640,7 +706,7 @@ export function summarizeChanges(input: t.ChangeSummaryInput): t.ChangeSummaryIt
     const ctx: DiffContext = { input, sourcePath: entry.entryPath };
     items.push(entryItem('added', entry, undefined, unflattenObject(leaves), ctx));
   }
-  for (const path of input.resets) items.push(resetItem(path, input));
+  for (const path of input.resets) items.push(...resetItems(path, input));
   return pairRecordRenames(items, input.renames ?? NO_RENAMES);
 }
 
@@ -649,17 +715,93 @@ function isWholeEntry(item: t.ChangeSummaryItem, kind: t.ChangeKind): boolean {
   return item.kind === kind && item.entryPath === item.path && item.collectionPath != null;
 }
 
-/** The fields a renamed entry changes as well, as rows under its new name. */
+/**
+ * What removing the target's own value `own` at `path` deletes with it, as
+ * rows: each stored part, or with `secretsOnly` each stored secret, a secret
+ * read back as its masked preview named by the secret it is. Parts of a list
+ * entry name it (`entryIdentity`).
+ */
+export function droppedOwnParts(
+  path: string,
+  own: t.ConfigValue,
+  secretsOnly: boolean,
+): t.ChangeSummaryItem[] {
+  if (own == null) return [];
+  if (Array.isArray(own)) {
+    const key = identityKeyFor(path, own);
+    return own.flatMap((entry, index) => {
+      const entryIdentity = identityOf(entry, key);
+      return droppedOwnParts(`${path}.${index}`, entry, secretsOnly).map((part) =>
+        entryIdentity === undefined ? part : { ...part, entryIdentity },
+      );
+    });
+  }
+  const toRow = (part: string, before: t.ConfigValue): t.ChangeSummaryItem => {
+    const secret = isSecretPath(part);
+    return {
+      path: part,
+      kind: 'removed',
+      before: secret ? undefined : before,
+      after: undefined,
+      secret: secret || undefined,
+    };
+  };
+  if (!isConfigRecord(own)) return secretsOnly ? [] : [toRow(path, own)];
+  return Object.entries(savedLeaves(own, path)).flatMap(([leaf, value]) => {
+    const part = `${path}.${leaf}`;
+    const isEmpty = value == null || (isConfigRecord(value) && Object.keys(value).length === 0);
+    if (isEmpty || (secretsOnly && !isSecretPath(part))) return [];
+    return [toRow(part, value)];
+  });
+}
+
+/** `value` at `path` without the masked previews of the secrets it stores (`apiKey.keyPreview`). */
+export function withoutSecretPreviews(value: t.ConfigValue, path: string): t.ConfigValue {
+  if (!isConfigRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, child]): Array<[string, t.ConfigValue]> => {
+      const secret = secretKeyForPreviewKey(key);
+      if (secret !== null && isSecretPath(`${path}.${secret}`)) return [];
+      return [[key, withoutSecretPreviews(child, `${path}.${key}`)]];
+    }),
+  );
+}
+
+/**
+ * Leaves of a saved entry with each masked preview under the secret it shows
+ * (`apiKey.keyPreview` → `apiKey.key`), so a stored secret compares with the
+ * one the renamed entry enters, or lacks.
+ */
+function savedLeaves(entry: t.ConfigRecord, entryPath: string): t.FlatConfigMap {
+  const leaves: t.FlatConfigMap = {};
+  for (const [leaf, value] of Object.entries(flattenObject(entry))) {
+    const dot = leaf.lastIndexOf('.');
+    const key = secretKeyForPreviewKey(leaf.slice(dot + 1));
+    const secret = key === null ? null : `${leaf.slice(0, dot + 1)}${key}`;
+    const isPreview = secret !== null && isSecretPath(`${entryPath}.${secret}`);
+    leaves[isPreview ? secret : leaf] = value;
+  }
+  return leaves;
+}
+
+/**
+ * The fields a renamed entry changes as well, as rows under its new name. A
+ * stored secret it enters again reads as replaced; one it doesn't is no row:
+ * the save carries it (`getSecretCarry`), or the card asks for it again.
+ */
 function renamedFieldChanges(
   renamed: t.ChangeSummaryItem,
   before: t.ConfigRecord,
   after: t.ConfigRecord,
 ): t.ChangeSummaryItem[] {
-  const beforeLeaves = flattenObject(before);
+  const beforeLeaves = savedLeaves(before, renamed.path);
   const afterLeaves = flattenObject(after);
   const leaves = [...new Set([...Object.keys(beforeLeaves), ...Object.keys(afterLeaves)])];
+  const leftBehind = (leaf: string) =>
+    afterLeaves[leaf] === undefined && isSecretPath(`${renamed.path}.${leaf}`);
   return leaves
     .filter((leaf) => !isConfigValueEqual(beforeLeaves[leaf], afterLeaves[leaf]))
+    .filter((leaf) => !leftBehind(leaf))
     .map((leaf) => {
       const path = `${renamed.path}.${leaf}`;
       return {

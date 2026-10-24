@@ -21,6 +21,8 @@ import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { ConfigContractContext } from '@/contexts/ContractContext';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { usePendingConfigValues } from '@/hooks/config/layers';
+import { RenamesContext } from '@/contexts/RenamesContext';
+import { createServerContract } from '@/test/fixtures';
 import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
 import { useConfigEdits } from '@/hooks/config/edits';
 import { McpServersRenderer } from '../Servers';
@@ -129,7 +131,7 @@ function Harness({
     schemaPathSet: getSchemaPathSet(),
   });
   const editedValues = preset ?? edits.editedValues;
-  const { visibilityEdits } = edits;
+  const { visibilityEdits, renameEdits, copyEdits } = edits;
   const shown = usePendingConfigValues(layers.effective, editedValues, layers);
   const data = useMemo(
     () => ({
@@ -139,27 +141,33 @@ function Harness({
     }),
     [layers, editedValues, shown, visibilityEdits],
   );
+  const renames = useMemo(
+    () => ({ renames: renameEdits, copies: copyEdits }),
+    [renameEdits, copyEdits],
+  );
   return (
     <ConfigContractContext.Provider value={contract}>
       <ConfigValuesProvider value={data}>
-        <RowFilterContext.Provider value={filter}>
-          <McpServersRenderer
-            fields={mcpFields}
-            parentPath="mcpServers"
-            parentValue={config.mcpServers}
-            getValue={(path, fallback) => deriveFieldValue(path, fallback, data)}
-            onChange={edits.handleFieldChange}
-            onDiscardField={edits.handleDiscardField}
-            onHideField={edits.handleHideField}
-            onUnhideField={edits.handleUnhideField}
-            onRenameEntry={edits.handleRenameEntry}
-            editedValues={editedValues}
-            yamlBaseKeys={new Set(Object.keys(YAML_SERVERS))}
-            isEditingScope={scope}
-            showConfiguredOnly={showConfiguredOnly}
-            editSessionId={edits.editSessionId}
-          />
-        </RowFilterContext.Provider>
+        <RenamesContext.Provider value={renames}>
+          <RowFilterContext.Provider value={filter}>
+            <McpServersRenderer
+              fields={mcpFields}
+              parentPath="mcpServers"
+              parentValue={config.mcpServers}
+              getValue={(path, fallback) => deriveFieldValue(path, fallback, data)}
+              onChange={edits.handleFieldChange}
+              onDiscardField={edits.handleDiscardField}
+              onHideField={edits.handleHideField}
+              onUnhideField={edits.handleUnhideField}
+              onRenameEntry={edits.handleRenameEntry}
+              editedValues={editedValues}
+              yamlBaseKeys={new Set(Object.keys(YAML_SERVERS))}
+              isEditingScope={scope}
+              showConfiguredOnly={showConfiguredOnly}
+              editSessionId={edits.editSessionId}
+            />
+          </RowFilterContext.Provider>
+        </RenamesContext.Provider>
       </ConfigValuesProvider>
     </ConfigContractContext.Provider>
   );
@@ -473,6 +481,89 @@ describe('McpServersRenderer — transport and auth switches (MCP-2, MCP-4)', ()
   });
 });
 
+describe('McpServersRenderer — switching back keeps a stored key', () => {
+  const vault: t.ConfigRecord = {
+    vault: {
+      type: 'streamable-http',
+      url: 'https://mcp.vault.dev/mcp',
+      apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '...4321' },
+    },
+  };
+
+  it('back from None to the API key the server stores leaves nothing to save, the key shown', () => {
+    render(<Harness extra={vault} contract={createServerContract({ recordSecrets: true })} />);
+    expand('vault');
+    openGroup('vault', 'com_config_mcp_group_auth');
+    fireEvent.click(within(card('vault')).getByText('com_config_mcp_auth_none'));
+    expect(edits.editedValues).toEqual({ 'mcpServers.vault.apiKey': undefined });
+    fireEvent.click(within(card('vault')).getByText('com_config_mcp_auth_api_key'));
+    expect(edits.editedValues).toEqual({});
+    const masked = within(card('vault')).getByLabelText(
+      /com_a11y_secret_configured:.*key/,
+    ) as HTMLInputElement;
+    expect(masked.value).toBe('...4321');
+  });
+
+  it('back from None to the OAuth the server stores keeps its client secret, leaving nothing to save', () => {
+    const oauthy: t.ConfigRecord = {
+      oauthy: {
+        type: 'streamable-http',
+        url: 'https://mcp.oauthy.dev/mcp',
+        oauth: { client_id: 'cid-1', client_secretPreview: '...9876' },
+        requiresOAuth: true,
+      },
+    };
+    render(<Harness extra={oauthy} contract={createServerContract({ recordSecrets: true })} />);
+    expand('oauthy');
+    openGroup('oauthy', 'com_config_mcp_group_auth');
+    fireEvent.click(within(card('oauthy')).getByText('com_config_mcp_auth_none'));
+    expect(edits.editedValues).toEqual({
+      'mcpServers.oauthy.oauth': undefined,
+      'mcpServers.oauthy.requiresOAuth': undefined,
+    });
+    fireEvent.click(within(card('oauthy')).getByText('com_config_mcp_auth_oauth'));
+    expect(edits.editedValues).toEqual({});
+  });
+
+  it('shows the stored key a server written again under its deleted name keeps, asking for none', async () => {
+    render(
+      <Harness
+        extra={vault}
+        contract={createServerContract({
+          recordSecrets: true,
+          changesBatch: true,
+          expectedRevision: true,
+        })}
+      />,
+    );
+    openMenu('vault');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_duplicate'));
+    });
+    openMenu('vault');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_delete'));
+    });
+    openMenu('vault-copy');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: /vault-copy/ });
+    fireEvent.change(input, { target: { value: 'vault' } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+    expect(edits.copyEdits).toEqual({});
+    expand('vault');
+    openGroup('vault', 'com_config_mcp_group_auth');
+    expect(within(card('vault')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
+    const masked = within(card('vault')).getByLabelText(
+      /com_a11y_secret_configured:.*key/,
+    ) as HTMLInputElement;
+    expect(masked.value).toBe('...4321');
+  });
+});
+
 describe('McpServersRenderer — stored secrets', () => {
   it('shows a stored OAuth client secret as its masked preview, with Replace and Cancel', () => {
     const vault: t.ConfigRecord = {
@@ -716,6 +807,25 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     expect(document.querySelector('[data-mcp-deleted="acme"]')).toBeInTheDocument();
   });
 
+  it('drops the record of a rename whose edits were all taken back from outside the card', async () => {
+    render(<Harness />);
+    openMenu('acme');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:acme' });
+    fireEvent.change(input, { target: { value: 'acme-docs' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(edits.renameEdits).toEqual({ 'mcpServers.acme-docs': 'mcpServers.acme' });
+    act(() => {
+      for (const path of Object.keys(edits.editedValues)) edits.handleDiscardField(path);
+    });
+    expect(edits.renameEdits).toEqual({});
+    act(() => edits.handleFieldChange('mcpServers.acme-docs.url', 'https://other.dev/mcp'));
+    expect(within(card('acme-docs')).queryByText('com_config_mcp_renamed_from:acme')).toBeNull();
+    expect(edits.renameEdits).toEqual({});
+  });
+
   it('rejects a rename onto an existing name and keeps the input open', async () => {
     render(<Harness />);
     openMenu('acme');
@@ -754,6 +864,183 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     expect(within(card('vault')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
     act(() => edits.handleFieldChange('mcpServers.vault-copy.apiKey.key', 'sk-new-key'));
     expect(within(card('vault-copy')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
+  });
+
+  it('renames a server the target stores with its secrets where the server carries them', async () => {
+    const vault: t.ConfigRecord = {
+      vault: {
+        type: 'streamable-http',
+        url: 'https://mcp.vault.dev/mcp',
+        oauth: { client_id: 'vault-id', client_secretPreview: 'sec...1234' },
+      },
+    };
+    render(<Harness extra={vault} contract={createServerContract({ recordSecrets: true })} />);
+    openMenu('vault');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:vault' });
+    fireEvent.change(input, { target: { value: 'vault-kb' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(edits.renameEdits).toEqual({ 'mcpServers.vault-kb': 'mcpServers.vault' });
+    expect(
+      within(card('vault-kb')).getByText('com_config_mcp_renamed_from_carried:vault'),
+    ).toBeInTheDocument();
+    expect(within(card('vault-kb')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
+    openGroup('vault-kb', 'com_config_mcp_group_auth');
+    const carried = within(card('vault-kb')).getByLabelText(
+      /com_a11y_secret_configured:.*client_secret/,
+    ) as HTMLInputElement;
+    expect(carried.value).toBe('sec...1234');
+  });
+
+  it('names the profile whose stored secrets a carried rename in a profile moves', async () => {
+    const vault: t.ConfigRecord = {
+      type: 'streamable-http',
+      url: 'https://mcp.vault.dev/mcp',
+      oauth: { client_id: 'vault-id', client_secretPreview: 'sec...1234' },
+    };
+    const scopeData = {
+      resolvedConfig: { mcpServers: { vault } },
+      changedPaths: ['mcpServers.vault.type', 'mcpServers.vault.url', 'mcpServers.vault.oauth'],
+      overrides: { mcpServers: { vault } },
+    };
+    render(
+      <Harness
+        scope
+        scopeData={scopeData}
+        contract={createServerContract({ recordSecrets: true })}
+      />,
+    );
+    openMenu('vault');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:vault' });
+    fireEvent.change(input, { target: { value: 'vault-kb' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(
+      within(card('vault-kb')).getByText('com_config_mcp_renamed_from_carried_scope:vault'),
+    ).toBeInTheDocument();
+  });
+
+  it('asks for the secrets again when renames swap two stored names, which no rename can carry', async () => {
+    const stored: t.ConfigRecord = {
+      vault: {
+        type: 'streamable-http',
+        url: 'https://mcp.vault.dev/mcp',
+        oauth: { client_id: 'vault-id', client_secretPreview: 'sec...1234' },
+      },
+      keys: {
+        type: 'streamable-http',
+        url: 'https://mcp.keys.dev/mcp',
+        apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '...4321' },
+      },
+    };
+    render(<Harness extra={stored} contract={createServerContract({ recordSecrets: true })} />);
+    const rename = async (from: string, to: string) => {
+      openMenu(from);
+      await act(async () => {
+        fireEvent.click(menuItem('com_config_mcp_action_rename'));
+      });
+      const input = screen.getByRole('textbox', { name: `com_a11y_rename_entry:${from}` });
+      fireEvent.change(input, { target: { value: to } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    };
+    await rename('vault', 'tmp');
+    expect(
+      within(card('tmp')).getByText('com_config_mcp_renamed_from_carried:vault'),
+    ).toBeInTheDocument();
+    await rename('keys', 'vault');
+    await rename('tmp', 'keys');
+    for (const [key, from] of [
+      ['vault', 'keys'],
+      ['keys', 'vault'],
+    ]) {
+      expect(
+        within(card(key)).getByText(`com_config_mcp_renamed_from:${from}`),
+      ).toBeInTheDocument();
+      expect(within(card(key)).queryByText(/com_config_mcp_renamed_from_carried/)).toBeNull();
+      expect(within(card(key)).getByText('com_config_mcp_duplicate_secrets')).toBeInTheDocument();
+    }
+  });
+
+  it('copies the stored secrets of a duplicate only where the server copies them', async () => {
+    const vault: t.ConfigRecord = {
+      vault: {
+        type: 'streamable-http',
+        url: 'https://mcp.vault.dev/mcp',
+        apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '...4321' },
+      },
+    };
+    const { unmount } = render(
+      <Harness extra={vault} contract={createServerContract({ recordSecrets: true })} />,
+    );
+    openMenu('vault');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_duplicate'));
+    });
+    expect(edits.copyEdits).toEqual({ 'mcpServers.vault-copy': 'mcpServers.vault' });
+    expect(
+      within(card('vault-copy')).getByText('com_config_mcp_copied_secrets:vault'),
+    ).toBeInTheDocument();
+    expect(within(card('vault-copy')).queryByText('com_config_mcp_duplicate_secrets')).toBeNull();
+    openMenu('vault-copy');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_delete'));
+    });
+    expect(edits.copyEdits).toEqual({});
+    unmount();
+    const batch = createServerContract({
+      recordSecrets: true,
+      changesBatch: true,
+      expectedRevision: true,
+    });
+    render(<Harness extra={vault} contract={batch} />);
+    openMenu('vault');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_duplicate'));
+    });
+    expect(edits.copyEdits).toEqual({ 'mcpServers.vault-copy': 'mcpServers.vault' });
+    expect(
+      within(card('vault-copy')).queryByText('com_config_mcp_copied_secrets:vault'),
+    ).toBeNull();
+    expect(
+      within(card('vault-copy')).getByText('com_config_mcp_duplicate_secrets'),
+    ).toBeInTheDocument();
+  });
+
+  it('asks a duplicate for its secrets again after Discard and Undo', async () => {
+    const vault: t.ConfigRecord = {
+      vault: {
+        type: 'streamable-http',
+        url: 'https://mcp.vault.dev/mcp',
+        oauth: { client_id: 'vault-id', client_secretPreview: '...1234' },
+      },
+    };
+    render(
+      <Harness
+        extra={vault}
+        contract={createServerContract({
+          recordSecrets: true,
+          changesBatch: true,
+          expectedRevision: true,
+        })}
+      />,
+    );
+    openMenu('vault');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_duplicate'));
+    });
+    const note = () => within(card('vault-copy')).queryByText('com_config_mcp_duplicate_secrets');
+    expect(note()).toBeInTheDocument();
+    const { snapshot } = edits;
+    act(() => edits.handleDiscard());
+    expect(document.querySelector('[data-mcp-server="vault-copy"]')).toBeNull();
+    act(() => edits.handleRestoreEdits(snapshot));
+    expand('vault-copy');
+    expect(note()).toBeInTheDocument();
   });
 
   it('duplicates a server under a free name', async () => {
@@ -1007,6 +1294,9 @@ describe('McpServersRenderer — profiles (MCP-10)', () => {
     render(<Harness scope />);
     openMenu('github');
     expect(menuItem('com_config_mcp_action_hide')).toHaveAttribute('aria-disabled', 'true');
+    for (const action of ['com_config_mcp_action_rename', 'com_config_mcp_action_delete']) {
+      expect(menuItem(action)).toHaveAttribute('title', 'com_config_mcp_defined_in_base_yaml');
+    }
     await act(async () => {
       fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     });
@@ -1015,6 +1305,26 @@ describe('McpServersRenderer — profiles (MCP-10)', () => {
       fireEvent.click(menuItem('com_config_mcp_action_hide'));
     });
     expect(edits.visibilityEdits).toEqual({ 'mcpServers.acme': 'hide' });
+  });
+
+  it('hides a librechat.yaml server for the profile on a server with yamlMcpHide, never a stdio one', async () => {
+    render(<Harness scope contract={createServerContract({ yamlMcpHide: true })} />);
+    openMenu('github');
+    expect(menuItem('com_config_mcp_action_hide')).not.toHaveAttribute('aria-disabled');
+    for (const action of ['com_config_mcp_action_rename', 'com_config_mcp_action_delete']) {
+      expect(menuItem(action)).toHaveAttribute('title', 'com_config_mcp_defined_in_base_yaml_hide');
+    }
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_hide'));
+    });
+    expect(edits.visibilityEdits).toEqual({ 'mcpServers.github': 'hide' });
+    const row = document.querySelector('[data-mcp-hidden="github"]') as HTMLElement;
+    expect(within(row).getByText('com_config_mcp_hidden_pending_boundary')).toBeInTheDocument();
+    expect(
+      within(card('everything')).queryByRole('button', {
+        name: 'com_config_mcp_actions:everything',
+      }),
+    ).toBeNull();
   });
 
   it('lists a server the profile hides, with Unhide', () => {

@@ -5,7 +5,10 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
+import { ConfigContractContext } from '@/contexts/ContractContext';
 import { ProvidersRenderer } from '../ProvidersRenderer';
+import { createServerContract } from '@/test/fixtures';
+import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
 import { extractSchemaTree } from '@/server/config';
 import { getValueAtPath } from '@/utils';
 
@@ -57,6 +60,7 @@ const STATUS: t.EndpointStatusMap = {
 function renderProviders(
   overrides: Partial<t.FieldRendererProps> = {},
   titleResolution?: t.ConfigRules['titleResolution'],
+  contract: t.ConfigContract = BUNDLED_CONFIG_CONTRACT,
 ) {
   const client = new QueryClient();
   client.setQueryData(['endpointStatus', 0], STATUS);
@@ -65,7 +69,9 @@ function renderProviders(
   const values: t.ConfigValuesData = { configValues: CONFIG, editedValues: {}, titleResolution };
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
-      <ConfigValuesProvider value={values}>{children}</ConfigValuesProvider>
+      <ConfigContractContext.Provider value={contract}>
+        <ConfigValuesProvider value={values}>{children}</ConfigValuesProvider>
+      </ConfigContractContext.Provider>
     </QueryClientProvider>
   );
   const utils = render(
@@ -236,6 +242,19 @@ describe('ProvidersRenderer', () => {
       }),
     ).toBeTruthy();
     expect(document.getElementById('endpoints-azureOpenAI-groups')).toHaveClass('azure-groups');
+  });
+
+  it('calls a stored Azure groups override stale, unless the server applies it (azureGroupSecrets)', () => {
+    const overrides = { dbOverridePaths: new Set(['endpoints.azureOpenAI.groups']) };
+    const { unmount } = renderProviders(overrides);
+    fireEvent.click(trigger('azureOpenAI'));
+    expect(screen.getByText('com_config_providers_azure_stale')).toBeTruthy();
+    unmount();
+    renderProviders(overrides, undefined, createServerContract({ azureGroupSecrets: true }));
+    fireEvent.click(trigger('azureOpenAI'));
+    expect(screen.getByText('com_config_providers_azure_readonly_applied')).toBeTruthy();
+    expect(screen.getByText('com_config_providers_azure_override_applied')).toBeTruthy();
+    expect(screen.queryByText('com_config_providers_azure_stale')).toBeNull();
   });
 
   it('keeps unsaved values of unset settings reachable when only set values are shown', () => {

@@ -9,12 +9,12 @@ import type {
   SkipReason,
   FieldValidationError,
 } from './config';
+import type { ReportedIssue, ReportedLocation, ReportedSkip, VisibilityEdit } from './changes';
 import type { ConfigScope, ScopeGateReason, ScopeSelection, ScopePermissions } from './scope';
 import type { TocEntry, JumpTarget, ConfigSearchHit, ConfigSearchItem } from './shell';
 import type { BaseOverridesState, ImportSkippedKey, ImportRequest } from './review';
 import type { TabBadge, PathIndex, ValueLayers } from './values';
 import type { FieldControlProps } from './controls';
-import type { ReportedIssue, ReportedLocation, ReportedSkip, VisibilityEdit } from './changes';
 import type { ConfigWriteRules } from './contract';
 
 export interface ConfigTab {
@@ -126,7 +126,7 @@ export interface ConfigTabContentProps {
   /** See `FieldRendererProps.onUnhideField`. */
   onUnhideField?: (path: string) => void;
   /** See `FieldRendererProps.onRenameEntry`. */
-  onRenameEntry?: (from: string, to: string | null) => void;
+  onRenameEntry?: (from: string, to: string | null, copy?: boolean) => void;
   /** While the tab filter is active: the sections holding a match (WS5). */
   visibleSectionIds?: Set<string>;
   /** While the tab filter is active: the data paths that match; other rows are hidden (WS5). */
@@ -388,10 +388,11 @@ export interface FieldRendererProps {
   onUnhideField?: (path: string) => void;
   /**
    * Records that a record entry was renamed (`mcpServers.a` → `mcpServers.b`),
-   * so the review pairs them; `to: null` drops the record of `from` (the
-   * renamed entry was deleted, and Undo records the rename again).
+   * so the review pairs them and Save carries its stored secrets, or with
+   * `copy` duplicated; `to: null` drops the record of `from` (the renamed
+   * entry was deleted, and Undo records the rename again).
    */
-  onRenameEntry?: (from: string, to: string | null) => void;
+  onRenameEntry?: (from: string, to: string | null, copy?: boolean) => void;
 }
 
 /** Where a save or import is written: base (all users) or one profile. */
@@ -554,6 +555,10 @@ export interface PatchFieldsResponse {
   skipped?: ReportedSkip[];
   /** Stored values the runtime merge leaves out (`secret_rebinding`, …). */
   ignored?: ReportedSkip[];
+  /** `MCP_API_KEY_REENTRY_REQUIRED` / `MCP_OAUTH_SECRET_REENTRY_REQUIRED`: the server whose secret to enter again. */
+  server?: string;
+  /** With `server`: the settings the write changed that decide where the secret is sent. */
+  fields?: string[];
 }
 
 /** Body of a `POST …/changes` reply (`changesBatch`): the stored document's revision and what the batch did. */

@@ -1,17 +1,18 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import type * as t from '@/types';
-import { createField } from '@/test/fixtures';
+import { SecretField, SecretInput, SecretNotSentNotice } from '../SecretField';
+import { RestatesContext } from '@/contexts/RestatesContext';
 import { ScalarUnionField } from '../ScalarUnionField';
 import { BoolOrListField } from '../BoolOrListField';
 import { ModelListField } from '../ModelListField';
 import { MultiEnumField } from '../MultiEnumField';
 import { TriStateField } from '../TriStateField';
+import { TextareaField } from '../TextareaField';
 import { LiteralField } from '../LiteralField';
+import { createField } from '@/test/fixtures';
 import { SelectField } from '../SelectField';
 import { NumberField } from '../NumberField';
-import { TextareaField } from '../TextareaField';
-import { SecretInput } from '../SecretField';
 import { StaticField } from '../StaticField';
 import { TextField } from '../TextField';
 
@@ -361,6 +362,87 @@ describe('StaticField', () => {
       />,
     );
     expect(container.textContent).toBe('sk-li...123');
+    rerender(
+      <StaticField
+        id="s"
+        field={field('apiKey', 'string')}
+        kind="secret"
+        value={undefined}
+        secretPreview="********"
+        secretMaskLabel="Set in librechat.yaml (hidden)"
+      />,
+    );
+    expect(container.textContent).toBe('Set in librechat.yaml (hidden)');
+  });
+});
+
+describe('SecretField', () => {
+  it('reads the fixed mask as where the key is set, and a stored preview as itself', () => {
+    const props = { id: 'k', value: '', onChange: vi.fn(), onCancel: vi.fn() };
+    const { rerender } = render(<SecretField {...props} maskedValue="********" />);
+    expect(screen.getByDisplayValue('com_config_secret_hidden')).toBeInTheDocument();
+    rerender(<SecretField {...props} maskedValue="********" maskLabel="From librechat.yaml" />);
+    expect(screen.getByDisplayValue('From librechat.yaml')).toBeInTheDocument();
+    rerender(<SecretField {...props} maskedValue="sk-...1234" maskLabel="From librechat.yaml" />);
+    expect(screen.getByDisplayValue('sk-...1234')).toBeInTheDocument();
+  });
+});
+
+describe('SecretNotSentNotice', () => {
+  const credential: t.MovedCredential = {
+    path: 'endpoints.custom',
+    entry: 'Moonshot',
+    secret: 'apiKey',
+    moved: ['baseURL'],
+    restatable: '${MS_KEY}',
+    restated: false,
+  };
+  const ref = { path: 'endpoints.custom', entry: 'Moonshot', secret: 'apiKey' };
+
+  it('offers to send a readable inherited credential there too, and to take that back', () => {
+    const onRestate = vi.fn();
+    const { rerender } = render(
+      <RestatesContext.Provider value={{ restates: {}, onRestate }}>
+        <SecretNotSentNotice credential={credential} fields="Base URL" />
+      </RestatesContext.Provider>,
+    );
+    expect(
+      screen.getByText(
+        'com_config_secret_not_sent_restatable:{"fields":"Base URL","value":"${MS_KEY}"}',
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'com_config_secret_restate' }));
+    expect(onRestate).toHaveBeenCalledWith(ref, true);
+    rerender(
+      <RestatesContext.Provider value={{ restates: {}, onRestate }}>
+        <SecretNotSentNotice credential={{ ...credential, restated: true }} fields="Base URL" />
+      </RestatesContext.Provider>,
+    );
+    expect(
+      screen.getByText('com_config_secret_restated:{"value":"${MS_KEY}"}'),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'com_config_secret_restate_undo' }));
+    expect(onRestate).toHaveBeenLastCalledWith(ref, false);
+  });
+
+  it('asks for a credential where none can be restated: hidden, read-only, or no handler', () => {
+    const hidden = { ...credential, restatable: undefined };
+    const { rerender } = render(<SecretNotSentNotice credential={credential} fields="Base URL" />);
+    expect(
+      screen.getByText('com_config_secret_not_sent:{"fields":"Base URL"}'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button')).toBeNull();
+    for (const props of [
+      { credential: hidden, fields: 'Base URL' },
+      { credential, fields: 'Base URL', disabled: true },
+    ]) {
+      rerender(
+        <RestatesContext.Provider value={{ restates: {}, onRestate: vi.fn() }}>
+          <SecretNotSentNotice {...props} />
+        </RestatesContext.Provider>,
+      );
+      expect(screen.queryByRole('button')).toBeNull();
+    }
   });
 });
 

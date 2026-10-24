@@ -141,6 +141,14 @@ const ISSUE_MESSAGES: Readonly<Record<string, string>> = {
   custom_missing_port: 'must include a port, for example localhost:11434',
   custom_public_ip:
     'is a public IP address: enter a private address, or a hostname that resolves to one',
+  secret_reentry_required:
+    'must be entered again: LibreChat does not send a stored key to a new destination',
+  env_reference_not_allowed:
+    'references an environment variable LibreChat does not let admin settings read',
+  MCP_API_KEY_MISSING:
+    'must be entered: this server sends an API key you provide for everyone. Enter it, or let each user provide their own',
+  MCP_SECRET_NOT_CARRIED:
+    "must be entered again: the one stored for {{from}} can't move to a new name",
   TOO_MANY_CHANGES:
     'has {{count}} changes, more than the {{limit}} LibreChat takes in one save: save some of them first, then the rest',
 };

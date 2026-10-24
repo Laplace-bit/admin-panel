@@ -59,6 +59,8 @@ export interface FieldControlProps {
   required?: boolean;
   /** Masked display of a stored secret (`<key>Preview` companion). */
   secretPreview?: string | null;
+  /** See `SecretFieldProps.maskLabel`. */
+  secretMaskLabel?: string;
   /** The secret has a queued replacement (see `SecretFieldProps.hasPendingEdit`). */
   hasPendingEdit?: boolean;
   /** Abandons a secret replacement without recording an edit. */

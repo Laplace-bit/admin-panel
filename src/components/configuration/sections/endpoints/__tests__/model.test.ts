@@ -134,6 +134,14 @@ describe('validateEndpoint', () => {
         loadedName: 'OpenRouter',
       }),
     ).toEqual([]);
+    expect(
+      codes({
+        entry: { ...stored, name: 'Renamed' },
+        storedSecret: true,
+        loadedName: 'OpenRouter',
+        carriesKey: true,
+      }),
+    ).toEqual([]);
   });
 
   it('warns about a base URL that is not a URL, but accepts env references', () => {

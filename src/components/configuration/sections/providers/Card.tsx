@@ -7,7 +7,12 @@ import {
   createSummaryReader,
   resolveProviderGroups,
 } from './layout';
-import { useLocalize, useGlobalTitleBlock, usePersistentExpanded } from '@/hooks';
+import {
+  useLocalize,
+  useConfigFeatures,
+  useGlobalTitleBlock,
+  usePersistentExpanded,
+} from '@/hooks';
 import { getValueAtPath, isConfigRecord, getUnknownConfigEntries } from '@/utils';
 import { GLOBAL_PROVIDER_KEY, DEFAULT_RECURSION_LIMIT } from '@/constants';
 import { ProviderStatusBadge, ProviderStatusRow } from './ProviderStatus';
@@ -43,6 +48,7 @@ function numberAt(value: t.ConfigValue): number | undefined {
  */
 export function ProviderCard({ field, parentPath, parentValue, ...rest }: t.ProviderCardProps) {
   const localize = useLocalize();
+  const { azureGroupSecrets } = useConfigFeatures();
   const rowFilter = useContext(RowFilterContext);
   const values = useContext(ConfigValuesContext);
   const hasGlobal = useGlobalTitleBlock();
@@ -133,13 +139,18 @@ export function ProviderCard({ field, parentPath, parentValue, ...rest }: t.Prov
         before: (
           <div className="flex flex-col gap-3">
             <InfoBanner
-              text={localize('com_config_providers_azure_readonly')}
+              text={localize(
+                azureGroupSecrets
+                  ? 'com_config_providers_azure_readonly_applied'
+                  : 'com_config_providers_azure_readonly',
+              )}
               dismissible={false}
             />
             {hasPathOverlap(groupsPath, dbOverridePaths ?? NO_PATHS) && (
               <StaleOverride
                 pendingRemoval={rest.pendingResets?.has(groupsPath) ?? false}
                 onRemove={disabled || !onResetField ? undefined : () => onResetField(groupsPath)}
+                applied={azureGroupSecrets}
               />
             )}
             <AzureGroupsTable

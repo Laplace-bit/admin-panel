@@ -1,6 +1,7 @@
 import type * as t from '@/types';
 import {
   getEntryKey,
+  isSecretPath,
   isConfigRecord,
   getValueAtPath,
   setValueAtPath,
@@ -12,7 +13,6 @@ import {
   secretPathForPreviewPath,
   stripSecretPreviewValues,
   findKeyedCollectionEntry,
-  isSecretKey,
 } from '@/utils';
 import { elementField, findSchemaField } from './controls';
 import { getFieldMeta } from './meta';
@@ -101,9 +101,13 @@ export function normalizeEditValue(
   return normalizeForSave(serialized, findSchemaField(fields, path));
 }
 
-/** Whether the last segment of a path names a secret (`apiKey`, `tavilyApiKey`, `client_secret`). */
-function isSecretPath(path: string): boolean {
-  return isSecretKey(path.slice(path.lastIndexOf('.') + 1));
+/** Whether a pending edit removes a path above `path` (`mcpServers.acme` for `mcpServers.acme.url`). */
+function hasPendingRemovalAbove(path: string, editedValues: t.FlatConfigMap): boolean {
+  for (let dot = path.lastIndexOf('.'); dot > 0; dot = path.lastIndexOf('.', dot - 1)) {
+    const ancestor = path.slice(0, dot);
+    if (Object.hasOwn(editedValues, ancestor) && editedValues[ancestor] === undefined) return true;
+  }
+  return false;
 }
 
 /**
@@ -119,7 +123,10 @@ function isSecretPath(path: string): boolean {
  * reported as `yamlValue`: there is no override to remove, and LibreChat has
  * no way to store "unset". Blanking a secret input never removes the stored
  * secret (that is an explicit reset). Paths the panel must not write
- * (read-only sections, permission fields) are reported in `skipped`.
+ * (read-only sections, permission fields) are reported in `skipped`. An edit
+ * under a pending removal (a server deleted, then written again under its
+ * name) is kept even when it equals the saved value: the removal clears what
+ * is saved, so dropping it would leave only the removal.
  */
 export function buildSavePayload(
   touchedPaths: ReadonlySet<string>,
@@ -154,7 +161,8 @@ export function buildSavePayload(
       stripSecretPreviewValues(deepSerializeKVPairs(context.baselineAt(path)), path, schemaPaths),
       field,
     );
-    if (isConfigValueEqual(normalized, baseline)) continue;
+    const rewritten = hasPendingRemovalAbove(path, editedValues);
+    if (!rewritten && isConfigValueEqual(normalized, baseline)) continue;
     if (normalized !== undefined) {
       saves.push({ fieldPath: path, value: normalized });
     } else if (isSecretPath(path)) {

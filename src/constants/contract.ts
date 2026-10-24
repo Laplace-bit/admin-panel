@@ -58,6 +58,12 @@ export const ABSENT_REVISION = 'absent';
 /** The admin API's code for a write whose `expectedRevision` no longer matches (409). */
 export const VERSION_CONFLICT_CODE = 'CONFIG_VERSION_CONFLICT';
 
+/** Pre-flight: an MCP server sends an API key the admin provides for everyone, and has none. */
+export const MCP_API_KEY_MISSING_CODE = 'MCP_API_KEY_MISSING';
+
+/** Pre-flight: a renamed MCP server uses a secret its saved name stores, which the save can't move. */
+export const MCP_SECRET_NOT_CARRIED_CODE = 'MCP_SECRET_NOT_CARRIED';
+
 /** A save refused before anything is written: one section holds more changes than one batch takes (`maxChangeOps`). */
 export const TOO_MANY_CHANGES_CODE = 'TOO_MANY_CHANGES';
 

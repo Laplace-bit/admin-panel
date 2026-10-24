@@ -1,9 +1,13 @@
 import { useMemo, useCallback, useRef, useEffect } from 'react';
 import type * as t from '@/types';
 import {
+  notifyInfo,
   notifyUndo,
+  isRelatedPath,
   revertTargetAt,
   getEntryKey,
+  isSecretPath,
+  findEntryIndex,
   getKeyedCollection,
   overriddenEntryKeys,
   resolveShadowedBy,
@@ -12,15 +16,21 @@ import {
   getValueAtPath,
   holdErrorToasts,
   hasPathOrAncestor,
+  isRestateWarning,
+  findEntryKeyMoves,
+  findEntryOverrides,
+  findUnboundOverrides,
+  restatableCredential,
   secretPathForPreviewPath,
 } from '@/utils';
 import {
   findEntry,
   lowerValue,
   applySaves,
-  isSecretPath,
   isObjectList,
+  droppedOwnParts,
   summarizeChanges,
+  withoutSecretPreviews,
 } from '@/components/configuration/review/diff';
 import { locate, scopeTypeLabel, buildReviewModel } from '@/components/configuration/review/group';
 import { revealConfigPath } from '@/components/configuration/review/reveal';
@@ -29,6 +39,7 @@ import { overrideCountUnit } from '@/components/configuration/counts';
 import { planRevert } from '@/components/configuration/review/revert';
 import { findSchemaField } from '@/components/configuration/controls';
 import { normalizeForSave } from '@/components/configuration/edits';
+import { SECRET_PREVIEW_MASK, getConfigSection } from '@/constants';
 import { useConfigContract } from './contract';
 import { useLocalize } from '../useLocalize';
 
@@ -48,6 +59,312 @@ function goToPath(item: t.ChangeSummaryItem): string {
     return item.collectionPath;
   }
   return item.path;
+}
+
+/** The credential of a custom endpoint, whose removal a moved destination leaves unsent. */
+const ENDPOINT_CREDENTIAL = 'apiKey';
+
+/** The plan warnings about a credential LibreChat drops once it is sent somewhere new. */
+const REBINDING_WARNINGS: ReadonlySet<t.ChangeWarning> = new Set([
+  'secretRebinding',
+  'secretRebindingEnter',
+]);
+
+/**
+ * Whether a plan warning about a moved credential (`secretRebinding`)
+ * belongs to a row: the setting that moved it, or within a collection entry
+ * (by identity) one of the settings it names, or the credential itself.
+ */
+function isRebindingRow(warning: t.ConfigWarning, item: t.ChangeSummaryItem): boolean {
+  if (!REBINDING_WARNINGS.has(warning.warning)) return false;
+  if (warning.entryIdentity === undefined) return isRelatedPath(warning.path, item.path);
+  if (item.collectionPath !== warning.path || item.entryIdentity !== warning.entryIdentity) {
+    return false;
+  }
+  const keys = [...(warning.keys ?? []), ENDPOINT_CREDENTIAL];
+  return keys.some((key) => item.path === `${item.entryPath}.${key}`);
+}
+
+/** Whether a plan warning about a duplicate's uncopied secrets (`secretNotCopied`) is the row of that duplicate. */
+function isUncopiedRow(warning: t.ConfigWarning, item: t.ChangeSummaryItem): boolean {
+  return (
+    warning.warning === 'secretNotCopied' &&
+    item.path === item.entryPath &&
+    item.collectionPath === warning.path &&
+    item.entryIdentity === warning.entryIdentity
+  );
+}
+
+/** The data path of the entry a restated credential belongs to, as the page lists it. */
+function restatedEntryPath(ref: t.CredentialRef, tree: t.ConfigValue): string | undefined {
+  if (ref.path === 'mcpServers') return `${ref.path}.${ref.entry}`;
+  const index = findEntryIndex(getValueAtPath(tree, ref.path), 'name', ref.entry);
+  return index < 0 ? undefined : `${ref.path}.${index}`;
+}
+
+/** Rows that delete the target's own value at their path (a removed entry, a removed setting). */
+const REMOVAL_KINDS: ReadonlySet<t.ChangeKind> = new Set(['removed', 'reverted']);
+
+/**
+ * The target's own value a removal row deletes: an entry of a keyed list by
+ * its identity (the page's positions differ from the stored list's), anything
+ * else at its path.
+ */
+function ownValueOf(item: t.ChangeSummaryItem, own: t.ConfigValue): t.ConfigValue {
+  const collection = item.collectionPath ? getKeyedCollection(item.collectionPath) : undefined;
+  if (!collection || item.entryPath !== item.path || item.entryIdentity === undefined) {
+    return getValueAtPath(own, item.path);
+  }
+  const list = getValueAtPath(own, collection.path);
+  const index = findEntryIndex(list, collection.key, item.entryIdentity);
+  return index < 0 || !Array.isArray(list) ? undefined : list[index];
+}
+
+/**
+ * A removal row with the stored secrets it deletes along (`dropped`), so the
+ * review names each one, and its value shown without their masked previews;
+ * a secret's own row already says so.
+ */
+function withDroppedSecrets(item: t.ChangeSummaryItem, own: t.ConfigValue): t.ChangeSummaryItem {
+  if (!REMOVAL_KINDS.has(item.kind) || item.secret) return item;
+  const dropped = droppedOwnParts(item.path, ownValueOf(item, own), true);
+  if (dropped.length === 0) return item;
+  return { ...item, before: withoutSecretPreviews(item.before, item.path), dropped };
+}
+
+/** Where a removed stored secret is, as the review's rows place it (`SecretLocation`). */
+function locateSecret(
+  secret: t.StoredSecret,
+  fields: t.SchemaField[],
+  baseline: t.ConfigValue,
+): t.SecretLocation {
+  if (secret.entry) {
+    const { collection, identity } = secret.entry;
+    const key = getKeyedCollection(collection)?.key ?? 'name';
+    const index = findEntryIndex(getValueAtPath(baseline, collection), key, identity);
+    const entryPath = `${collection}.${index < 0 ? identity : index}`;
+    return {
+      entry: { collectionPath: collection, entryPath, identity },
+      path: secret.path,
+      display: `${entryPath}.${secret.path}`,
+    };
+  }
+  const entry = findEntry(fields, secret.path, () => undefined);
+  if (!entry?.identity || !secret.path.startsWith(`${entry.entryPath}.`)) {
+    return { path: secret.path, display: secret.path };
+  }
+  return { entry, path: secret.path.slice(entry.entryPath.length + 1), display: secret.path };
+}
+
+/** `path` (of a row or a part of one) inside the entry a secret is in, matched by identity; undefined elsewhere. */
+function pathInEntry(
+  item: t.ChangeSummaryItem,
+  path: string,
+  location: t.SecretLocation,
+): string | undefined {
+  const { entry } = location;
+  if (!entry || item.collectionPath !== entry.collectionPath || !item.entryPath) return undefined;
+  if (item.entryIdentity !== entry.identity && item.previousIdentity !== entry.identity) {
+    return undefined;
+  }
+  if (path === item.entryPath) return '';
+  return path.startsWith(`${item.entryPath}.`) ? path.slice(item.entryPath.length + 1) : undefined;
+}
+
+/** Whether `path` (in `item`) is where a secret is, or (`above`) holds it. */
+function isAtSecret(
+  item: t.ChangeSummaryItem,
+  path: string,
+  location: t.SecretLocation,
+  above = false,
+): boolean {
+  const inner = pathInEntry(item, path, location);
+  const target = inner === undefined ? location.display : location.path;
+  const at = inner ?? path;
+  if (at === target) return true;
+  return above && (at === '' || target.startsWith(`${at}.`));
+}
+
+/**
+ * How a row names a removed stored secret: as its own secret row (`row`;
+ * `added` when it reads as setting a key there), as a removed secret above
+ * it, or as a part it lists (`dropped`); false when it does not.
+ */
+function nameOf(item: t.ChangeSummaryItem, location: t.SecretLocation): 'row' | 'added' | false {
+  if (item.secret && isAtSecret(item, item.path, location)) {
+    return item.kind === 'added' ? 'added' : 'row';
+  }
+  if (item.secret && REMOVAL_KINDS.has(item.kind) && isAtSecret(item, item.path, location, true)) {
+    return 'row';
+  }
+  return item.dropped?.some((part) => isAtSecret(item, part.path, location)) ? 'row' : false;
+}
+
+/**
+ * The rows with every stored secret the save takes away named (WS1, WS7),
+ * whichever change removes it. A row that reads as setting a key where one
+ * is stored reads as replacing it; a secret no row names yet is listed under
+ * the row of its entry, else of its section (`dropped`).
+ */
+function withRemovedSecrets(
+  items: t.ChangeSummaryItem[],
+  locations: t.SecretLocation[],
+): t.ChangeSummaryItem[] {
+  let rows = items;
+  for (const location of locations) {
+    const named = rows.map((item) => nameOf(item, location));
+    if (named.includes('row')) continue;
+    if (named.includes('added')) {
+      rows = rows.map((item, i) =>
+        named[i] === 'added' ? { ...item, kind: 'changed', before: SECRET_PREVIEW_MASK } : item,
+      );
+      continue;
+    }
+    const section = getConfigSection(location.display);
+    const holder = rows.findIndex((item) => isAtSecret(item, item.path, location, true));
+    const at =
+      holder >= 0 ? holder : rows.findIndex((item) => getConfigSection(item.path) === section);
+    if (at < 0) continue;
+    const part: t.ChangeSummaryItem = {
+      path: location.display,
+      kind: 'removed',
+      before: undefined,
+      after: undefined,
+      secret: true,
+      ...(location.entry && {
+        entryPath: location.entry.entryPath,
+        entryIdentity: location.entry.identity,
+      }),
+    };
+    rows = rows.map((item, i) =>
+      i === at ? { ...item, dropped: [...(item.dropped ?? []), part] } : item,
+    );
+  }
+  return rows;
+}
+
+/** Collections whose entries profiles override by name (an MCP server, a custom endpoint). */
+const NAMED_ENTRY_COLLECTIONS: ReadonlySet<string> = new Set(['mcpServers', 'endpoints.custom']);
+
+const NO_PROFILES: readonly t.ConfigScope[] = [];
+
+/** "mcpServers\u0000acme": an entry by collection and name, as one key. */
+function entryKey(collection: string, identity: string): string {
+  return `${collection}\u0000${identity}`;
+}
+
+/** Whether `tree` holds an entry of `collection` named `name` (an MCP server by key, a list entry by its key). */
+function hasEntry(tree: t.ConfigValue, collection: string, name: string): boolean {
+  const value = getValueAtPath(tree, collection);
+  if (!Array.isArray(value)) return isConfigRecord(value) && Object.hasOwn(value, name);
+  return findEntryIndex(value, getKeyedCollection(collection)?.key ?? 'name', name) >= 0;
+}
+
+/** A note on the profiles a change affects, when it affects any. */
+function noteOf(
+  change: t.EntryOverrideChange,
+  overrides: t.EntryOverride[],
+): t.EntryOverrideNote[] {
+  return overrides.length > 0 ? [{ change, overrides }] : [];
+}
+
+/**
+ * What an entry row's change does to the profiles that override entries by
+ * name: a rename or removal leaves their overrides under the old name (a
+ * rename's old name is `taken` when another row writes an entry under it, a
+ * swap or a chain), and a rename or new entry onto a name they override
+ * takes their overrides there.
+ */
+function entryRowNotes(
+  item: t.ChangeSummaryItem,
+  ctx: t.OverrideNoteContext,
+): t.EntryOverrideNote[] {
+  const { collectionPath: collection, entryIdentity: identity, previousIdentity } = item;
+  if (!collection || !NAMED_ENTRY_COLLECTIONS.has(collection) || item.entryPath !== item.path) {
+    return [];
+  }
+  const lookup = (name: string) => findEntryOverrides(ctx.profiles, collection, name);
+  /** A name Base already used before the save is no leftover: its overrides were made for it. */
+  const took = (name: string) =>
+    hasEntry(ctx.before, collection, name)
+      ? []
+      : noteOf({ kind: 'took', name, sendsKeys: ctx.sendsKeys }, lookup(name));
+  if (item.kind === 'renamed' && previousIdentity !== undefined && identity !== undefined) {
+    const taken = ctx.written.has(entryKey(collection, previousIdentity));
+    return [
+      ...noteOf(
+        { kind: 'renamed', name: previousIdentity, next: identity, taken },
+        lookup(previousIdentity),
+      ),
+      ...took(identity),
+    ];
+  }
+  if (identity === undefined) return [];
+  if (item.kind === 'added') return took(identity);
+  if (item.kind !== 'removed') return [];
+  /** A hide of a removed entry hides nothing once it is gone. */
+  const left = lookup(identity).filter((override) => override.overrides);
+  return noteOf({ kind: 'removed', name: identity }, left);
+}
+
+/**
+ * Where a row's setting is inside the entry `move` names (`url`), or
+ * undefined when the row is not one of its settings. A row of a record
+ * entry listed by path alone ("Reset base config") is matched by its path.
+ */
+function settingIn(item: t.ChangeSummaryItem, move: t.EntryKeyMove): string | undefined {
+  if (item.entryIdentity === undefined && !getKeyedCollection(move.collection)) {
+    const prefix = `${move.collection}.${move.identity}.`;
+    return item.path.startsWith(prefix) ? item.path.slice(prefix.length) : undefined;
+  }
+  const { entryPath } = item;
+  if (item.collectionPath !== move.collection || item.entryIdentity !== move.identity) {
+    return undefined;
+  }
+  if (entryPath === undefined || item.path === entryPath) return undefined;
+  return item.path.slice(entryPath.length + 1);
+}
+
+/** The row a moved destination's note goes on: its entry's first row at a moved setting, else its first setting row. */
+function keyMoveRow(rows: readonly t.ChangeSummaryItem[], move: t.EntryKeyMove): number {
+  const fields = new Set(Object.values(move.moves).flat());
+  const settings = rows.map((item) => settingIn(item, move));
+  const atMoved = settings.findIndex((setting) => setting !== undefined && fields.has(setting));
+  return atMoved >= 0 ? atMoved : settings.findIndex((setting) => setting !== undefined);
+}
+
+/**
+ * Base's rows with the profiles that override its entries by name, on each
+ * row whose change affects them (`overrideNotes`): a rename or removal
+ * leaves their overrides, stored keys and hides under the old name; a
+ * rename or new entry onto a name they override takes them; and an entry
+ * whose destination the save moves (`keyMoves`) no longer gets the keys of
+ * their own they store there (`findUnboundOverrides`), on the row of the
+ * moved setting.
+ */
+function withOverrideNotes(
+  rows: t.ChangeSummaryItem[],
+  options: t.OverrideNoteOptions,
+): t.ChangeSummaryItem[] {
+  const { profiles, keyMoves } = options;
+  if (profiles.length === 0) return rows;
+  const written = new Set(
+    rows.flatMap((item) =>
+      item.collectionPath && item.entryIdentity !== undefined && !REMOVAL_KINDS.has(item.kind)
+        ? [entryKey(item.collectionPath, item.entryIdentity)]
+        : [],
+    ),
+  );
+  const ctx: t.OverrideNoteContext = { ...options, written };
+  const notes = rows.map((item) => entryRowNotes(item, ctx));
+  for (const move of keyMoves) {
+    const found = findEntryOverrides(profiles, move.collection, move.identity);
+    const unbound = findUnboundOverrides(move.moves, found);
+    const at = unbound.length > 0 ? keyMoveRow(rows, move) : -1;
+    if (at < 0) continue;
+    notes[at] = [...notes[at], ...noteOf({ kind: 'moved', name: move.identity }, unbound)];
+  }
+  return rows.map((item, i) => (notes[i].length > 0 ? { ...item, overrideNotes: notes[i] } : item));
 }
 
 function namesOf(list: t.ConfigValue): Set<string> {
@@ -72,11 +389,21 @@ export function useChangeReview({
   edits,
   save,
   onTabChange,
+  profiles = NO_PROFILES,
 }: t.ChangeReviewOptions): t.ChangeReviewState {
   const localize = useLocalize();
-  const { titleResolution } = useConfigContract().rules;
+  const { rules, features } = useConfigContract();
+  const { titleResolution } = rules;
   const isScope = editingScope !== undefined;
-  const { savePlan, fieldErrors, changes, confirmSaveOpen: open } = save;
+  const {
+    savePlan,
+    fieldErrors,
+    changes,
+    warnings,
+    removedSecrets,
+    keyMoves,
+    confirmSaveOpen: open,
+  } = save;
   const {
     configValues,
     dbOverrides,
@@ -136,22 +463,60 @@ export function useChangeReview({
     ],
   );
 
-  /** Pending hides and unhides of inherited values: Save writes them as tombstone ops (WS1). */
-  const visibilityItems = useMemo(
-    () =>
-      Object.entries(edits.visibilityEdits).map(
-        ([path, edit]): t.ChangeSummaryItem => ({
-          path,
-          kind: edit === 'hide' ? 'hidden' : 'unhidden',
+  /**
+   * Pending hides and unhides of inherited values: Save writes them as
+   * tombstone ops (WS1), except those it leaves out (listed as skipped). A
+   * hide deletes what the target sets itself at and under the path, so each
+   * such part is listed under the row (`dropped`).
+   */
+  const visibilityItems = useMemo(() => {
+    const notSent = new Set(savePlan.skipped.map((skip) => skip.fieldPath));
+    return Object.entries(edits.visibilityEdits).flatMap(([path, edit]): t.ChangeSummaryItem[] => {
+      if (notSent.has(path)) return [];
+      const item: t.ChangeSummaryItem = {
+        path,
+        kind: edit === 'hide' ? 'hidden' : 'unhidden',
+        before: undefined,
+        after: undefined,
+        revertTarget: lowerAt(path),
+        sourcePath: path,
+        secret: isSecretPath(path) || undefined,
+      };
+      if (edit !== 'hide') return [item];
+      const dropped = droppedOwnParts(path, getValueAtPath(ownValues, path), false);
+      if (dropped.length === 0) return [item];
+      return [{ ...item, dropped, warnings: ['hideDeletesOwn'] }];
+    });
+  }, [edits.visibilityEdits, savePlan.skipped, lowerAt, ownValues]);
+
+  /**
+   * Inherited credentials the save restates, where the plan applies the
+   * restate (`secretRestated`): the target's override now holds each, so
+   * LibreChat sends it to the new destination too. Revert takes it back.
+   */
+  const restateItems = useMemo(() => {
+    const lower = (isScope ? configValues : yamlConfig) ?? {};
+    return Object.values(edits.restateEdits).flatMap((ref): t.ChangeSummaryItem[] => {
+      const entryPath = restatedEntryPath(ref, baseline);
+      const value = restatableCredential(lower, ref);
+      const applied = warnings.some((warning) => isRestateWarning(warning, ref));
+      if (entryPath === undefined || value === undefined || !applied) return [];
+      return [
+        {
+          path: `${entryPath}.${ref.secret}`,
+          entryIdentity: ref.entry,
+          collectionPath: ref.path,
+          entryPath,
+          kind: 'added',
           before: undefined,
-          after: undefined,
-          revertTarget: lowerAt(path),
-          sourcePath: path,
-          secret: isSecretPath(path) || undefined,
-        }),
-      ),
-    [edits.visibilityEdits, lowerAt],
-  );
+          after: value,
+          secret: true,
+          restate: ref,
+          warnings: ['secretRestated'],
+        },
+      ];
+    });
+  }, [edits.restateEdits, isScope, configValues, yamlConfig, baseline, warnings]);
 
   /**
    * Rows from the pending edits, flagged where the saved value changed since
@@ -162,22 +527,60 @@ export function useChangeReview({
     const drift = new Map(
       changes.filter((change) => change.drift).map((change) => [change.path, change.drift]),
     );
-    const rows = [...summarizeChanges(input), ...visibilityItems];
+    const locations = removedSecrets.map((secret) => locateSecret(secret, schemaTree, baseline));
+    const summarized = withRemovedSecrets(
+      [
+        ...summarizeChanges(input).map((item) => withDroppedSecrets(item, ownValues)),
+        ...visibilityItems,
+        ...restateItems,
+      ],
+      locations,
+    );
+    const rows = isScope
+      ? summarized
+      : withOverrideNotes(summarized, {
+          profiles,
+          keyMoves,
+          sendsKeys: !features.secretRebinding,
+          before: baseline,
+        });
     return rows.map((item) => {
       const found = drift.get(item.path);
       const shadowedBy =
         item.after !== undefined
           ? resolveShadowedBy(item.path, baseline, edits.editedValues, titleResolution)
           : undefined;
-      if (!found && !shadowedBy) return item;
-      const shadowed = SHADOW_WARNINGS[shadowedBy?.precedence ?? 'field'];
+      const planned = warnings.filter(
+        (warning) => isRebindingRow(warning, item) || isUncopiedRow(warning, item),
+      );
+      if (!found && !shadowedBy && planned.length === 0) return item;
+      const added: t.ChangeWarning[] = [
+        ...(shadowedBy ? [SHADOW_WARNINGS[shadowedBy.precedence ?? 'field']] : []),
+        ...new Set(planned.map((warning) => warning.warning)),
+      ];
       return {
         ...item,
         ...(found && { drift: found }),
-        ...(shadowedBy && { warnings: [...(item.warnings ?? []), shadowed] }),
+        ...(added.length > 0 && { warnings: [...(item.warnings ?? []), ...added] }),
       };
     });
-  }, [input, changes, visibilityItems, baseline, edits.editedValues, titleResolution]);
+  }, [
+    input,
+    changes,
+    warnings,
+    visibilityItems,
+    restateItems,
+    ownValues,
+    removedSecrets,
+    schemaTree,
+    baseline,
+    edits.editedValues,
+    titleResolution,
+    isScope,
+    profiles,
+    keyMoves,
+    features.secretRebinding,
+  ]);
 
   const labelContext = useMemo<t.ReviewLabelContext>(
     () => ({ localize, fields: schemaTree, tree: applySaves(baseline, savePlan.saves) }),
@@ -224,11 +627,15 @@ export function useChangeReview({
     });
   }, [model, editingScope, localize]);
 
-  const latest = useRef({ edits, baseline });
-  latest.current = { edits, baseline };
+  const latest = useRef({ edits, save, baseline });
+  latest.current = { edits, save, baseline };
 
   const revertRow = useCallback((row: t.ReviewRow) => {
     const { edits: current, baseline: tree } = latest.current;
+    if (row.item.restate) {
+      current.handleRestateCredential(row.item.restate, false);
+      return;
+    }
     if (row.item.kind === 'hidden') {
       current.handleUnhideField(row.item.path);
       return;
@@ -267,38 +674,66 @@ export function useChangeReview({
     [cancelReview, onTabChange, localize],
   );
 
-  const discardAll = useCallback(() => {
-    const { edits: current } = latest.current;
-    const snapshot = Object.entries(current.editedValues);
-    const visibility = Object.entries(current.visibilityEdits);
-    const count = Math.max(model.count, 1);
-    current.handleDiscard();
-    if (snapshot.length === 0 && visibility.length === 0) return;
-    notifyUndo(
-      localize('com_config_review_discarded', { count }),
-      localize('com_config_review_undo'),
-      () => {
-        const { edits: restore } = latest.current;
-        for (const [path, value] of snapshot) {
-          if (value === undefined) restore.handleResetField(path);
-          else restore.handleFieldChange(path, value);
+  /**
+   * Discards every pending edit; Undo puts them all back, renamed and
+   * duplicated entries included, against the revision they were made against.
+   * After Reload (`reloaded`, settled once the target is read again) Undo
+   * rebases them instead: it waits for that read, so they are restored over
+   * the target as the page then loads it, never over the version loaded
+   * before, which the next Save would meet as a conflict again. The edits
+   * belong to the edit session Discard starts: once another starts (a profile
+   * opened, a save), Undo restores nothing and says why, so edits and typed
+   * secrets never land in another target.
+   */
+  const discard = useCallback(
+    (reloaded?: Promise<void>) => {
+      const { edits: current, save: saved } = latest.current;
+      const { snapshot, editSessionId } = current;
+      const { values, visibility, restates } = snapshot.pending;
+      const count = Math.max(model.count, 1);
+      const revision = saved.editRevision;
+      const target = editingScope
+        ? `${scopeTypeLabel(editingScope, localize)}: ${editingScope.name}`
+        : localize('com_scope_base_config');
+      current.handleDiscard();
+      if ([values, visibility, restates].every((edits) => Object.keys(edits).length === 0)) return;
+      const restore = (rebase: boolean) => {
+        const now = latest.current;
+        if (now.edits.editSessionId !== editSessionId + 1) {
+          notifyInfo(localize('com_config_review_undo_expired', { target }));
+          return;
         }
-        for (const [path, edit] of visibility) {
-          if (edit === 'hide') restore.handleHideField(path);
-          else restore.handleUnhideField(path);
-        }
-      },
-    );
-  }, [model.count, localize]);
+        if (!rebase) now.save.holdRevision(revision);
+        now.edits.handleRestoreEdits(snapshot);
+      };
+      notifyUndo(
+        localize('com_config_review_discarded', { count }),
+        localize('com_config_review_undo'),
+        () => {
+          if (reloaded) void reloaded.then(() => restore(true));
+          else restore(false);
+        },
+      );
+    },
+    [model.count, editingScope, localize],
+  );
+  const discardAll = useCallback(() => discard(), [discard]);
 
   const { reloadLatest: reloadTarget, cancelReview: closeAfterReload } = save;
   const reloadLatest = useCallback(() => {
-    discardAll();
+    discard(reloadTarget().catch(() => undefined));
     closeAfterReload();
-    void reloadTarget();
-  }, [discardAll, closeAfterReload, reloadTarget]);
+  }, [discard, closeAfterReload, reloadTarget]);
 
-  const blocked = issues.some((issue) => issue.blocking);
+  /** A review that lists no change saves nothing, so nothing in it can block that. */
+  const blocked = model.count > 0 && issues.some((issue) => issue.blocking);
+
+  /** Save as the review reads: with no change listed, nothing is sent and the edits are dropped. */
+  const { handleConfirmSave, finishWithoutWrites } = save;
+  const confirm = useCallback(async () => {
+    if (model.count > 0) return handleConfirmSave();
+    finishWithoutWrites();
+  }, [model.count, handleConfirmSave, finishWithoutWrites]);
 
   return {
     model,
@@ -316,7 +751,7 @@ export function useChangeReview({
     isDirty: edits.isDirty,
     openReview: save.openReview,
     closeReview: save.cancelReview,
-    confirm: save.handleConfirmSave,
+    confirm,
     revertRow,
     goToRow,
     discardAll,
@@ -404,8 +839,10 @@ function panelOnlyRecordEntry(
 export function useBaseOverrides({
   schemaTree,
   layers,
-}: Pick<t.ChangeReviewOptions, 'schemaTree' | 'layers'>): t.BaseOverridesState {
+  profiles = NO_PROFILES,
+}: Pick<t.ChangeReviewOptions, 'schemaTree' | 'layers' | 'profiles'>): t.BaseOverridesState {
   const localize = useLocalize();
+  const { features } = useConfigContract();
   const { dbOverrides, yamlConfig, configValues, schemaDefaults, schemaPathSet, valueLayers } =
     layers;
   /** Base mode's layers name the layer a value reverts to (librechat.yaml even when it repeats a default). */
@@ -469,7 +906,17 @@ export function useBaseOverrides({
       if (entries.length === 0) return [reverted];
       return entries.map((item) => asEntryRevert(item, lowerList));
     });
-    const model = buildReviewModel(items, { localize, fields: schemaTree, tree: overrides });
+    const keyMoves = findEntryKeyMoves(
+      { lower: yamlConfig ?? {}, stored: overrides, storedAfter: {} },
+      features,
+    );
+    const model = buildReviewModel(
+      withOverrideNotes(
+        items.map((item) => withDroppedSecrets(item, overrides)),
+        { profiles, keyMoves, sendsKeys: !features.secretRebinding, before: configValues },
+      ),
+      { localize, fields: schemaTree, tree: overrides },
+    );
     /**
      * Counted the way the tab badges count, so they add up to it: a keyed list
      * is one stored value but counts per overridden entry, an MCP server once
@@ -499,5 +946,7 @@ export function useBaseOverrides({
     schemaTree,
     baseLayers,
     localize,
+    profiles,
+    features,
   ]);
 }

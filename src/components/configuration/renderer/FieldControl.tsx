@@ -168,6 +168,7 @@ export function FieldControl({
   disabled,
   required,
   secretPreview,
+  secretMaskLabel,
   hasPendingEdit,
   onCancelSecret,
   lockedKeys,
@@ -214,6 +215,7 @@ export function FieldControl({
         kind={kind}
         value={value}
         secretPreview={secretPreview}
+        secretMaskLabel={secretMaskLabel}
         fallback={fieldDefault.value}
         unit={unit}
         width={width}
@@ -293,6 +295,7 @@ export function FieldControl({
             {...common}
             value={typeof value === 'string' ? value : ''}
             maskedValue={secretPreview}
+            maskLabel={secretMaskLabel}
             onChange={onChange}
             onCancel={onCancelSecret}
             onRemove={fieldDefault.hasOwnValue && clear ? clear : undefined}

@@ -1,9 +1,12 @@
-import { useId, useState } from 'react';
+import { Button } from '@clickhouse/click-ui';
+import { useContext, useId, useState } from 'react';
 import type * as t from '@/types';
+import { RestatesContext } from '@/contexts/RestatesContext';
+import { cn, isFilledText, isEnvReference } from '@/utils';
 import { INPUT_CLASSES, widthClass } from './display';
 import { DecorativeIcon } from '@/components/shared';
 import { useDraftValue, useLocalize } from '@/hooks';
-import { cn, isFilledText, isEnvReference } from '@/utils';
+import { SECRET_PREVIEW_MASK } from '@/constants';
 import { FieldNotice } from './Notice';
 
 const ACTION_BUTTON_CLASSES =
@@ -115,7 +118,8 @@ export function SecretInput({
  * A secret that is set but redacted by the backend: a read-only masked
  * display with explicit Replace (and, when the target owns it, Remove)
  * actions. The masked value is never editable and never emitted through
- * onChange, so it cannot enter a save payload.
+ * onChange, so it cannot enter a save payload. A fixed mask, which shows
+ * nothing of the secret, reads as where it is set (`maskLabel`).
  */
 export function SecretField({
   id,
@@ -124,6 +128,7 @@ export function SecretField({
   onChange,
   onCancel,
   onRemove,
+  maskLabel,
   hasPendingEdit,
   disabled,
   width,
@@ -133,17 +138,18 @@ export function SecretField({
   const [replacing, setReplacing] = useState(false);
   const showInput = replacing || value !== '' || (hasPendingEdit ?? false);
   const fieldName = ariaProps['aria-label'] ?? id;
+  const isMask = maskedValue === SECRET_PREVIEW_MASK;
 
   if (!showInput) {
     return (
       <div className={cn('flex w-full items-center gap-2', widthClass(width))}>
         <input
           id={id}
-          value={maskedValue}
+          value={isMask ? (maskLabel ?? localize('com_config_secret_hidden')) : maskedValue}
           readOnly
           disabled
           aria-label={localize('com_a11y_secret_configured', { name: fieldName })}
-          className={cn(INPUT_CLASSES, 'flex-1 font-mono')}
+          className={cn(INPUT_CLASSES, 'flex-1', !isMask && 'font-mono')}
         />
         {!disabled && (
           <button
@@ -197,5 +203,72 @@ export function SecretField({
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * Where a secret read back as the fixed mask is set, for `maskLabel`: the
+ * target's own value, librechat.yaml, or the layer a profile inherits from.
+ */
+export function maskedSecretLabel(state: t.FieldState, localize: t.LocalizeFn): string {
+  if (state.isOverride) return localize('com_config_secret_hidden');
+  if (state.source === 'yaml') return localize('com_config_secret_hidden_yaml');
+  if (state.source === 'inherited') return localize('com_config_secret_hidden_inherited');
+  return localize('com_config_secret_hidden');
+}
+
+/**
+ * Under an inherited credential LibreChat no longer sends (`secretRebinding`):
+ * the target changed where it goes (`fields`) without entering one. A
+ * readable one (a `${VAR}` reference) can be restated, so LibreChat sends it
+ * there too; once restated, the notice says so, with Undo.
+ */
+export function SecretNotSentNotice({ credential, fields, disabled }: t.SecretNotSentNoticeProps) {
+  const localize = useLocalize();
+  const { onRestate } = useContext(RestatesContext);
+  const { path, entry, secret, restated } = credential;
+  /** The inherited value this page can restate: none where it can't be edited. */
+  const value = onRestate && !disabled ? credential.restatable : undefined;
+  const restate = (next: boolean) => onRestate?.({ path, entry, secret }, next);
+  if (restated && credential.restatable !== undefined) {
+    return (
+      <span
+        role="status"
+        className="flex flex-col items-start gap-2 text-xs text-(--cui-color-text-muted)"
+      >
+        {localize('com_config_secret_restated', { value: credential.restatable })}
+        {value !== undefined && (
+          <Button
+            htmlType="button"
+            type="secondary"
+            label={localize('com_config_secret_restate_undo')}
+            onClick={() => restate(false)}
+          />
+        )}
+      </span>
+    );
+  }
+  return (
+    <span
+      role="status"
+      className="flex flex-col items-start gap-2 text-xs text-(--settings-warn-fg)"
+    >
+      <span className="flex items-start gap-1">
+        <span aria-hidden="true" className="mt-px flex shrink-0 text-(--settings-warn-mark)">
+          <DecorativeIcon name="warning" size="xs" />
+        </span>
+        {value === undefined
+          ? localize('com_config_secret_not_sent', { fields })
+          : localize('com_config_secret_not_sent_restatable', { fields, value })}
+      </span>
+      {value !== undefined && (
+        <Button
+          htmlType="button"
+          type="secondary"
+          label={localize('com_config_secret_restate')}
+          onClick={() => restate(true)}
+        />
+      )}
+    </span>
   );
 }

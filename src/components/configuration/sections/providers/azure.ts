@@ -1,5 +1,6 @@
 import type * as t from '@/types';
 import { filledText, isConfigRecord, isEnvReference } from '@/utils';
+import { SECRET_PREVIEW_MASK } from '@/constants';
 
 function stringRecord(value: t.ConfigValue): Record<string, string> | undefined {
   if (!isConfigRecord(value)) return undefined;
@@ -13,6 +14,7 @@ function stringRecord(value: t.ConfigValue): Record<string, string> | undefined 
 const GROUP_KEYS: ReadonlySet<string> = new Set([
   'group',
   'apiKey',
+  'apiKeyPreview',
   'instanceName',
   'baseURL',
   'deploymentName',
@@ -61,6 +63,7 @@ export function toAzureGroups(value: t.ConfigValue): t.AzureGroupRow[] {
       index,
       group: entry.group,
       apiKey: filledText(entry.apiKey),
+      apiKeyPreview: filledText(entry.apiKeyPreview),
       instanceName: filledText(entry.instanceName),
       baseURL: filledText(entry.baseURL),
       deploymentName: filledText(entry.deploymentName),
@@ -83,10 +86,15 @@ const ENV_NAME = /^\$\{([A-Za-z0-9_]+)\}$/;
 
 /**
  * How a credential is shown: an environment reference (`${EASTUS_API_KEY}`)
- * by its variable name, any literal value hidden.
+ * by its variable name, any literal value hidden. A key the server reads
+ * back only as its preview (`azureGroupSecrets`) is set: a stored one shows
+ * its preview, and the fixed mask (a librechat.yaml literal) reads as hidden.
  */
-export function maskCredential(value: string | undefined): t.MaskedCredential {
-  if (!value) return { kind: 'none' };
+export function maskCredential(value: string | undefined, preview?: string): t.MaskedCredential {
+  if (!value) {
+    if (!preview) return { kind: 'none' };
+    return preview === SECRET_PREVIEW_MASK ? { kind: 'masked' } : { kind: 'stored', preview };
+  }
   const match = isEnvReference(value) ? ENV_NAME.exec(value) : null;
   if (match) return { kind: 'env', name: match[1] };
   return { kind: 'masked' };

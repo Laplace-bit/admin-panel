@@ -105,6 +105,90 @@ export function scopeSourceLabel(
   });
 }
 
+/** "Role: USER, Group: Design" for the profiles a note names. */
+function profileList(overrides: readonly t.EntryOverride[], localize: t.LocalizeFn): string {
+  return overrides.map(({ scope }) => scopeSourceLabel(scope, localize)).join(', ');
+}
+
+/** The locale keys of a change's sentences: on the profiles that override the entry, store their own keys there, and hide it. */
+function entryNoteKeys(change: t.EntryOverrideChange): [string?, string?, string?] {
+  switch (change.kind) {
+    case 'removed':
+      return ['com_config_entry_profiles_removed', 'com_config_entry_profiles_keys_kept'];
+    case 'moved':
+      return [undefined, 'com_config_entry_profiles_keys_unbound'];
+    case 'took':
+      return [
+        'com_config_entry_profiles_took',
+        change.sendsKeys
+          ? 'com_config_entry_profiles_keys_took'
+          : 'com_config_entry_profiles_keys_took_unbound',
+        'com_config_entry_profiles_hidden_took',
+      ];
+    case 'renamed':
+      return change.taken
+        ? ['com_config_entry_profiles_taken', 'com_config_entry_profiles_keys_kept']
+        : [
+            'com_config_entry_profiles_renamed',
+            'com_config_entry_profiles_keys_renamed',
+            'com_config_entry_profiles_hidden',
+          ];
+  }
+}
+
+/**
+ * What a change in Base does to the profiles that override the entry by
+ * name (`EntryOverrideChange`), one sentence each: their overrides, the keys
+ * of their own they store there, and their hides. A rename or removal leaves
+ * them under the old name, a moved destination stops their keys (the
+ * profiles given are those `findUnboundOverrides` finds), and a rename or a
+ * new entry onto a name they override takes them. Empty when no profile is
+ * affected.
+ */
+export function describeEntryOverrides(
+  overrides: readonly t.EntryOverride[],
+  change: t.EntryOverrideChange,
+  localize: t.LocalizeFn,
+): string[] {
+  const next = change.kind === 'renamed' ? change.next : '';
+  const sentence = (key: string | undefined, matching: t.EntryOverride[]): string[] =>
+    key === undefined || matching.length === 0
+      ? []
+      : [
+          localize(key, {
+            count: matching.length,
+            profiles: profileList(matching, localize),
+            name: change.name,
+            next,
+          }),
+        ];
+  const [overridesKey, keysKey, hidesKey] = entryNoteKeys(change);
+  return [
+    ...sentence(
+      overridesKey,
+      overrides.filter((override) => override.overrides),
+    ),
+    ...sentence(
+      keysKey,
+      overrides.filter((override) => override.secrets.length > 0),
+    ),
+    ...sentence(
+      hidesKey,
+      overrides.filter((override) => override.hidden),
+    ),
+  ];
+}
+
+/** Every note on the profiles that override an entry by name, worded (`describeEntryOverrides`). */
+export function describeOverrideNotes(
+  notes: readonly t.EntryOverrideNote[],
+  localize: t.LocalizeFn,
+): string[] {
+  return notes.flatMap(({ overrides, change }) =>
+    describeEntryOverrides(overrides, change, localize),
+  );
+}
+
 /** Display name of a value layer. */
 export function sourceLabel(
   source: t.ProvenanceSource,

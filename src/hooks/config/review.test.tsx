@@ -1,21 +1,27 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import '@/locales/i18n';
 import { configSchema } from 'librechat-data-provider';
-import { act, renderHook } from '@testing-library/react';
+import { Button, createToast } from '@clickhouse/click-ui';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, render, screen, fireEvent, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { extractSchemaTree, getSchemaPathSet } from '@/server/config';
-import { useChangeReview } from './review';
-import { useConfigEdits } from './edits';
-import { flattenObject } from '@/utils';
-import { applyConfigChangesFn } from '@/server';
 import { ConfigContractContext } from '@/contexts/ContractContext';
 import { createServerContract } from '@/test/fixtures';
 import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
+import { applyConfigChangesFn } from '@/server';
+import { useChangeReview } from './review';
+import { useConfigEdits } from './edits';
+import { flattenObject } from '@/utils';
 import { useConfigSave } from './save';
-import '@/locales/i18n';
 
 vi.mock('@/server', () => ({ applyConfigChangesFn: vi.fn(), resetBaseConfigFn: vi.fn() }));
+
+vi.mock('@clickhouse/click-ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@clickhouse/click-ui')>();
+  return { ...actual, createToast: vi.fn() };
+});
 
 const tree = extractSchemaTree(configSchema as t.ZodSchemaLike);
 const schemaPathSet = getSchemaPathSet();
@@ -82,6 +88,16 @@ function renderPage(
   );
 }
 
+/** The review's rows, entry rows included, in order. */
+function reviewRows(review: t.ChangeReviewState): t.ReviewRow[] {
+  return review.model.tabs.flatMap((tab) =>
+    tab.sections.flatMap((section) => [
+      ...section.rows,
+      ...section.entries.flatMap((entry) => entry.rows),
+    ]),
+  );
+}
+
 describe('the change review over the save pipeline (WS1 × WS7)', () => {
   it('shows one entry field change, although the write is a per-entry op', () => {
     const { result } = renderPage();
@@ -94,17 +110,113 @@ describe('the change review over the save pipeline (WS1 × WS7)', () => {
     const { review } = result.current;
     expect(review.model.count).toBe(1);
     expect(review.blocked).toBe(false);
-    const rows = review.model.tabs.flatMap((tab) =>
-      tab.sections.flatMap((section) => [
-        ...section.rows,
-        ...section.entries.flatMap((entry) => entry.rows),
-      ]),
-    );
+    const rows = reviewRows(review);
     expect(rows.map((row) => row.item.path)).toEqual(['endpoints.custom.0.baseURL']);
     expect(rows[0].item).toMatchObject({
       before: 'https://api.moonshot.ai/v1',
       after: 'https://api.moonshot.cn/v1',
     });
+  });
+
+  it('warns on the base URL that sends an inherited key somewhere new (secretRebinding)', () => {
+    const rowsOf = (contract: t.ConfigContract) => {
+      const { result } = renderPage(yaml, {}, yaml, contract);
+      act(() =>
+        result.current.edits.handleFieldChange('endpoints.custom.0', {
+          ...moonshot,
+          baseURL: 'https://evil.example/v1',
+        }),
+      );
+      return reviewRows(result.current.review);
+    };
+    const rows = rowsOf(createServerContract({ secretRebinding: true }));
+    expect(rows.map((row) => [row.item.path, row.item.warnings])).toEqual([
+      ['endpoints.custom.0.baseURL', ['secretRebinding']],
+    ]);
+    const older = rowsOf(BUNDLED_CONFIG_CONTRACT);
+    expect(older.map((row) => row.item.warnings)).toEqual([undefined]);
+  });
+
+  it('warns on an OCR or web search URL that moves an inherited key, asking for a credential', () => {
+    const features: t.ConfigRecord = {
+      ocr: { apiKey: '${OCR_API_KEY}', baseURL: 'https://api.mistral.ai/v1' },
+      webSearch: {
+        tavilyApiKeyPreview: '********',
+        tavilySearchUrl: 'https://api.tavily.com/search',
+      },
+    };
+    const rowsOf = (contract: t.ConfigContract) => {
+      const { result } = renderPage(features, {}, features, contract);
+      act(() => {
+        result.current.edits.handleFieldChange('ocr.baseURL', 'https://evil.example/v1');
+        result.current.edits.handleFieldChange('webSearch.tavilySearchUrl', 'https://evil.example');
+      });
+      return result.current.review.model.tabs.flatMap((tab) =>
+        tab.sections.flatMap((section) => section.rows),
+      );
+    };
+    const contract = createServerContract({ secretRebinding: true, webSearchStoredKeys: true });
+    expect(rowsOf(contract).map((row) => [row.item.path, row.item.warnings])).toEqual([
+      ['ocr.baseURL', ['secretRebindingEnter']],
+      ['webSearch.tavilySearchUrl', ['secretRebindingEnter']],
+    ]);
+    const older = rowsOf(BUNDLED_CONFIG_CONTRACT);
+    expect(older.map((row) => row.item.warnings)).toEqual([undefined, undefined]);
+  });
+
+  it('lists a restated inherited key under its endpoint, and Revert takes the restate back', () => {
+    const { result } = renderPage(yaml, {}, yaml, createServerContract({ secretRebinding: true }));
+    const ref: t.CredentialRef = { path: 'endpoints.custom', entry: 'Moonshot', secret: 'apiKey' };
+    act(() => {
+      result.current.edits.handleFieldChange('endpoints.custom.0', {
+        ...moonshot,
+        baseURL: 'https://proxy.example/v1',
+      });
+      result.current.edits.handleRestateCredential(ref, true);
+    });
+    const rowsNow = () => reviewRows(result.current.review);
+    expect(rowsNow().map((row) => [row.item.path, row.item.kind, row.item.warnings])).toEqual([
+      ['endpoints.custom.0.baseURL', 'changed', undefined],
+      ['endpoints.custom.0.apiKey', 'added', ['secretRestated']],
+    ]);
+    expect(rowsNow()[1].item).toMatchObject({ after: '${KIMI}', entryIdentity: 'Moonshot' });
+    act(() => result.current.review.revertRow(rowsNow()[1]));
+    expect(result.current.edits.restateEdits).toEqual({});
+    expect(rowsNow().map((row) => row.item.warnings)).toEqual([['secretRebinding']]);
+  });
+
+  it('drops a restate once the edits no longer move the key, leaving nothing to save', () => {
+    const { result } = renderPage(yaml, {}, yaml, createServerContract({ secretRebinding: true }));
+    const ref: t.CredentialRef = { path: 'endpoints.custom', entry: 'Moonshot', secret: 'apiKey' };
+    act(() => {
+      result.current.edits.handleFieldChange('endpoints.custom.0', {
+        ...moonshot,
+        baseURL: 'https://proxy.example/v1',
+      });
+      result.current.edits.handleRestateCredential(ref, true);
+    });
+    expect(Object.values(result.current.edits.restateEdits)).toEqual([ref]);
+    act(() => result.current.edits.handleFieldChange('endpoints.custom.0', moonshot));
+    expect(result.current.edits.restateEdits).toEqual({});
+    expect(result.current.review.isDirty).toBe(false);
+  });
+
+  it('warns on removing a restated key the moved destination then goes without', () => {
+    const own = { name: 'Moonshot', baseURL: 'https://proxy.example/v1', apiKey: '${KIMI}' };
+    const merged = { ...moonshot, ...own };
+    const config = { ...yaml, endpoints: { custom: [merged, zai] } };
+    const { result } = renderPage(
+      config,
+      { endpoints: { custom: [own] } },
+      yaml,
+      createServerContract({ secretRebinding: true }),
+    );
+    const { apiKey: _removed, ...withoutKey } = merged;
+    act(() => result.current.edits.handleFieldChange('endpoints.custom.0', withoutKey));
+    const rows = reviewRows(result.current.review);
+    expect(rows.map((row) => [row.item.path, row.item.warnings])).toEqual([
+      ['endpoints.custom.0.apiKey', ['secretRebinding']],
+    ]);
   });
 
   it('warns that a value Global overrides take precedence over has no effect (D11)', () => {
@@ -180,12 +292,7 @@ describe('the change review over the save pipeline (WS1 × WS7)', () => {
       edits.handleRenameEntry('mcpServers.dbsrv', 'mcpServers.dbsrv2');
     });
     act(() => result.current.edits.handleFieldChange('mcpServers.dbsrv2.title', 'Docs'));
-    const rows = result.current.review.model.tabs.flatMap((tab) =>
-      tab.sections.flatMap((section) => [
-        ...section.rows,
-        ...section.entries.flatMap((entry) => entry.rows),
-      ]),
-    );
+    const rows = reviewRows(result.current.review);
     expect(rows.map((row) => [row.item.kind, row.item.path])).toEqual([
       ['renamed', 'mcpServers.dbsrv2'],
       ['changed', 'mcpServers.dbsrv2.title'],
@@ -193,6 +300,136 @@ describe('the change review over the save pipeline (WS1 × WS7)', () => {
     act(() => result.current.review.revertRow(rows[0]));
     expect(result.current.edits.editedValues).toEqual({ 'mcpServers.dbsrv.title': 'Docs' });
     expect(result.current.edits.renameEdits).toEqual({});
+  });
+});
+
+describe('an MCP server written again under a deleted name', () => {
+  const batch = createServerContract({
+    recordSecrets: true,
+    changesBatch: true,
+    expectedRevision: true,
+  });
+  const acme: t.ConfigRecord = {
+    type: 'streamable-http',
+    url: 'https://mcp.acme.dev/mcp',
+    title: 'Acme',
+    headers: { 'X-Team': 'docs' },
+    apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '...1234' },
+  };
+  const oauthy: t.ConfigRecord = {
+    type: 'streamable-http',
+    url: 'https://mcp.oauthy.dev/mcp',
+    title: 'OAuthy',
+    oauth: { client_id: 'cid-1', client_secretPreview: '...9876' },
+  };
+  const stored = { mcpServers: { acme, oauthy } };
+
+  /** Deletes `acme`, then writes `leaves` under its name. */
+  function writeOverAcme(leaves: t.FlatConfigMap) {
+    const page = renderPage(stored, stored, {}, batch);
+    act(() => {
+      const { edits } = page.result.current;
+      edits.handleFieldChange('mcpServers.acme', undefined);
+      for (const [leaf, value] of Object.entries(leaves)) {
+        edits.handleFieldChange(`mcpServers.acme.${leaf}`, value);
+      }
+    });
+    return page;
+  }
+
+  it('lists the stored fields the new server drops, its stored key included, and Revert keeps them', () => {
+    const { result } = writeOverAcme({
+      type: 'streamable-http',
+      url: 'https://mcp.oauthy.dev/mcp',
+      title: 'OAuthy',
+      'oauth.client_id': 'cid-1',
+      'oauth.client_secret': 'cs-new-2222',
+    });
+    const rows = reviewRows(result.current.review);
+    const dropped = rows.filter((row) => row.item.kind === 'removed');
+    expect(dropped.map((row) => [row.item.path, row.item.secret])).toEqual([
+      ['mcpServers.acme.headers', undefined],
+      ['mcpServers.acme.apiKey', true],
+    ]);
+    expect(dropped[0].item).toMatchObject({
+      before: { 'X-Team': 'docs' },
+      after: undefined,
+      entryIdentity: 'acme',
+    });
+    expect(rows.map((row) => row.item.path)).toEqual(
+      expect.arrayContaining(['mcpServers.acme.url', 'mcpServers.acme.oauth.client_secret']),
+    );
+    act(() => result.current.review.revertRow(dropped[1]));
+    expect(result.current.edits.editedValues).not.toHaveProperty(['mcpServers.acme']);
+    expect(reviewRows(result.current.review).filter((row) => row.item.kind === 'removed')).toEqual(
+      [],
+    );
+  });
+
+  it('keeps a stored key whose holder the new server writes, and lists only what goes', () => {
+    const { result } = writeOverAcme({
+      type: 'streamable-http',
+      url: 'https://mcp.acme.dev/mcp',
+      title: 'Acme',
+      'apiKey.source': 'admin',
+      'apiKey.authorization_type': 'bearer',
+    });
+    const dropped = reviewRows(result.current.review).filter((row) => row.item.kind === 'removed');
+    expect(dropped.map((row) => row.item.path)).toEqual(['mcpServers.acme.headers']);
+  });
+});
+
+describe('Discard and its Undo', () => {
+  const vault: t.ConfigRecord = {
+    type: 'streamable-http',
+    url: 'https://mcp.vault.dev/mcp',
+    title: 'Vault',
+    oauth: { client_id: 'vault-id', client_secretPreview: 'sec...1234' },
+  };
+  const stored = { mcpServers: { vault } };
+  const contract = createServerContract({ recordSecrets: true });
+
+  it('puts back a renamed and a duplicated MCP server with what they carry', () => {
+    const toast = vi.mocked(createToast);
+    toast.mockClear();
+    const { result } = renderPage(stored, stored, {}, contract);
+    act(() => {
+      const { edits } = result.current;
+      edits.handleFieldChange('mcpServers.vault', undefined);
+      for (const name of ['vault-kb', 'vault-copy']) {
+        edits.handleFieldChange(`mcpServers.${name}.type`, 'streamable-http');
+        edits.handleFieldChange(`mcpServers.${name}.url`, 'https://mcp.vault.dev/mcp');
+        edits.handleFieldChange(`mcpServers.${name}.oauth.client_id`, 'vault-id');
+      }
+      edits.handleRenameEntry('mcpServers.vault', 'mcpServers.vault-kb');
+      edits.handleRenameEntry('mcpServers.vault-kb', 'mcpServers.vault-copy', true);
+    });
+    const { pending, touched } = result.current.edits.snapshot;
+    const rowsBefore = reviewRows(result.current.review).map((row) => [
+      row.item.kind,
+      row.item.path,
+    ]);
+    expect(rowsBefore).toContainEqual(['renamed', 'mcpServers.vault-kb']);
+
+    act(() => result.current.review.discardAll());
+    expect(result.current.edits.editedValues).toEqual({});
+    expect(result.current.edits.renameEdits).toEqual({});
+    const undo = toast.mock.calls.at(-1)?.[0].actions?.[0];
+    if (!undo) throw new Error('no Undo action');
+    render(<Button htmlType="button" label={undo.label} onClick={undo.onClick} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+
+    expect(result.current.edits.editedValues).toEqual(pending.values);
+    expect(result.current.edits.touchedPaths).toEqual(touched);
+    expect(result.current.edits.renameEdits).toEqual({
+      'mcpServers.vault-kb': 'mcpServers.vault',
+    });
+    expect(result.current.edits.copyEdits).toEqual({
+      'mcpServers.vault-copy': 'mcpServers.vault',
+    });
+    expect(reviewRows(result.current.review).map((row) => [row.item.kind, row.item.path])).toEqual(
+      rowsBefore,
+    );
   });
 });
 

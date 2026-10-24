@@ -127,14 +127,15 @@ function modelIssues(entry: t.ConfigValue): t.EndpointIssue[] {
  * Problems of one custom endpoint, by field. A literal key librechat.yaml
  * sets is redacted on read, so a key is required only of endpoints the
  * target adds. A renamed endpoint whose key is stored encrypted needs the key
- * again: LibreChat ties the stored key to the old name (CE-1).
+ * again where LibreChat ties the stored key to the old name (CE-1), not
+ * where the server moves it with the rename (`carriesKey`).
  */
 export function validateEndpoint(input: t.EndpointValidationInput): t.EndpointIssue[] {
-  const { entry, otherNames, fromLowerLayer, storedSecret, loadedName } = input;
+  const { entry, otherNames, fromLowerLayer, storedSecret, loadedName, carriesKey } = input;
   if (!isConfigRecord(entry)) return [];
   const issues: t.EndpointIssue[] = fromLowerLayer ? [] : nameIssues(entry.name, otherNames);
   const renamed = loadedName !== undefined && loadedName !== entry.name;
-  if (storedSecret && renamed && !hasText(entry.apiKey)) {
+  if (storedSecret && renamed && !carriesKey && !hasText(entry.apiKey)) {
     issues.push({ field: 'apiKey', code: 'renameNeedsKey', severity: 'error' });
   } else if (!fromLowerLayer && !storedSecret && !hasText(entry.apiKey)) {
     issues.push({ field: 'apiKey', code: 'apiKeyRequired', severity: 'error', unserved: true });

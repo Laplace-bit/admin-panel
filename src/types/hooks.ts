@@ -1,4 +1,15 @@
 import type {
+  ConfigIssue,
+  EntryKeyMove,
+  StoredSecret,
+  CredentialRef,
+  VisibilityEdit,
+  CollectionEdits,
+  ConfigWarning,
+  ChangeSummaryItem,
+  ApplyConfigChangesResult,
+} from './changes';
+import type {
   ConfigTab,
   SaveEntry,
   SavePayload,
@@ -6,14 +17,6 @@ import type {
   SkippedChange,
   SectionPermissionMap,
 } from './config-ui';
-import type {
-  ConfigIssue,
-  VisibilityEdit,
-  CollectionEdits,
-  ConfigWarning,
-  ChangeSummaryItem,
-  ApplyConfigChangesResult,
-} from './changes';
 import type {
   ConfigValue,
   ConfigRecord,
@@ -184,6 +187,19 @@ export interface PendingEdits {
   visibility: Record<string, VisibilityEdit>;
   /** Record entries renamed this session: each new entry path → the saved entry path it was renamed from. */
   renames: Readonly<Record<string, string>>;
+  /** Record entries duplicated this session: each new entry path → the saved entry path it copies. */
+  copies: Readonly<Record<string, string>>;
+  /** Inherited credentials restated this session, by `credentialKey` (see the `restate` change). */
+  restates: Readonly<Record<string, CredentialRef>>;
+}
+
+/** Record entries renamed and duplicated this session, as the pending edits hold them. */
+export type EntryRenames = Pick<PendingEdits, 'renames' | 'copies'>;
+
+/** The pending edits of the open target and the paths they touch, as Discard drops them. */
+export interface EditsSnapshot {
+  pending: PendingEdits;
+  touched: ReadonlySet<string>;
 }
 
 /** Pending edits of the open target and the handlers that change them (WS1). */
@@ -204,14 +220,20 @@ export interface ConfigEditsState {
   visibilityEdits: Record<string, VisibilityEdit>;
   /** See `PendingEdits.renames`. */
   renameEdits: Readonly<Record<string, string>>;
+  /** See `PendingEdits.copies`. */
+  copyEdits: Readonly<Record<string, string>>;
+  /** See `PendingEdits.restates`. */
+  restateEdits: Readonly<Record<string, CredentialRef>>;
   handleFieldChange: (path: string, value: ConfigValue) => void;
   handleResetField: (path: string) => void;
   /** Queues hiding an inherited value in the open profile (an explicit tombstone). */
   handleHideField: (path: string) => void;
   /** Queues unhiding a value the open profile hides. */
   handleUnhideField: (path: string) => void;
-  /** Records that the record entry at `from` was renamed to `to` (its edits are written separately). */
-  handleRenameEntry: (from: string, to: string | null) => void;
+  /** Records that the record entry at `from` was renamed (or, with `copy`, duplicated) to `to`; its edits are written separately. */
+  handleRenameEntry: (from: string, to: string | null, copy?: boolean) => void;
+  /** Restates an inherited credential the target's overrides move (see the `restate` change), or takes that back. */
+  handleRestateCredential: (ref: CredentialRef, restated: boolean) => void;
   /** See `SingleFieldRendererProps.onDiscardField`. */
   handleDiscardField: (path: string) => void;
   /** Drops every pending edit without starting a new edit session. */
@@ -221,6 +243,10 @@ export interface ConfigEditsState {
   resetEdits: () => void;
   /** The unsaved-changes bar's Discard. */
   handleDiscard: () => void;
+  /** The pending edits as they stand, which `handleRestoreEdits` puts back (Discard's Undo). */
+  snapshot: EditsSnapshot;
+  /** Puts back the edits of a snapshot, renames and restates included, over any made since. */
+  handleRestoreEdits: (snapshot: EditsSnapshot) => void;
 }
 
 /**
@@ -270,6 +296,9 @@ export interface ConfigSaveOptions {
     | 'editBaselines'
     | 'visibilityEdits'
     | 'renameEdits'
+    | 'copyEdits'
+    | 'restateEdits'
+    | 'handleRestateCredential'
   >;
 }
 
@@ -286,6 +315,10 @@ export interface ConfigSaveState {
   /** One row per pending change, by entry identity for collections (WS7 renders them). */
   changes: ChangeSummaryItem[];
   warnings: ConfigWarning[];
+  /** The stored secrets the save takes away (`findRemovedSecrets`). */
+  removedSecrets: StoredSecret[];
+  /** In Base, the entries the save keeps while moving where their keys go (`findEntryKeyMoves`). */
+  keyMoves: EntryKeyMove[];
   /** Problems that block saving: found in the pending edits, or returned by the last save. */
   issues: ConfigIssue[];
   /** Displayed path → readable message, for inline field errors (`FieldState.error`). */
@@ -293,6 +326,12 @@ export interface ConfigSaveState {
   /** One readable line per issue ("GPT › Provider must be "anthropic""). */
   issueSummaries: string[];
   handleConfirmSave: () => Promise<void>;
+  /** Ends a save the review shows nothing for: the edits are dropped and nothing is sent. */
+  finishWithoutWrites: () => void;
+  /** The revision the pending edits were made against (see `ApplyConfigChangesRequest.expectedRevision`). */
+  editRevision: Revision;
+  /** Holds `revision` as the one the pending edits were made against (edits restored with it). */
+  holdRevision: (revision: Revision) => void;
   /**
    * The last save found the target saved elsewhere since the edits were
    * loaded (`expectedRevision`), and wrote nothing.
@@ -309,6 +348,15 @@ export interface ConfigSaveState {
   announceWrite: AnnounceWriteFn;
   /** One labelled line per skipped change, for toasts. */
   describeSkipped: (skipped: SkippedChange[]) => string;
+}
+
+/** A target's stored revision as loaded: `null` without a document, `undefined` when not reported. */
+export type Revision = string | null | undefined;
+
+/** The revision pending edits were made against, and how to hold another (`useEditRevision`). */
+export interface HeldRevision {
+  revision: Revision;
+  hold: (revision: Revision) => void;
 }
 
 /** Options for `useResetBaseConfig` (WS1). */

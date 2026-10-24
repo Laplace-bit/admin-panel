@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { ConfigRecord, ConfigValue, FlatConfigMap, SchemaField } from './config';
+import type { PathErrors, MovedCredential } from './changes';
 import type { FieldDefault } from './controls';
-import type { PathErrors } from './changes';
 
 /**
  * How LibreChat connects to an MCP server (WS12). `http` is librechat.yaml's
@@ -49,6 +49,12 @@ export interface McpSwitchPlan {
   set: Array<[string, ConfigValue]>;
   /** Keys of the old choice the layer beneath sets: they can't be removed, so the switch is blocked. */
   locked: string[];
+  /**
+   * Keys of the chosen auth method the entry lacks: where the saved server
+   * stores one a pending switch removed, the switch back keeps it as saved
+   * (a stored key included) instead of starting it over.
+   */
+  restore?: string[];
 }
 
 /** Where a server comes from, for its card's source badge (MCP-5). */
@@ -174,6 +180,17 @@ export interface McpEditorProps {
   owned?: boolean;
   /** In a profile: the server keys the profile sets or edits, for "Set values only". */
   ownKeys?: ReadonlySet<string>;
+  /**
+   * Inherited secrets LibreChat no longer sends for this target
+   * (`secretRebinding`), by where they are in the server (`apiKey.key`).
+   */
+  movedCredentials?: ReadonlyMap<string, MovedCredential>;
+  /**
+   * The saved server whose stored secrets this one takes along on save (a
+   * rename or copy the server carries): its masked previews show on the
+   * secret rows this one leaves unset.
+   */
+  carriedFrom?: ConfigRecord;
   /** Whether a pending edit writes the server's `leaf` whole (a record such as `customUserVars`). */
   isPendingWhole?: (leaf: string) => boolean;
   editSessionId?: number;
@@ -231,4 +248,32 @@ export interface McpResolvedServer {
   value: ConfigValue | undefined;
   /** The latest whole-server edit reverts it to what the layer beneath defines. */
   reset: boolean;
+}
+
+/** A problem a save would leave an MCP server with, found before anything is sent. */
+export interface McpCrossFieldError {
+  entryKey: string;
+  /** The field the server lacks, inside it (`url`, `apiKey.key`). */
+  missingField: string;
+  /** The saved server a renamed one comes from, whose stored secret the save can't move. */
+  renamedFrom?: string;
+}
+
+/** Props of a saved server a pending edit deletes, listed with Undo (D9). */
+export interface McpDeletedRowProps {
+  serverKey: string;
+  onUndo: () => void;
+  focusUndo: boolean;
+  /** What the deletion leaves in the profiles that override the server by name (`describeEntryOverrides`). */
+  notes?: readonly string[];
+}
+
+/** Props of a server the open profile hides (MCP-10). */
+export interface McpHiddenRowProps {
+  serverKey: string;
+  /** The hide is unsaved: the button undoes it. */
+  pending: boolean;
+  /** LibreChat refuses the server to the profile's members, not only lists it (`yamlMcpHide`). */
+  blocksUse?: boolean;
+  onUnhide?: () => void;
 }

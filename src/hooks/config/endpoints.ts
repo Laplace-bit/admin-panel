@@ -7,6 +7,7 @@ import {
   hasHiddenSecret,
   isConfigValueEqual,
   getKeyedCollection,
+  getSecretCarry,
   overriddenEntryKeys,
 } from '@/utils';
 import {
@@ -18,6 +19,7 @@ import {
 import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
 import { getEntryTitle } from '@/components/configuration/fields/entries';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
+import { useConfigFeatures } from './contract';
 import { useLocalize } from '../useLocalize';
 import { useListKeys } from './keys';
 
@@ -47,6 +49,7 @@ function byName(list: t.ConfigValue): Map<string, t.ConfigRecord> {
  */
 export function useEndpointRows({ path, items }: t.EndpointRowsOptions): t.EndpointRows {
   const localize = useLocalize();
+  const { endpointRename } = getSecretCarry(useConfigFeatures());
   const layers = useContext(ConfigValuesContext)?.layers ?? null;
   const edit = useContext(CollectionEditsContext)[path];
   const keys = useListKeys({ items, identity: nameOf, prefix: 'endpoint' });
@@ -98,6 +101,7 @@ export function useEndpointRows({ path, items }: t.EndpointRowsOptions): t.Endpo
         isNew,
         edited: !isNew && savedEntry !== undefined && !isConfigValueEqual(savedEntry, item),
         saved: savedEntry,
+        own: storedEntry,
         host: endpointHost(value.baseURL),
         modelCount: modelNames(value).length,
         fetchesModels: fetchesModels(value),
@@ -108,6 +112,7 @@ export function useEndpointRows({ path, items }: t.EndpointRowsOptions): t.Endpo
           fromLowerLayer: fromLower,
           storedSecret,
           loadedName,
+          carriesKey: endpointRename,
         }),
       };
     });
@@ -135,5 +140,5 @@ export function useEndpointRows({ path, items }: t.EndpointRowsOptions): t.Endpo
       removals,
       lowerEntry: (name) => lower.get(name),
     };
-  }, [context, items, edit, keys, localize]);
+  }, [context, items, edit, keys, endpointRename, localize]);
 }

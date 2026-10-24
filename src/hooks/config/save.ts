@@ -10,6 +10,17 @@ import {
   notifySuccess,
   getValueAtPath,
   termsRefusalUrl,
+  toBatchOps,
+  carryChanges,
+  asConfigRecord,
+  carriedEntries,
+  describeIssueCode,
+  restateChanges,
+  isRestateWarning,
+  findEntryKeyMoves,
+  findRemovedSecrets,
+  countSectionChanges,
+  findOversizedSections,
   usesChangeBatch,
   planConfigChanges,
   mergedBackChanges,
@@ -19,22 +30,39 @@ import {
   ADMIN_API_KEY_FIELD,
   validateMcpCrossField,
 } from '@/components/configuration/sections/mcp/validation';
-import { TERMS_NOT_ACCEPTED_ISSUE, TERMS_NOT_ACCEPTED_CODE, UNSAFE_KEY_CODES } from '@/constants';
+import {
+  UNSAFE_KEY_CODES,
+  TERMS_NOT_ACCEPTED_CODE,
+  TERMS_NOT_ACCEPTED_ISSUE,
+  MCP_API_KEY_MISSING_CODE,
+  MCP_SECRET_NOT_CARRIED_CODE,
+} from '@/constants';
 import { buildConfigChanges, normalizeEditValue } from '@/components/configuration/edits';
 import { specListIssues } from '@/components/configuration/sections/specs/validation';
 import { isResetSent, summarizeChanges } from '@/components/configuration/summary';
 import { describeSkippedChanges } from '@/components/configuration/review/group';
+import { useConfigContract, useConfigWriteRules } from './contract';
 import { applyConfigChangesFn, resetBaseConfigFn } from '@/server';
 import { describeIssues } from '@/components/configuration/issues';
 import { hasPathOverlap } from '@/components/configuration/counts';
-import { labelForPath } from '@/components/configuration/meta';
-import { useConfigFeatures, useConfigWriteRules } from './contract';
 import { useLocalize } from '../useLocalize';
 
 function toTargetRef(target: t.WriteTarget): t.WriteTargetRef {
   if (target.type === 'base') return { type: 'base' };
   const { principalType, principalId } = target.scope;
   return { type: 'scope', scope: { principalType, principalId } };
+}
+
+/** A problem `validateMcpCrossField` finds, as a pre-flight issue on the field it names. */
+function toMcpIssue({ entryKey, missingField, renamedFrom }: t.McpCrossFieldError): t.ConfigIssue {
+  const path = `mcpServers.${entryKey}.${missingField}`;
+  if (renamedFrom !== undefined) {
+    const params = { from: renamedFrom };
+    const code = MCP_SECRET_NOT_CARRIED_CODE;
+    return { path, code, params, message: describeIssueCode(code, params, '') };
+  }
+  const code = missingField === ADMIN_API_KEY_FIELD ? MCP_API_KEY_MISSING_CODE : 'required';
+  return { path, code, message: describeIssueCode(code, undefined, '') };
 }
 
 function hasWrites(plan: t.WritePlan): boolean {
@@ -49,15 +77,14 @@ function hasWrites(plan: t.WritePlan): boolean {
  * re-read meanwhile (the review opening, a window-focus refetch) does not
  * move it, so a save over a version someone else saved since is a conflict
  * rather than a silent overwrite. Once the edits are saved or dropped it
- * follows the loaded revision again.
+ * follows the loaded revision again; `hold` puts back the revision of edits
+ * restored with them (Discard's Undo).
  */
-function useEditRevision(
-  loaded: string | null | undefined,
-  pending: boolean,
-): string | null | undefined {
+function useEditRevision(loaded: t.Revision, pending: boolean): t.HeldRevision {
   const [held, setHeld] = useState({ pending, revision: loaded });
   if (held.pending !== pending) setHeld({ pending, revision: loaded });
-  return pending && held.pending ? held.revision : loaded;
+  const hold = useCallback((revision: t.Revision) => setHeld({ pending: true, revision }), []);
+  return { revision: pending && held.pending ? held.revision : loaded, hold };
 }
 
 /** The admin session ended (signed out elsewhere or expired): the save never reached LibreChat. */
@@ -90,7 +117,7 @@ export function useConfigSave({
 }: t.ConfigSaveOptions): t.ConfigSaveState {
   const localize = useLocalize();
   const queryClient = useQueryClient();
-  const features = useConfigFeatures();
+  const { features, limits } = useConfigContract();
   const writeRules = useConfigWriteRules();
   const {
     configValues,
@@ -112,6 +139,9 @@ export function useConfigSave({
     editBaselines,
     visibilityEdits,
     renameEdits,
+    copyEdits,
+    restateEdits,
+    handleRestateCredential,
   } = edits;
   const isEditingScope = editingScope !== undefined;
 
@@ -124,9 +154,13 @@ export function useConfigSave({
 
   useEffect(() => setServerIssues([]), [editedValues, visibilityEdits]);
 
-  const hasPendingEdits =
-    Object.keys(editedValues).length > 0 || Object.keys(visibilityEdits).length > 0;
-  const editRevision = useEditRevision(targetRevision, hasPendingEdits);
+  const hasPendingEdits = [editedValues, visibilityEdits, restateEdits].some(
+    (pending) => Object.keys(pending).length > 0,
+  );
+  const { revision: editRevision, hold: holdRevision } = useEditRevision(
+    targetRevision,
+    hasPendingEdits,
+  );
 
   /** The revision the edits are saved against (`changesBatch`): see `useEditRevision`. */
   const expectedRevision = useMemo(
@@ -291,14 +325,102 @@ export function useConfigSave({
     };
   }, [isEditingScope, valueLayers, configValues, dbOverrides, yamlConfig]);
 
+  /**
+   * The edits as ops, with what renamed and duplicated MCP servers carry of
+   * their stored secrets, and the inherited credentials the edits restate.
+   */
+  const ops = useMemo(
+    () => [
+      ...changeSet.ops,
+      ...carryChanges(renameEdits, copyEdits),
+      ...restateChanges(restateEdits),
+    ],
+    [changeSet.ops, renameEdits, copyEdits, restateEdits],
+  );
+
   const plan = useMemo(
-    () => planConfigChanges(changeSet.ops, snapshot, features, writeRules),
-    [changeSet, snapshot, features, writeRules],
+    () => planConfigChanges(ops, snapshot, features, writeRules),
+    [ops, snapshot, features, writeRules],
+  );
+
+  /**
+   * A restate of a credential the edits no longer move (its destination set
+   * back) changes nothing: it is dropped, so it leaves no pending change.
+   */
+  useEffect(() => {
+    for (const ref of Object.values(restateEdits)) {
+      if (!plan.warnings.some((warning) => isRestateWarning(warning, ref))) {
+        handleRestateCredential(ref, false);
+      }
+    }
+  }, [plan, restateEdits, handleRestateCredential]);
+
+  /**
+   * Per-leaf saves can leave an MCP server without a field its transport
+   * needs, or without a key it uses; the merged server (scope-resolved in a
+   * profile, stored keys kept as LibreChat keeps them) is checked before
+   * anything is sent, so the review and the card name the problem first.
+   */
+  const mcpIssues = useMemo((): t.ConfigIssue[] => {
+    const { touched, saves, resets } = changeSet.payload;
+    const savedValues = new Map(saves.map((e) => [e.fieldPath, e.value]));
+    const resetSet = new Set(resets);
+    const mcpEdits: Array<[string, t.ConfigValue]> = touched
+      .filter((p) => p.startsWith('mcpServers.') && (savedValues.has(p) || resetSet.has(p)))
+      .map((p) => [p, savedValues.get(p)]);
+    if (mcpEdits.length === 0) return [];
+    /** A reset reveals the next-lower layer: the base config in a profile, librechat.yaml in base. */
+    const fallback = asConfigRecord(isEditingScope ? configValues?.mcpServers : yamlMcpServers);
+    return validateMcpCrossField(
+      asConfigRecord(baseActiveConfigValues?.mcpServers),
+      mcpEdits,
+      fallback,
+      renameEdits,
+      carriedEntries(plan, 'mcpServers'),
+    ).map(toMcpIssue);
+  }, [
+    changeSet.payload,
+    isEditingScope,
+    configValues,
+    yamlMcpServers,
+    baseActiveConfigValues,
+    renameEdits,
+    plan,
+  ]);
+
+  /** A section with more changes than one batch takes is refused whole: said before Save (`changesBatch`). */
+  const oversizedIssues = useMemo(
+    () =>
+      usesChangeBatch(features)
+        ? findOversizedSections(countSectionChanges(toBatchOps(plan)), limits.maxChangeOps)
+        : [],
+    [features, plan, limits.maxChangeOps],
+  );
+
+  /** The stored secrets the save takes away, whatever change removes them: the review names each. */
+  const removedSecrets = useMemo(
+    () => findRemovedSecrets(snapshot.stored, plan),
+    [snapshot.stored, plan],
+  );
+
+  /** In Base, the entries the save keeps while moving where profiles' own keys there go: the review names them. */
+  const keyMoves = useMemo(
+    () =>
+      isEditingScope
+        ? []
+        : findEntryKeyMoves({ ...snapshot, storedAfter: plan.storedAfter }, features),
+    [isEditingScope, snapshot, plan.storedAfter, features],
   );
 
   const clientIssues = useMemo(
-    () => [...changeSet.issues, ...plan.issues, ...specListIssues(changeSet)],
-    [changeSet, plan.issues],
+    () => [
+      ...changeSet.issues,
+      ...plan.issues,
+      ...mcpIssues,
+      ...oversizedIssues,
+      ...specListIssues(changeSet),
+    ],
+    [changeSet, plan.issues, mcpIssues, oversizedIssues],
   );
 
   const issues = useMemo(() => [...clientIssues, ...serverIssues], [clientIssues, serverIssues]);
@@ -383,49 +505,15 @@ export function useConfigSave({
     [isEditingScope, editingScope],
   );
 
-  /** Per-leaf saves can land an MCP entry in a transport state whose required siblings are missing; check the merged entry (scope-resolved in a profile) before anything is sent. */
-  const findMcpError = useCallback((): string | null => {
-    const { touched, saves, resets } = changeSet.payload;
-    const savedValues = new Map(saves.map((e) => [e.fieldPath, e.value]));
-    const resetSet = new Set(resets);
-    const mcpEdits: Array<[string, t.ConfigValue]> = touched
-      .filter((p) => p.startsWith('mcpServers.') && (savedValues.has(p) || resetSet.has(p)))
-      .map((p) => [p, savedValues.get(p)]);
-    if (mcpEdits.length === 0) return null;
-    const asRecord = (value: t.ConfigValue) =>
-      value && typeof value === 'object' && !Array.isArray(value)
-        ? (value as Record<string, t.ConfigValue>)
-        : undefined;
-    /** A reset reveals the next-lower layer: the base config in a profile, librechat.yaml in base. */
-    const fallback = asRecord(isEditingScope ? configValues?.mcpServers : yamlMcpServers);
-    const mcpErrors = validateMcpCrossField(
-      asRecord(baseActiveConfigValues?.mcpServers) ?? {},
-      mcpEdits,
-      fallback,
-      renameEdits,
-    );
-    if (mcpErrors.length === 0) return null;
-    const { entryKey, missingField, renamedFrom } = mcpErrors[0];
-    if (renamedFrom !== undefined) {
-      return localize('com_config_mcp_missing_secret_for_rename', {
-        entry: entryKey,
-        from: renamedFrom,
-        field: labelForPath(`mcpServers.{}.${missingField}`, localize),
-      });
+  /** Ends a save that writes nothing: the edits are dropped, and what is left out is listed. */
+  const finishWithoutWrites = useCallback(() => {
+    clearEdits();
+    if (savePlan.skipped.length > 0) {
+      announceWrite(savePlan.skipped, 0, localize('com_config_saved'));
+      return;
     }
-    if (missingField === ADMIN_API_KEY_FIELD) {
-      return localize('com_config_mcp_missing_api_key', { entry: entryKey });
-    }
-    return localize('com_config_mcp_invalid_after_edit', { entry: entryKey, field: missingField });
-  }, [
-    changeSet.payload,
-    isEditingScope,
-    configValues,
-    yamlMcpServers,
-    baseActiveConfigValues,
-    renameEdits,
-    localize,
-  ]);
+    notifyInfo(localize('com_config_nothing_to_save'));
+  }, [clearEdits, savePlan.skipped, announceWrite, localize]);
 
   /**
    * Saves the pending edits to the edit target, against `revision` (see
@@ -441,26 +529,16 @@ export function useConfigSave({
         return;
       }
       if (!hasWrites(plan)) {
-        clearEdits();
-        if (savePlan.skipped.length > 0)
-          announceWrite(savePlan.skipped, 0, localize('com_config_saved'));
-        else notifyInfo(localize('com_config_nothing_to_save'));
+        finishWithoutWrites();
         return;
       }
-      const mcpError = findMcpError();
-      if (mcpError) {
-        setSaveError(mcpError);
-        notifyError(mcpError);
-        return;
-      }
-
       setSaving(true);
       setSaveError(null);
       setSessionExpired(false);
       setTermsUrl(null);
       setConflict(false);
       try {
-        const result = await applyChanges(editTarget, changeSet.ops, revision);
+        const result = await applyChanges(editTarget, ops, revision);
         if (result.conflict) {
           setSaving(false);
           setConflict(true);
@@ -509,11 +587,11 @@ export function useConfigSave({
       clientIssues,
       issueSummaries,
       plan,
-      savePlan,
+      finishWithoutWrites,
       changeSet,
+      ops,
       clearEdits,
       announceWrite,
-      findMcpError,
       applyChanges,
       describeFailure,
       editTarget,
@@ -578,10 +656,15 @@ export function useConfigSave({
     unsafeKeys,
     changes,
     warnings: plan.warnings,
+    removedSecrets,
+    keyMoves,
     issues,
     fieldErrors,
     issueSummaries,
     handleConfirmSave,
+    finishWithoutWrites,
+    editRevision,
+    holdRevision,
     conflict,
     reloadLatest,
     saveOverLatest,

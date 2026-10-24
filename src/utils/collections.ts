@@ -99,6 +99,16 @@ export function getEntryKey(entry: t.ConfigValue, key: string): string | undefin
   return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
+/** A list's entries by identity (their `key` field); entries without one are left out. */
+export function entriesByKey(list: t.ConfigValue, key: string): Map<string, t.ConfigValue> {
+  return new Map(
+    (Array.isArray(list) ? list : []).flatMap((entry) => {
+      const identity = getEntryKey(entry, key);
+      return identity === undefined ? [] : [[identity, entry] as const];
+    }),
+  );
+}
+
 /** Position of the entry with identity `identity` in a list (-1 when absent or not a list). */
 export function findEntryIndex(list: t.ConfigValue, key: string, identity: string): number {
   return Array.isArray(list) ? indexOfKey(list, key, identity) : -1;
@@ -227,6 +237,8 @@ interface ResolveState {
   pendingRenames: Set<string>;
   /** The temporary key of each entry moved aside until its own rename (`moveAside`). */
   aside: Map<string, string>;
+  /** Renames whose stored secret the server carries (`carriesSecrets`). */
+  renames: t.EntryRename[];
 }
 
 const ASIDE_KEY_PREFIX = '\u0000aside:';
@@ -413,6 +425,18 @@ function hasKey(state: ResolveState, lowerEntries: t.ConfigValue[], name: string
   return indexOfKey(state.entries, key, name) >= 0 || indexOfKey(lowerEntries, key, name) >= 0;
 }
 
+/**
+ * Whether the server can move the stored secret of entry `identity` to its
+ * new name `name` (`carriesSecrets`): a plain rename, not one that swaps or
+ * chains names with another entry of the batch, which a `rename` change
+ * applied in order can't express.
+ */
+function carriesSecret(state: ResolveState, identity: string, name: string): boolean {
+  return (
+    state.input.carriesSecrets === true && !state.aside.has(identity) && !state.aside.has(name)
+  );
+}
+
 function upsertByKey(
   op: UpsertEntryOp,
   state: ResolveState,
@@ -461,15 +485,18 @@ function upsertByKey(
       return;
     }
     if (hiddenSecrets.has(identity) && !suppliesSecret(op.value, collection)) {
-      state.issues.push(
-        entryIssue(
-          collection,
-          'SECRET_REQUIRED_FOR_RENAME',
-          identity,
-          `Re-enter the API key to rename "${identity}": its stored key can't be carried over to a new name`,
-        ),
-      );
-      return;
+      if (!carriesSecret(state, identity, op.key)) {
+        state.issues.push(
+          entryIssue(
+            collection,
+            'SECRET_REQUIRED_FOR_RENAME',
+            identity,
+            `Re-enter the API key to rename "${identity}": its stored key can't be carried over to a new name`,
+          ),
+        );
+        return;
+      }
+      state.renames.push({ path: state.input.collection.path, from: identity, to: op.key });
     }
     const renamed = withKey(desiredEntry(op, state.entries[index], state), key, op.key);
     state.entries = state.entries.map((entry, i) => (i === index ? renamed : entry));
@@ -634,7 +661,8 @@ function upsertInList(op: UpsertEntryOp, state: ResolveState): void {
  * defines stores only the keys that differ from it, and an entry left equal
  * to it is dropped from the override. Lower-layer entries cannot be removed
  * or renamed (a merge would bring them back), and a stored entry with an
- * encrypted secret cannot be renamed without a new secret.
+ * encrypted secret cannot be renamed without a new secret, unless the server
+ * moves it (`carriesSecrets`: the rename is then listed in `renames`).
  *
  * `replace` (model specs): the result is the whole list, starting from the
  * target's own list or, without one, the list it inherits; taking over an
@@ -669,6 +697,7 @@ export function resolveCollectionOps(input: t.CollectionOpsInput): t.CollectionR
       ),
     ),
     aside: new Map(),
+    renames: [],
   };
   for (const op of input.ops) {
     if (op.op === 'upsertEntry' && op.identity !== null) state.pendingRenames.delete(op.identity);
@@ -688,6 +717,7 @@ export function resolveCollectionOps(input: t.CollectionOpsInput): t.CollectionR
     issues: state.issues,
     warnings: state.warnings,
     effective: state.effective,
+    renames: state.renames,
   };
 }
 

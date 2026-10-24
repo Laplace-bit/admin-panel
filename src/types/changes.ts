@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import type { SaveEntry, WriteTarget, SaveContext, SavePayload, SkippedChange } from './config-ui';
 import type { ConfigValue, ConfigRecord, FlatConfigMap, ZodSchemaLike } from './config';
+import type { ConfigScope, EntryOverrideNote } from './scope';
 import type { RevertTarget } from './values';
-import type { ConfigScope } from './scope';
 
 /** One write operation of the save pipeline (WS1). */
 export type ConfigChange =
@@ -29,7 +29,165 @@ export type ConfigChange =
       baseline?: ConfigValue;
       index?: number;
     }
-  | { op: 'removeEntry'; path: string; key: string; identity: string };
+  | { op: 'removeEntry'; path: string; key: string; identity: string }
+  /**
+   * Carries what the target stores on entry `from` of the record at `path`
+   * (an MCP server), encrypted secrets included, to entry `to`, which the
+   * same save writes: a rename (`from` goes) or, with `copy`, a duplicate
+   * (`from` stays). Planned only where the server can carry secrets
+   * (`getSecretCarry`); elsewhere they must be entered again.
+   */
+  | { op: 'carry'; path: string; from: string; to: string; copy?: boolean }
+  /**
+   * Restates the credential the layer beneath holds for one entry, so the
+   * target's override holds it too and LibreChat sends it to the destination
+   * that override sets (`secretRebinding`). Planned only where the override
+   * moves the credential without entering one and the layer beneath holds it
+   * readable (a `${VAR}` reference); elsewhere it changes nothing.
+   */
+  | ({ op: 'restate' } & CredentialRef);
+
+/** A `carry` change. */
+export type CarryChange = Extract<ConfigChange, { op: 'carry' }>;
+
+/** A `restate` change. */
+export type RestateChange = Extract<ConfigChange, { op: 'restate' }>;
+
+/** Where the entries are whose credential is bound to a destination beside it: MCP servers and custom endpoints. */
+export type CredentialHolder = 'mcpServers' | 'endpoints.custom';
+
+/** Where a credential bound to its destination is inside its entry. */
+export type CredentialSecret = 'apiKey' | 'apiKey.key' | 'oauth.client_secret';
+
+/** One entry's credential: `apiKey.key` of MCP server `github`, `apiKey` of custom endpoint `Moonshot`. */
+export interface CredentialRef {
+  path: CredentialHolder;
+  /** The entry's name. */
+  entry: string;
+  secret: CredentialSecret;
+}
+
+/** Inherited credentials the pending edits restate, by `credentialKey`, and the handler that changes them. */
+export interface RestatesContextValue {
+  restates: Readonly<Record<string, CredentialRef>>;
+  /** Absent where the page can't be edited, so nothing can be restated. */
+  onRestate?: (ref: CredentialRef, restated: boolean) => void;
+}
+
+/**
+ * A credential the layer beneath holds that a target's overrides stop
+ * LibreChat from sending (`secretRebinding`): they change where it goes
+ * without entering one of their own.
+ */
+export interface DroppedCredential extends CredentialRef {
+  /** The entry's settings that moved it, inside the entry (`url`, `baseURL`). */
+  moved: string[];
+}
+
+/**
+ * An MCP server or custom endpoint a save in Base keeps under its name while
+ * changing where it sends the keys profiles may store there of their own:
+ * by each such secret (`apiKey.key`, `oauth.client_secret`, an endpoint's
+ * `apiKey`), the settings that moved it (`entryKeyMoves`).
+ */
+export interface EntryKeyMove {
+  collection: string;
+  identity: string;
+  moves: Record<string, string[]>;
+}
+
+/** An entry of Base as LibreChat sends it before and after a change, over librechat.yaml's entry (`lower`). */
+export interface EntryKeyMoveInput {
+  lower: ConfigValue;
+  before: ConfigValue;
+  after: ConfigValue;
+}
+
+/** An inherited credential an editor's overrides move, as the editor shows it under the credential. */
+export interface MovedCredential extends DroppedCredential {
+  /** The inherited value the target can restate (a whole `${VAR}` reference); absent for a literal or a hidden key. */
+  restatable?: string;
+  /** The pending edits restate it, so LibreChat sends it to the new destination too. */
+  restated: boolean;
+}
+
+/** A secret the target stores (read back only as its masked preview), by where it is. */
+export interface StoredSecret {
+  /** Its path; inside a keyed list's entry, its path in the entry (`apiKey`). */
+  path: string;
+  /** The keyed list (`endpoints.custom`) and the identity of the entry holding it. */
+  entry?: { collection: string; identity: string };
+}
+
+/** An inherited credential a save restates, with the value the layer beneath holds for it. */
+export interface RestatedCredential {
+  ref: CredentialRef;
+  value: string;
+}
+
+/** Where a credential is sent, by setting: URLs normalized, options serialized, unset as `undefined`. */
+export type DestinationBinding = Readonly<Record<string, string | undefined>>;
+
+/** An MCP server secret by the object that holds it. */
+export interface McpSecretKey {
+  parent: 'apiKey' | 'oauth';
+  key: string;
+  /** The secret inside the server. */
+  path: Extract<CredentialSecret, 'apiKey.key' | 'oauth.client_secret'>;
+}
+
+/** A secret bound to the settings beside it, such as OCR's key to its base URL. */
+export interface ScalarSecretBinding {
+  /** The object that holds the secret and its destination (`speech.tts.openai`). */
+  path: string;
+  secretKey: string;
+  bindingKeys: readonly string[];
+}
+
+/**
+ * An inherited OCR, speech or web search key a target's override stops
+ * LibreChat from sending: where the key is, and the settings that moved it
+ * (full paths, `ocr.baseURL`).
+ */
+export interface DroppedSettingKey {
+  secret: string;
+  moved: string[];
+}
+
+/** An entry of a keyed collection or record moved to a new key with everything stored on it. */
+export interface EntryRename {
+  /** The collection (`endpoints.custom`) or record (`mcpServers`). */
+  path: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * A `renames` hint of a field PATCH (`recordSecrets`): the entry written as
+ * `name` comes from the stored `previousName`, whose secrets it omits are
+ * carried over (copied: removing `previousName` is a separate write).
+ */
+export interface RenameHint {
+  path: string;
+  previousName: string;
+  name: string;
+}
+
+/**
+ * What a check of where a save sends credentials reads (`binding.ts`): the
+ * target's stored overrides before and after the save, and the layer beneath.
+ */
+export interface CredentialBindingInput {
+  stored: ConfigRecord;
+  storedAfter: ConfigRecord;
+  lower: ConfigRecord;
+  /** What the target hides of the layer beneath (its tombstones), before and after the save. */
+  hidden?: { before: readonly string[]; after: readonly string[] };
+  /** Each MCP server the save writes that comes from another stored one (a rename or copy): new → old name. */
+  origins: ReadonlyMap<string, string>;
+  /** Each custom endpoint the save renames, keeping its stored key: new → old name. */
+  endpointOrigins: ReadonlyMap<string, string>;
+}
 
 /**
  * A validation or apply problem reported for a path (WS1). An issue inside a
@@ -75,6 +233,8 @@ export interface ReportedIssueParams {
 export interface ReportedIssue extends ReportedLocation {
   code: string;
   params?: ReportedIssueParams;
+  /** `CONFIG_SECRET_REENTRY_REQUIRED`: the stored secret to enter again, beside the URL that changed. */
+  secretPath?: string;
 }
 
 /** A location a write did not store (`skipped`) or stores without effect (`ignored`), and why. */
@@ -88,7 +248,9 @@ export interface ReportedSkip extends ReportedLocation {
 export type ConfigBatchOp =
   | { op: 'set'; fieldPath: string; value: ConfigValue }
   /** Removes the target's override at the path, the objects that leaves empty and the tombstones at or below it. */
-  | { op: 'unset' | 'tombstone'; fieldPath: string };
+  | { op: 'unset' | 'tombstone'; fieldPath: string }
+  /** Moves the target's own entry `from` of the collection or record at the path to `to`, secrets included. */
+  | { op: 'rename'; fieldPath: string; from: string; to: string };
 
 /** An admin API error reply: its text, and the stable `code` (and route details) newer servers add. */
 export interface ApiErrorBody {
@@ -134,7 +296,20 @@ export type ChangeWarning =
   /** Turns on required acceptance of the terms, which also gates this admin's own changes (FX-5). */
   | 'requireTerms'
   /** Empties the model spec list: no specs, and Specs only has no effect (MS-1). */
-  | 'emptySpecs';
+  | 'emptySpecs'
+  /** Sends an inherited credential somewhere new without entering it, so LibreChat drops it (`secretRebinding`). */
+  | 'secretRebinding'
+  /**
+   * As `secretRebinding`, for a credential the panel can't send there too
+   * (hidden, or one of a setting with no restate): only entering one sends it.
+   */
+  | 'secretRebindingEnter'
+  /** Restates an inherited credential, so LibreChat sends it to the new destination too (`restate`). */
+  | 'secretRestated'
+  /** Hides a value the target also sets itself: the hide deletes the target's own value (`dropped`). */
+  | 'hideDeletesOwn'
+  /** A duplicate uses a secret the server it copies stores, which the save doesn't copy (`keys`). */
+  | 'secretNotCopied';
 
 /** A warning for one path (and entry), with the keys it concerns when relevant (WS1). */
 export interface ConfigWarning {
@@ -209,6 +384,21 @@ export interface ChangeSummaryItem {
   entryPath?: string;
   /** The entry's identity before a rename (WS7). */
   previousIdentity?: string;
+  /** The inherited credential the row restates (`restate`); Revert takes the restate back. */
+  restate?: CredentialRef;
+  /**
+   * What the change deletes of the target's own value with it, listed under
+   * the row: everything a hide removes, the stored secrets of a removed entry
+   * or setting (by the secret, never its preview).
+   */
+  dropped?: ChangeSummaryItem[];
+  /**
+   * In Base, the profiles that override the entry by name, for each way the
+   * change affects them: a rename or removal leaves their overrides under the
+   * old name, a moved destination stops their own keys, and a rename or new
+   * entry onto a name they override takes their overrides.
+   */
+  overrideNotes?: EntryOverrideNote[];
 }
 
 /** How LibreChat layers a collection override over the value beneath it (WS1). */
@@ -264,6 +454,10 @@ export interface WritePlan {
   resets: string[];
   tombstones: string[];
   untombstones: string[];
+  /** Entries a batch renames, secrets included (`rename` changes, written before the sets). */
+  renames: EntryRename[];
+  /** Before `changesBatch`: the stored entry each entry the PATCHes write is carried from. */
+  renameHints: RenameHint[];
   /** Changes that are not sent, and why. */
   skipped: SkippedChange[];
   /** Blocking problems: while any exist nothing may be written. */
@@ -320,6 +514,11 @@ export interface CollectionOpsInput {
   lower: ConfigValue;
   lowerKind: LowerLayerKind;
   ops: EntryChange[];
+  /**
+   * The server moves a stored entry's secret with a rename (`rename` change
+   * of a batch), so a renamed entry need not supply its secret again.
+   */
+  carriesSecrets?: boolean;
 }
 
 /** What a collection's entry changes resolve to (WS1). */
@@ -331,6 +530,8 @@ export interface CollectionResolution {
   warnings: ConfigWarning[];
   /** Changes that altered the collection. */
   effective: number;
+  /** Stored entries renamed whose secret only a server-side rename can carry (`carriesSecrets`). */
+  renames: EntryRename[];
 }
 
 /** The write target as the server needs it: base, or a profile's principal (WS1). */

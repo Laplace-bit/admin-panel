@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type * as t from '@/types';
-import { ADMIN_API_KEY_FIELD, validateMcpCrossField } from '../validation';
+import { ADMIN_API_KEY_FIELD, keepStoredPreviews, validateMcpCrossField } from '../validation';
 
 describe('validateMcpCrossField', () => {
   it('needs a key for a new server whose API key the admin provides (a duplicate copies no stored key)', () => {
@@ -40,6 +40,41 @@ describe('validateMcpCrossField', () => {
     expect(validateMcpCrossField({ docs: keyless }, [['mcpServers.docs.timeout', 60000]])).toEqual(
       [],
     );
+  });
+
+  it('keeps a stored key whose holder the edits write again, as LibreChat keeps it', () => {
+    const stored = {
+      type: 'streamable-http',
+      url: 'https://docs.example.com/mcp',
+      apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '...4321' },
+    };
+    const back: Array<[string, t.ConfigValue]> = [
+      ['mcpServers.docs.apiKey', undefined],
+      ['mcpServers.docs.apiKey.source', 'admin'],
+      ['mcpServers.docs.apiKey.authorization_type', 'bearer'],
+    ];
+    expect(validateMcpCrossField({ docs: stored }, back)).toEqual([]);
+    const rewritten: Array<[string, t.ConfigValue]> = [
+      ['mcpServers.docs', undefined],
+      ['mcpServers.docs.type', 'streamable-http'],
+      ['mcpServers.docs.url', 'https://docs.example.com/mcp'],
+      ['mcpServers.docs.apiKey.source', 'admin'],
+    ];
+    expect(validateMcpCrossField({ docs: stored }, rewritten)).toEqual([]);
+  });
+
+  it('takes a removed stored key away with its preview, leaving an admin key missing', () => {
+    const stored = {
+      type: 'streamable-http',
+      url: 'https://docs.example.com/mcp',
+      apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '...4321' },
+    };
+    expect(
+      validateMcpCrossField({ docs: stored }, [
+        ['mcpServers.docs.apiKey.key', undefined],
+        ['mcpServers.docs.apiKey.source', 'admin'],
+      ]),
+    ).toEqual([{ entryKey: 'docs', missingField: ADMIN_API_KEY_FIELD }]);
   });
 
   it('needs a renamed server to re-enter a secret its saved name stores (OAuth client secret)', () => {
@@ -209,5 +244,33 @@ describe('validateMcpCrossField', () => {
     expect(errors.length).toBe(1);
     expect(errors[0].entryKey).toBe('foo');
     expect(errors[0].missingField).toBe('command');
+  });
+});
+
+describe('keepStoredPreviews', () => {
+  const saved = {
+    url: 'https://docs.example.com/mcp',
+    apiKey: { source: 'admin', keyPreview: '...4321' },
+    oauth: { client_id: 'id', client_secretPreview: '...1234' },
+  };
+
+  it('puts back the preview of a stored secret whose holder the server still writes', () => {
+    expect(
+      keepStoredPreviews(saved, {
+        url: 'https://docs.example.com/mcp',
+        apiKey: { source: 'admin' },
+      }),
+    ).toEqual({
+      url: 'https://docs.example.com/mcp',
+      apiKey: { source: 'admin', keyPreview: '...4321' },
+    });
+  });
+
+  it('keeps nothing for a holder the server no longer writes, or a secret it enters', () => {
+    const next = {
+      url: 'https://docs.example.com/mcp',
+      apiKey: { source: 'admin', key: 'sk-new' },
+    };
+    expect(keepStoredPreviews(saved, next)).toBe(next);
   });
 });

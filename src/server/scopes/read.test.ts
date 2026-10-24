@@ -75,7 +75,7 @@ const configs = [
     principalId: BOB,
     priority: 100,
     isActive: true,
-    overrides: { interface: { parameters: false } },
+    overrides: { interface: { parameters: false }, webSearch: { tavilyApiKeyPreview: '...5555' } },
     tombstones: ['balance.startBalance'],
   },
   {
@@ -96,7 +96,7 @@ const configs = [
       endpoints: {
         custom: [
           { name: 'Claude', modelDisplayLabel: 'Claude (USER)' },
-          { name: 'Gemini', iconURL: 'https://g.example/i.png' },
+          { name: 'Gemini', iconURL: 'https://g.example/i.png', apiKeyPreview: '...6666' },
         ],
       },
     },
@@ -134,7 +134,7 @@ beforeEach(() => {
 });
 
 describe('getAvailableScopesFn', () => {
-  it('names users with their email, counts members and lists override paths and entries', async () => {
+  it('names users with their email, counts members and lists override paths, entries and stored secrets', async () => {
     const { scopes } = await getAvailableScopesFn();
     expect(scopes).toEqual([
       {
@@ -147,6 +147,8 @@ describe('getAvailableScopesFn', () => {
         isActive: true,
         overridePaths: ['interface.parameters'],
         overrideEntries: {},
+        overrideEntryPaths: {},
+        storedSecrets: [{ path: 'webSearch.tavilyApiKey' }],
         tombstones: ['balance.startBalance'],
       },
       {
@@ -159,6 +161,8 @@ describe('getAvailableScopesFn', () => {
         isActive: false,
         overridePaths: ['mcpServers.docs.type', 'mcpServers.docs.url'],
         overrideEntries: {},
+        overrideEntryPaths: {},
+        storedSecrets: [],
         tombstones: [],
       },
       {
@@ -171,6 +175,12 @@ describe('getAvailableScopesFn', () => {
         isActive: true,
         overridePaths: ['endpoints.custom'],
         overrideEntries: { 'endpoints.custom': ['Claude', 'Gemini'] },
+        overrideEntryPaths: {
+          'endpoints.custom': { Claude: ['modelDisplayLabel'], Gemini: ['iconURL'] },
+        },
+        storedSecrets: [
+          { path: 'apiKey', entry: { collection: 'endpoints.custom', identity: 'Gemini' } },
+        ],
         tombstones: [],
       },
     ]);

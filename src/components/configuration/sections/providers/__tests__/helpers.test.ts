@@ -52,6 +52,13 @@ describe('maskCredential', () => {
     expect(maskCredential('prefix-${A}')).toEqual({ kind: 'masked' });
     expect(maskCredential(undefined)).toEqual({ kind: 'none' });
   });
+
+  it('reads a key the server hides by its preview (azureGroupSecrets)', () => {
+    expect(maskCredential(undefined, '...1234')).toEqual({ kind: 'stored', preview: '...1234' });
+    expect(maskCredential(undefined, '********')).toEqual({ kind: 'masked' });
+    const [row] = toAzureGroups([{ group: 'eastus', apiKeyPreview: '...1234' }]);
+    expect(row).toMatchObject({ apiKey: undefined, apiKeyPreview: '...1234', others: {} });
+  });
 });
 
 describe('addressIssue', () => {

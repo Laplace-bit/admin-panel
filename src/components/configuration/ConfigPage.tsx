@@ -9,6 +9,7 @@ import {
   useTabSections,
   useConfigEdits,
   useConfigTabs,
+  useScopeIndex,
   useConfigLayers,
   useConfigImport,
   useChangeReview,
@@ -46,6 +47,8 @@ import { ConfigTableOfContents } from './ConfigTableOfContents';
 import { ResetBaseConfigDialog } from './ResetBaseConfigDialog';
 import { NavigationGuardDialog } from './NavigationGuardDialog';
 import { ScopeActionsProvider } from '@/contexts/ScopeContext';
+import { RestatesContext } from '@/contexts/RestatesContext';
+import { RenamesContext } from '@/contexts/RenamesContext';
 import { ExpandProvider } from '@/contexts/ExpandContext';
 import { ConfigContentSkeleton } from './ConfigSkeleton';
 import { isPathUnder, tabForPath } from './configMeta';
@@ -210,7 +213,7 @@ export function ConfigPage({
     layers,
     edits,
   });
-  const { closeReview } = save;
+  const { cancelReview } = save;
 
   /** "Go to field" and error jumps from the review may target a setting the tab filter hides. */
   const goToTab = useCallback(
@@ -220,6 +223,7 @@ export function ConfigPage({
     },
     [clearFilter, handleTabChange],
   );
+  const { scopes: profiles } = useScopeIndex();
   const review = useChangeReview({
     schemaTree,
     editingScope,
@@ -227,10 +231,11 @@ export function ConfigPage({
     edits,
     save,
     onTabChange: goToTab,
+    profiles,
   });
 
   const resetBase = useResetBaseConfig({ onReset: edits.resetEdits });
-  const baseOverrides = useBaseOverrides({ schemaTree, layers });
+  const baseOverrides = useBaseOverrides({ schemaTree, layers, profiles });
 
   const imports = useConfigImport({
     writeChanges: save.writeChanges,
@@ -268,7 +273,7 @@ export function ConfigPage({
       );
     }
     resetEdits();
-    closeReview();
+    cancelReview();
   }, [
     scopeKey,
     editingScope,
@@ -278,7 +283,7 @@ export function ConfigPage({
     review.model.count,
     localize,
     resetEdits,
-    closeReview,
+    cancelReview,
   ]);
 
   const { data: availableScopes } = useQuery(availableScopesOptions);
@@ -442,6 +447,18 @@ export function ConfigPage({
   const jumpTargets = useMemo(() => toJumpTargets(tocEntries), [tocEntries]);
   const dirtyPaths = review.model.changedPaths;
   const errorPaths = useMemo(() => Object.keys(save.fieldErrors), [save.fieldErrors]);
+  const restateEditable = canEditActiveTab && scopeNotFound == null;
+  const restates = useMemo<t.RestatesContextValue>(
+    () => ({
+      restates: edits.restateEdits,
+      onRestate: restateEditable ? edits.handleRestateCredential : undefined,
+    }),
+    [edits.restateEdits, edits.handleRestateCredential, restateEditable],
+  );
+  const entryRenames = useMemo<t.EntryRenames>(
+    () => ({ renames: edits.renameEdits, copies: edits.copyEdits }),
+    [edits.renameEdits, edits.copyEdits],
+  );
   const jumpTo = useCallback(
     (id: string) => {
       const entry = findTocEntry(tocEntries, id);
@@ -585,46 +602,53 @@ export function ConfigPage({
                     <RevealTargetContext.Provider value={highlightField ?? null}>
                       <GlobalRevealContext.Provider value={revealGlobal}>
                         <CollectionEditsContext.Provider value={edits.collectionEdits}>
-                          <ConfigTabContent
-                            sections={sectionsForActiveTab}
-                            configValues={activeConfigValues}
-                            editedValues={editedValues}
-                            onFieldChange={edits.handleFieldChange}
-                            onResetField={edits.handleResetField}
-                            onDiscardField={edits.handleDiscardField}
-                            previewMode={false}
-                            previewScope={editingScope}
-                            previewChangedPaths={layers.scopeChangedPaths}
-                            resolvedValues={layers.scopeResolvedValues}
-                            permissions={permissions}
-                            showChangedOnly={false}
-                            readOnly={!canEditActiveTab || scopeNotFound != null}
-                            configuredPaths={layers.activeConfiguredPaths}
-                            dbOverridePaths={layers.overridePaths}
-                            listOverrideCounts={layers.listOverrideCounts}
-                            touchedPaths={edits.touchedPaths}
-                            pendingResets={edits.pendingResets}
-                            sectionPermissions={sectionPermissions}
-                            schemaDefaults={layers.schemaDefaults}
-                            showConfiguredOnly={customizedOnly}
-                            isEditingScope={isEditingScope}
-                            baseRecordKeys={layers.baseRecordKeys}
-                            onValidationError={notifyError}
-                            editSessionId={edits.editSessionId}
-                            unknownSettings={topLevelUnknown}
-                            onShowAll={showAllSettings}
-                            filterText={filterText}
-                            onClearFilter={clearFilter}
-                            visibleSectionIds={filterSectionIds}
-                            filterPaths={filterPaths}
-                            valueLayers={layers.valueLayers}
-                            visibilityEdits={edits.visibilityEdits}
-                            onHideField={permissions.canAssign ? edits.handleHideField : undefined}
-                            onUnhideField={
-                              permissions.canAssign ? edits.handleUnhideField : undefined
-                            }
-                            onRenameEntry={edits.handleRenameEntry}
-                          />
+                          <RestatesContext.Provider value={restates}>
+                            <RenamesContext.Provider value={entryRenames}>
+                              <ConfigTabContent
+                                key={scopeKey}
+                                sections={sectionsForActiveTab}
+                                configValues={activeConfigValues}
+                                editedValues={editedValues}
+                                onFieldChange={edits.handleFieldChange}
+                                onResetField={edits.handleResetField}
+                                onDiscardField={edits.handleDiscardField}
+                                previewMode={false}
+                                previewScope={editingScope}
+                                previewChangedPaths={layers.scopeChangedPaths}
+                                resolvedValues={layers.scopeResolvedValues}
+                                permissions={permissions}
+                                showChangedOnly={false}
+                                readOnly={!canEditActiveTab || scopeNotFound != null}
+                                configuredPaths={layers.activeConfiguredPaths}
+                                dbOverridePaths={layers.overridePaths}
+                                listOverrideCounts={layers.listOverrideCounts}
+                                touchedPaths={edits.touchedPaths}
+                                pendingResets={edits.pendingResets}
+                                sectionPermissions={sectionPermissions}
+                                schemaDefaults={layers.schemaDefaults}
+                                showConfiguredOnly={customizedOnly}
+                                isEditingScope={isEditingScope}
+                                baseRecordKeys={layers.baseRecordKeys}
+                                onValidationError={notifyError}
+                                editSessionId={edits.editSessionId}
+                                unknownSettings={topLevelUnknown}
+                                onShowAll={showAllSettings}
+                                filterText={filterText}
+                                onClearFilter={clearFilter}
+                                visibleSectionIds={filterSectionIds}
+                                filterPaths={filterPaths}
+                                valueLayers={layers.valueLayers}
+                                visibilityEdits={edits.visibilityEdits}
+                                onHideField={
+                                  permissions.canAssign ? edits.handleHideField : undefined
+                                }
+                                onUnhideField={
+                                  permissions.canAssign ? edits.handleUnhideField : undefined
+                                }
+                                onRenameEntry={edits.handleRenameEntry}
+                              />
+                            </RenamesContext.Provider>
+                          </RestatesContext.Provider>
                         </CollectionEditsContext.Provider>
                       </GlobalRevealContext.Provider>
                     </RevealTargetContext.Provider>

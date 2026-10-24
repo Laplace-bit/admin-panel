@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { configSchema } from 'librechat-data-provider';
 import type * as t from '@/types';
-import { summarizeChanges, applySaves, isSecretPath } from './diff';
 import { buildReviewModel, describePath } from './group';
 import translation from '@/locales/en/translation.json';
 import { flattenObject, getValueAtPath } from '@/utils';
+import { summarizeChanges, applySaves } from './diff';
 import { extractSchemaTree } from '@/server/config';
 import { parseIssueMessages } from './issues';
 import { formatReviewValue } from './format';
@@ -411,6 +411,44 @@ describe('summarizeChanges: MCP servers and secrets', () => {
     });
   });
 
+  it('lists no row for a stored key a renamed server leaves out, and a replaced one as replaced', () => {
+    const vault = {
+      url: 'https://vault.example/mcp',
+      apiKey: { source: 'admin', keyPreview: '...4321' },
+    };
+    const input = (key?: string) =>
+      makeInput({
+        baseline: { mcpServers: { vault } },
+        ownAt: (path) => (path === 'mcpServers.vault' ? vault : undefined),
+        saves: [
+          { fieldPath: 'mcpServers.vault-kb.url', value: vault.url },
+          { fieldPath: 'mcpServers.vault-kb.apiKey.source', value: 'admin' },
+          ...(key ? [{ fieldPath: 'mcpServers.vault-kb.apiKey.key', value: key }] : []),
+        ],
+        resets: ['mcpServers.vault'],
+        renames: { 'mcpServers.vault-kb': 'mcpServers.vault' },
+      });
+    expect(summarizeChanges(input())).toEqual([
+      expect.objectContaining({ kind: 'renamed', path: 'mcpServers.vault-kb' }),
+    ]);
+    const replaced = summarizeChanges(input('sk-new'));
+    expect(replaced).toEqual([
+      expect.objectContaining({ kind: 'renamed', path: 'mcpServers.vault-kb' }),
+      expect.objectContaining({
+        kind: 'changed',
+        path: 'mcpServers.vault-kb.apiKey.key',
+        before: '...4321',
+        after: 'sk-new',
+        secret: true,
+      }),
+    ]);
+    const edited = { 'mcpServers.vault-kb.apiKey.key': 'sk-new' };
+    expect(planRevert(replaced[1], edited, { mcpServers: { vault } })).toEqual({
+      op: 'discard',
+      paths: ['mcpServers.vault-kb.apiKey.key'],
+    });
+  });
+
   it('undoes only the rename of a server, keeping its field changes under the old name', () => {
     const dbsrv = {
       type: 'streamable-http',
@@ -504,10 +542,6 @@ describe('summarizeChanges: MCP servers and secrets', () => {
   });
 
   it('marks secret leaves, including an apiKey object key', () => {
-    expect(isSecretPath('endpoints.custom.0.apiKey')).toBe(true);
-    expect(isSecretPath('mcpServers.x.apiKey.key')).toBe(true);
-    expect(isSecretPath('mcpServers.x.oauth.client_secret')).toBe(true);
-    expect(isSecretPath('mcpServers.x.apiKey.source')).toBe(false);
     const [item] = summarizeChanges(
       makeInput({
         baseline,

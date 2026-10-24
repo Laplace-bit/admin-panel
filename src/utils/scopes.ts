@@ -1,8 +1,9 @@
 import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
+import { flattenObject, getValueAtPath, isConfigRecord } from './format';
 import { KEYED_COLLECTIONS, getScopeGateReason } from '@/constants';
-import { flattenObject, getValueAtPath } from './format';
-import { getEntryKey } from './collections';
+import { getEntryKey, getKeyedCollection } from './collections';
+import { isSecretPath } from './secrets';
 
 /** The skip reason a save in a profile gets when its section is gated (`getScopeGateReason`). */
 const GATE_SKIP_REASONS: Readonly<Record<t.ScopeGateReason, t.SkipReason>> = {
@@ -84,18 +85,32 @@ export function formatScopeName(scope: t.ConfigScope): string {
  * Identities of the entries a profile stores in each list LibreChat merges
  * entry by entry (`endpoints.custom`): the profile stores only the entries it
  * overrides or adds, so each is one override. Lists it replaces whole (model
- * specs) are one override, the list.
+ * specs) are one override, the list. With them, the settings each entry sets
+ * (`overrideEntryPaths`), its name left out.
  */
-export function scopeOverrideEntries(overrides: t.ConfigRecord): Record<string, string[]> {
-  const result: Record<string, string[]> = {};
+export function scopeOverrideEntries(
+  overrides: t.ConfigRecord,
+): Required<Pick<t.ConfigScope, 'overrideEntries' | 'overrideEntryPaths'>> {
+  const overrideEntries: Record<string, string[]> = {};
+  const overrideEntryPaths: Record<string, Record<string, string[]>> = {};
   for (const collection of KEYED_COLLECTIONS.values()) {
     if (collection.merge !== 'byKey') continue;
     const list = getValueAtPath(overrides, collection.path);
     if (!Array.isArray(list)) continue;
-    const keys = list.flatMap((entry) => getEntryKey(entry, collection.key) ?? []);
-    if (keys.length > 0) result[collection.path] = keys;
+    const keys: string[] = [];
+    const paths: Record<string, string[]> = {};
+    for (const entry of list) {
+      const key = getEntryKey(entry, collection.key);
+      if (key === undefined || !isConfigRecord(entry)) continue;
+      keys.push(key);
+      const { [collection.key]: _name, ...settings } = entry;
+      paths[key] = [...(paths[key] ?? []), ...collectOverridePaths(settings)];
+    }
+    if (keys.length === 0) continue;
+    overrideEntries[collection.path] = keys;
+    overrideEntryPaths[collection.path] = paths;
   }
-  return result;
+  return { overrideEntries, overrideEntryPaths };
 }
 
 /**
@@ -202,6 +217,67 @@ export function buildScopeIndex(scopes: t.ConfigScope[]): t.ScopeIndex {
     }
   }
   return { scopes: ordered, byPath };
+}
+
+/** Whether `path` is `entryPath` or inside it. */
+function isAtOrUnder(path: string, entryPath: string): boolean {
+  return path === entryPath || path.startsWith(`${entryPath}.`);
+}
+
+/** How one profile overrides or hides collection entry `identity`, or null when it doesn't. */
+function entryOverrideOf(
+  scope: t.ConfigScope,
+  collection: string,
+  identity: string,
+): t.EntryOverride | null {
+  const stored = scope.storedSecrets ?? [];
+  const keyed = getKeyedCollection(collection);
+  if (keyed) {
+    if (keyed.merge !== 'byKey') return null;
+    const secrets = stored.flatMap(({ path, entry }) =>
+      entry?.collection === collection && entry.identity === identity ? [path] : [],
+    );
+    const listed = (scope.overrideEntries?.[collection] ?? []).includes(identity);
+    if (secrets.length === 0 && !listed) return null;
+    const settings = scope.overrideEntryPaths?.[collection]?.[identity] ?? [];
+    return { scope, overrides: true, secrets, settings, hidden: false };
+  }
+  const entryPath = `${collection}.${identity}`;
+  const inside = (path: string) => path.slice(entryPath.length + 1);
+  const tombstones = scope.tombstones ?? [];
+  const hidden = tombstones.includes(entryPath);
+  const settings: string[] = [];
+  /** Before `recordSecrets`, LibreChat stores and reads back an MCP secret as a plain value. */
+  const secrets = new Set(
+    stored.flatMap(({ path, entry }) =>
+      !entry && isAtOrUnder(path, entryPath) ? [inside(path)] : [],
+    ),
+  );
+  for (const path of scope.overridePaths ?? []) {
+    if (!path.startsWith(`${entryPath}.`)) continue;
+    if (isSecretPath(path)) secrets.add(inside(path));
+    else settings.push(inside(path));
+  }
+  const overrides =
+    secrets.size > 0 ||
+    settings.length > 0 ||
+    tombstones.some((path) => path !== entryPath && isAtOrUnder(path, entryPath));
+  if (!overrides && !hidden) return null;
+  return { scope, overrides, secrets: [...secrets], settings, hidden };
+}
+
+/**
+ * The profiles that override or hide collection entry `identity` (an MCP
+ * server, a custom endpoint) by its name, in the order given, with the
+ * secrets of its own each stores there and the settings it sets. Their
+ * overrides stay under that name when Base renames or removes the entry.
+ */
+export function findEntryOverrides(
+  scopes: readonly t.ConfigScope[],
+  collection: string,
+  identity: string,
+): t.EntryOverride[] {
+  return scopes.flatMap((scope) => entryOverrideOf(scope, collection, identity) ?? []);
 }
 
 const SCOPE_INDEX_CACHE = new WeakMap<t.ConfigScope[], t.ScopeIndex>();

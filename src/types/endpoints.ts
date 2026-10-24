@@ -47,6 +47,8 @@ export interface EndpointValidationInput {
   storedSecret: boolean;
   /** The name the entry was loaded with, when it was renamed since. */
   loadedName?: string;
+  /** A rename keeps the stored key: the server moves it to the new name (`getSecretCarry`). */
+  carriesKey?: boolean;
 }
 
 /** One custom endpoint as the list shows it (WS10 CE-7). */
@@ -70,6 +72,8 @@ export interface EndpointRow {
   edited: boolean;
   /** The endpoint as saved (what Undo goes back to); undefined for a new one. */
   saved?: ConfigRecord;
+  /** The target's own stored override of the endpoint, as the admin API reads it back. */
+  own?: ConfigRecord;
   host: string | null;
   modelCount: number;
   fetchesModels: boolean;
@@ -154,6 +158,8 @@ export interface EndpointEditorProps {
   lowerEntry?: ConfigRecord;
   /** The endpoint as saved, which a field's Undo goes back to. */
   savedEntry?: ConfigRecord;
+  /** The target's own stored override of the endpoint (a key it restates is read from it). */
+  ownEntry?: ConfigRecord;
   /** Default models of another custom endpoint, for model pickers that name it. */
   modelsOf?: (endpoint: string) => readonly string[];
   /** Only the essentials (creating): Connection and Models. */
@@ -222,8 +228,18 @@ export interface EndpointListProps {
   /** In a profile: starts overriding an endpoint Base defines ("Override for Role: USER"). */
   override?: { label: string; onSelect: (row: EndpointRow) => void };
   onUndoRemoval: (removal: EndpointRemoval) => void;
+  /** What a removal leaves in the profiles that override the endpoint by name (`describeEntryOverrides`). */
+  removalNotes?: (removal: EndpointRemoval) => readonly string[];
   /** Row ids are `${idPrefix}-${index}`, the ids the table of contents and deep links target. */
   idPrefix: string;
+}
+
+/** Props of a saved endpoint a pending edit removes, listed with Undo (D9). */
+export interface EndpointRemovalRowProps {
+  removal: EndpointRemoval;
+  disabled?: boolean;
+  onUndo: (removal: EndpointRemoval) => void;
+  notes?: readonly string[];
 }
 
 /** Props of the create flow (WS10 CE-3, CE-10). */

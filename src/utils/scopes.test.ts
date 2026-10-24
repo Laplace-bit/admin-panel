@@ -9,6 +9,7 @@ import {
   getScopeIndex,
   buildScopeIndex,
   findPriorityTies,
+  findEntryOverrides,
   isCurrentSelection,
   countScopeOverrides,
   collectOverridePaths,
@@ -82,8 +83,23 @@ describe('scopeOverrideEntries', () => {
       scopeOverrideEntries({
         endpoints: { custom: [{ name: 'Claude', modelDisplayLabel: 'C' }, { iconURL: 'x' }] },
         modelSpecs: { list: [{ name: 'spec-a', label: 'A' }] },
-      }),
+      }).overrideEntries,
     ).toEqual({ 'endpoints.custom': ['Claude'] });
+  });
+
+  it('lists the settings each entry sets, its name left out', () => {
+    expect(
+      scopeOverrideEntries({
+        endpoints: {
+          custom: [
+            { name: 'Claude', baseURL: 'https://c', addParams: { anthropicApiUrl: 'https://a' } },
+            { name: 'Gemini' },
+          ],
+        },
+      }).overrideEntryPaths,
+    ).toEqual({
+      'endpoints.custom': { Claude: ['baseURL', 'addParams.anthropicApiUrl'], Gemini: [] },
+    });
   });
 });
 
@@ -209,6 +225,81 @@ describe('buildScopeIndex', () => {
     expect(byPath.get('interface')?.map((s) => s.principalId)).toEqual(['USER', 'u1']);
     expect(byPath.get('balance.startBalance')?.map((s) => s.principalId)).toEqual(['USER']);
     expect(byPath.get('interface.webSearch')).toBeUndefined();
+  });
+});
+
+describe('findEntryOverrides', () => {
+  const role = scope({
+    principalType: PrincipalType.ROLE,
+    principalId: 'USER',
+    priority: 10,
+    overridePaths: ['mcpServers.acme.title', 'endpoints.custom'],
+    overrideEntries: { 'endpoints.custom': ['AcmeLLM'] },
+    overrideEntryPaths: { 'endpoints.custom': { AcmeLLM: ['baseURL'] } },
+    storedSecrets: [
+      { path: 'mcpServers.acme.apiKey.key' },
+      { path: 'apiKey', entry: { collection: 'endpoints.custom', identity: 'AcmeLLM' } },
+    ],
+  });
+  const keyOnly = scope({
+    principalId: 'eng',
+    storedSecrets: [
+      { path: 'mcpServers.vault.oauth.client_secret' },
+      { path: 'apiKey', entry: { collection: 'endpoints.custom', identity: 'BetaLLM' } },
+    ],
+  });
+  const hiding = scope({ principalId: 'ops', tombstones: ['mcpServers.acme'] });
+  const partial = scope({ principalId: 'qa', tombstones: ['mcpServers.acme.headers.X-Team'] });
+  const scopes = [role, keyOnly, hiding, partial];
+  const found = (collection: string, identity: string) =>
+    findEntryOverrides(scopes, collection, identity).map(({ scope: s, ...rest }) => [
+      s.principalId,
+      rest,
+    ]);
+
+  it('finds the profiles that override an MCP server by name, a stored secret, a hide or a hidden part', () => {
+    expect(found('mcpServers', 'acme')).toEqual([
+      ['USER', { overrides: true, secrets: ['apiKey.key'], settings: ['title'], hidden: false }],
+      ['ops', { overrides: false, secrets: [], settings: [], hidden: true }],
+      ['qa', { overrides: true, secrets: [], settings: [], hidden: false }],
+    ]);
+  });
+
+  it('counts a secret alone as an override, its preview stripped from the override paths', () => {
+    expect(found('mcpServers', 'vault')).toEqual([
+      ['eng', { overrides: true, secrets: ['oauth.client_secret'], settings: [], hidden: false }],
+    ]);
+    expect(found('endpoints.custom', 'BetaLLM')).toEqual([
+      ['eng', { overrides: true, secrets: ['apiKey'], settings: [], hidden: false }],
+    ]);
+  });
+
+  it('finds custom endpoint overrides by entry name, and none for another name or a name sharing a prefix', () => {
+    expect(found('endpoints.custom', 'AcmeLLM')).toEqual([
+      ['USER', { overrides: true, secrets: ['apiKey'], settings: ['baseURL'], hidden: false }],
+    ]);
+    expect(found('endpoints.custom', 'Acme')).toEqual([]);
+    expect(found('mcpServers', 'acm')).toEqual([]);
+  });
+
+  it('counts a secret a server without `recordSecrets` reads back as a plain value', () => {
+    const plain = scope({
+      principalId: 'legacy',
+      overridePaths: ['mcpServers.acme.apiKey.key', 'mcpServers.docs.title'],
+    });
+    const parts = (identity: string) =>
+      findEntryOverrides([plain], 'mcpServers', identity).map(({ secrets }) => secrets);
+    expect(parts('acme')).toEqual([['apiKey.key']]);
+    expect(parts('docs')).toEqual([[]]);
+  });
+
+  it('finds nothing in a list a profile replaces whole', () => {
+    const specs = scope({
+      principalId: 'specs',
+      overridePaths: ['modelSpecs.list'],
+      overrideEntries: { 'modelSpecs.list': ['gpt'] },
+    });
+    expect(findEntryOverrides([specs], 'modelSpecs.list', 'gpt')).toEqual([]);
   });
 });
 

@@ -1,15 +1,13 @@
 import type * as t from '@/types';
-import { isPlainObject, resolveEntryKey, setLeaf, deepClone } from './validation';
+import {
+  setLeaf,
+  resetLeaf,
+  deepClone,
+  isPlainObject,
+  resolveEntryKey,
+  keepStoredPreviews,
+} from './validation';
 import { hasDottedKey } from '@/utils';
-
-function readLeaf(value: t.ConfigValue, segments: string[]): t.ConfigValue {
-  let cursor = value;
-  for (const segment of segments) {
-    if (!isPlainObject(cursor)) return undefined;
-    cursor = cursor[segment];
-  }
-  return cursor;
-}
 
 /**
  * Every leaf of an object as `[segments, value]`; arrays and scalars are
@@ -53,7 +51,8 @@ function editsByServer(
  * One server with its edits applied. The latest whole-server write is the
  * seed: a reset reads as what the layer beneath defines (nothing, for a
  * server the target added). Field edits after it apply on top; a reset of a
- * field shows the value beneath again.
+ * field shows the value beneath again. A stored secret whose holder the
+ * edits still write keeps its preview, as LibreChat keeps the secret.
  */
 function resolveServer(
   saved: t.ConfigValue,
@@ -71,12 +70,20 @@ function resolveServer(
   });
   const reverted = reset && lower !== undefined;
   const leaves = edits.slice(start).filter((edit) => edit.segments.length > 0);
-  if (leaves.length === 0) return { value: seed, reset: reverted };
-  const next = isPlainObject(seed) ? deepClone(seed) : {};
-  for (const { segments, value } of leaves) {
-    setLeaf(next, segments, value === undefined ? readLeaf(lower, segments) : value);
+  if (leaves.length === 0) {
+    return { value: reset ? seed : keepStoredPreviews(saved, seed), reset: reverted };
   }
-  return { value: next, reset: reverted };
+  const next = isPlainObject(seed) ? deepClone(seed) : {};
+  const removed = new Set<string>();
+  for (const { segments, value } of leaves) {
+    if (value !== undefined) {
+      setLeaf(next, segments, value);
+      continue;
+    }
+    resetLeaf(next, segments, lower);
+    removed.add(segments.join('.'));
+  }
+  return { value: keepStoredPreviews(saved, next, removed), reset: reverted };
 }
 
 /**

@@ -56,6 +56,22 @@ export function usesChangeBatch(features: t.ConfigFeatures): boolean {
 }
 
 /**
+ * What a rename or duplicate takes along of the secrets its source stores,
+ * which the panel never reads (`SecretCarry`). A change batch renames a
+ * stored entry whole (`rename`), MCP servers once their secrets are in the
+ * registry (`recordSecrets`); a field PATCH carries an MCP server's secrets
+ * to a new name, a copy included, through its `renames` hint.
+ */
+export function getSecretCarry(features: t.ConfigFeatures): t.SecretCarry {
+  const batch = usesChangeBatch(features);
+  return {
+    endpointRename: batch,
+    mcpRename: features.recordSecrets,
+    mcpCopy: features.recordSecrets && !batch,
+  };
+}
+
+/**
  * The `expectedRevision` that names a stored revision: `absent` for a
  * target without a document (`null`), none when the server reports no
  * revisions (`undefined`).

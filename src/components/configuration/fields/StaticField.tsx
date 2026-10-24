@@ -1,7 +1,7 @@
 import type * as t from '@/types';
 import { cn, MASKED_SECRET, isConfigRecord, isEnvReference } from '@/utils';
+import { SECRET_CONFIG_KEYS, SECRET_PREVIEW_MASK } from '@/constants';
 import { formatReviewValue } from '../review/format';
-import { SECRET_CONFIG_KEYS } from '@/constants';
 import { getFieldOptions } from '../controls';
 import { widthClass } from './display';
 import { useLocalize } from '@/hooks';
@@ -52,10 +52,18 @@ export function StaticField({
   value,
   fallback,
   secretPreview,
+  secretMaskLabel,
   unit,
   width,
 }: t.StaticFieldProps) {
   const localize = useLocalize();
+  if (secretPreview === SECRET_PREVIEW_MASK) {
+    return (
+      <div id={id} data-static-value="set" className="static-value">
+        {secretMaskLabel ?? localize('com_config_secret_hidden')}
+      </div>
+    );
+  }
   if (secretPreview) {
     return (
       <div id={id} data-static-value="set" className="static-value font-mono">
