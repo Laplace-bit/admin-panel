@@ -1401,6 +1401,39 @@ describe('planConfigChanges — keyed tombstones', () => {
     ]);
   });
 
+  it('refuses a new entry under a name LibreChat could not remove by key, and keeps one already saved', () => {
+    const added = {
+      name: '$proxy',
+      apiKey: 'sk-2',
+      baseURL: 'https://p',
+      models: { default: ['y'] },
+    };
+    const legacy = {
+      name: '__old',
+      apiKey: 'sk-3',
+      baseURL: 'https://o',
+      models: { default: ['z'] },
+    };
+    const list = (own.endpoints as t.ConfigRecord).custom as t.ConfigValue[];
+    const stored: t.ConfigRecord = { endpoints: { custom: [...list, legacy] } };
+    const write = (value: t.ConfigValue[], features: t.ConfigFeatures) =>
+      planConfigChanges(
+        [{ op: 'set', path: 'endpoints.custom', value }],
+        profile(stored),
+        features,
+      );
+    expect(write([...list, legacy, added], keyed).issues).toEqual([
+      expect.objectContaining({
+        path: 'endpoints.custom',
+        code: 'entry_key_unaddressable',
+        entryIdentity: '$proxy',
+        params: { name: '$proxy', max: BUNDLED_CONFIG_LIMITS.maxEntryKeyLength },
+      }),
+    ]);
+    expect(write([...list, { ...legacy, titleModel: 'z' }], keyed).issues).toEqual([]);
+    expect(write([...list, legacy, added], before).issues).toEqual([]);
+  });
+
   it('never resets the whole list when its last own entry goes, which would drop every hide under it', () => {
     const remove: t.ConfigChange = {
       op: 'removeEntry',

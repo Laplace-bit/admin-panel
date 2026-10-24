@@ -17,6 +17,7 @@ export type EndpointIssueCode =
   | 'nameSimilar'
   | 'nameMerged'
   | 'nameReserved'
+  | 'nameUnaddressable'
   | 'apiKeyRequired'
   | 'baseUrlRequired'
   | 'baseUrlInvalid'
@@ -49,6 +50,11 @@ export interface EndpointValidationInput {
   loadedName?: string;
   /** A rename keeps the stored key: the server moves it to the new name (`getSecretCarry`). */
   carriesKey?: boolean;
+  /**
+   * Where the server removes and hides entries by name (`keyedTombstones`), the longest name it
+   * addresses (`limits.maxEntryKeyLength`): a name it can't address could not be removed later.
+   */
+  maxKeyLength?: number;
 }
 
 /** One custom endpoint as the list shows it (WS10 CE-7). */

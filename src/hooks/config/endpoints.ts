@@ -61,6 +61,8 @@ export function useEndpointRows({ path, items }: t.EndpointRowsOptions): t.Endpo
   const features = useConfigFeatures();
   const { endpointRename } = getSecretCarry(features);
   const { keyedTombstones } = features;
+  const { limits } = useConfigContract();
+  const maxKeyLength = keyedTombstones ? limits.maxEntryKeyLength : undefined;
   const layers = useContext(ConfigValuesContext)?.layers ?? null;
   const edit = useContext(CollectionEditsContext)[path];
   const keys = useListKeys({ items, identity: nameOf, prefix: 'endpoint' });
@@ -132,6 +134,7 @@ export function useEndpointRows({ path, items }: t.EndpointRowsOptions): t.Endpo
           storedSecret,
           loadedName,
           carriesKey: endpointRename,
+          maxKeyLength,
         }),
       };
     });
@@ -159,7 +162,7 @@ export function useEndpointRows({ path, items }: t.EndpointRowsOptions): t.Endpo
       removals,
       lowerEntry: (name) => lower.get(name),
     };
-  }, [context, items, edit, keys, endpointRename, localize]);
+  }, [context, items, edit, keys, endpointRename, maxKeyLength, localize]);
 }
 
 const NO_VISIBILITY: Readonly<Record<string, t.VisibilityEdit>> = {};

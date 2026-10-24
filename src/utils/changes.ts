@@ -606,6 +606,7 @@ function writeByKey(
     collection,
     (Array.isArray(stored) ? stored : []).map((entry) => withoutEntryPreview(collection, entry)),
   );
+  refuseUnaddressableEntries(state, collection, written, own);
   const kept: t.ConfigValue[] = [];
   const resets: string[] = [...reverted];
   for (const entry of own) {
@@ -628,6 +629,41 @@ function writeByKey(
   addEntryResets(state, resets);
   if (isConfigValueEqual(written, kept)) return;
   state.sets.set(path, written);
+}
+
+/** An entry a save adds by a name LibreChat can't address by key, so it could not be removed later. */
+const ENTRY_KEY_UNADDRESSABLE = 'entry_key_unaddressable';
+
+/**
+ * Refuses the entries a by-key save adds (`written`, neither stored by the target in `own` nor
+ * defined beneath it) under a name a keyed path can't hold (`isAddressableEntryKey`): LibreChat
+ * removes and hides entries of such a list only by key, so one stored under that name could never
+ * be removed again. An entry already saved under such a name stays as it is.
+ */
+function refuseUnaddressableEntries(
+  state: PlanState,
+  collection: t.KeyedCollection,
+  written: readonly t.ConfigValue[],
+  own: readonly t.ConfigValue[],
+): void {
+  const lower = getValueAtPath(state.snapshot.lower, collection.path);
+  const known = new Set(
+    [...own, ...(Array.isArray(lower) ? lower : [])].map((entry) => identityIn(collection, entry)),
+  );
+  for (const entry of written) {
+    const name = getEntryKey(entry, collection.key);
+    if (name === undefined || known.has(identityIn(collection, entry))) continue;
+    if (isAddressableEntryKey(name, state.maxEntryKeyLength)) continue;
+    const params = { name, max: state.maxEntryKeyLength };
+    state.issues.push({
+      path: collection.path,
+      code: ENTRY_KEY_UNADDRESSABLE,
+      params,
+      message: describeIssueCode(ENTRY_KEY_UNADDRESSABLE, params, ENTRY_KEY_UNADDRESSABLE),
+      entryIdentity: name,
+      entryPath: collection.key,
+    });
+  }
 }
 
 /**
