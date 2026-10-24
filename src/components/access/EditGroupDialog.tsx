@@ -98,11 +98,13 @@ export function EditGroupDialog({ group, canManage, onClose }: t.EditGroupDialog
       }
       return { name: submittedName };
     },
-    onSuccess: (data) => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['groups'] });
       queryClient.invalidateQueries({ queryKey: ['groupAssignments'] });
       queryClient.invalidateQueries({ queryKey: ['groupMembers', group?.id] });
       void refreshScopes();
+    },
+    onSuccess: (data) => {
       notifySuccess(localize('com_toast_group_updated', { name: data.name }));
       onClose();
     },

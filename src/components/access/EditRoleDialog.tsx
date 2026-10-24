@@ -149,18 +149,14 @@ export function EditRoleDialog({ role, canManage, onClose }: t.EditRoleDialogPro
       }
       return { roleId, name: submittedName };
     },
-    onSuccess: (data) => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['roles'] });
-      queryClient.invalidateQueries({ queryKey: ['role', role?.id] });
-      if (data.roleId !== role?.id) {
-        queryClient.invalidateQueries({ queryKey: ['role', data.roleId] });
-      }
+      queryClient.invalidateQueries({ queryKey: ['role'] });
       queryClient.invalidateQueries({ queryKey: ['roleAssignments'] });
-      queryClient.invalidateQueries({ queryKey: ['roleMembers', role?.id] });
-      if (data.roleId !== role?.id) {
-        queryClient.invalidateQueries({ queryKey: ['roleMembers', data.roleId] });
-      }
+      queryClient.invalidateQueries({ queryKey: ['roleMembers'] });
       void refreshScopes();
+    },
+    onSuccess: (data) => {
       notifySuccess(localize('com_toast_role_updated', { name: data.name }));
       onClose();
     },

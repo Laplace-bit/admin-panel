@@ -5,11 +5,12 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type * as t from '@/types';
 import { BUNDLED_CONFIG_FEATURES } from '@/constants';
 import { EditRoleDialog } from '../EditRoleDialog';
-import { updateRoleFn } from '@/server';
+import { removeRoleMemberFn, updateRoleFn } from '@/server';
 
 const state = vi.hoisted(() => ({
   features: {} as Record<string, boolean>,
   scopes: [] as Array<Pick<t.ConfigScope, 'principalType' | 'principalId'>>,
+  members: [] as Array<{ userId: string; name: string; email: string }>,
 }));
 
 vi.mock('@/hooks', async () => {
@@ -31,7 +32,7 @@ vi.mock('@/server', () => ({
   }),
   roleMembersQueryOptions: (id: string, page: number) => ({
     queryKey: ['roleMembers', id, page],
-    queryFn: async () => ({ members: [], total: 0 }),
+    queryFn: async () => ({ members: state.members, total: state.members.length }),
   }),
   availableScopesOptions: {
     queryKey: ['availableScopes'],
@@ -73,6 +74,7 @@ async function rename(name: string) {
 beforeEach(() => {
   state.features = { ...BUNDLED_CONFIG_FEATURES };
   state.scopes = [{ principalType: PrincipalType.ROLE, principalId: 'EDITORS' }];
+  state.members = [];
 });
 
 describe('EditRoleDialog rename note', () => {
@@ -123,6 +125,23 @@ describe('EditRoleDialog save', () => {
     );
     expect(queryClient.getQueryState(['configCatalog', 'role', 'EDITORS'])?.isInvalidated).toBe(
       true,
+    );
+    expect(queryClient.getQueryState(['envStatus'])?.isInvalidated).toBe(true);
+  });
+
+  it('refreshes the server-resolved reads when part of the save fails after other parts landed', async () => {
+    state.members = [{ userId: 'u1', name: 'Jane', email: 'jane@example.com' }];
+    vi.mocked(updateRoleFn).mockResolvedValue({ role });
+    vi.mocked(removeRoleMemberFn).mockRejectedValue(new Error('boom'));
+    const queryClient = renderDialog();
+    queryClient.setQueryData(['configPreview', 'user', 'u1'], { ok: true });
+    queryClient.setQueryData(['envStatus'], {});
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'com_access_tab_members' }));
+    fireEvent.click(await screen.findByLabelText('com_access_remove_member Jane'));
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_save' }));
+    await waitFor(() => expect(removeRoleMemberFn).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(queryClient.getQueryState(['configPreview', 'user', 'u1'])?.isInvalidated).toBe(true),
     );
     expect(queryClient.getQueryState(['envStatus'])?.isInvalidated).toBe(true);
   });
