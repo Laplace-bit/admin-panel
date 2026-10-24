@@ -3,6 +3,7 @@ export * from './capabilities';
 export * from './changes';
 export * from './cn';
 export * from './collections';
+export * from './contract';
 export * from './domains';
 export * from './errors';
 export * from './fallback';

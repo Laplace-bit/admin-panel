@@ -13,6 +13,16 @@ describe('isUnsafeConfigKey', () => {
     expect(isUnsafeConfigKey('X-Thread-ID')).toBe(false);
     expect(isUnsafeConfigKey('price$')).toBe(false);
   });
+
+  it('with dotted keys allowed, flags only $-prefixed keys and the prototype names', () => {
+    expect(isUnsafeConfigKey('us.anthropic.claude-sonnet-4-6', true)).toBe(false);
+    expect(isUnsafeConfigKey('gpt-4.1', true)).toBe(false);
+    expect(isUnsafeConfigKey('$where', true)).toBe(true);
+    expect(isUnsafeConfigKey('__proto__', true)).toBe(true);
+    expect(isUnsafeConfigKey('constructor', true)).toBe(true);
+    expect(isUnsafeConfigKey('prototype', true)).toBe(true);
+    expect(isUnsafeConfigKey('constructorName', true)).toBe(false);
+  });
 });
 
 describe('findUnsafeKeys', () => {
@@ -44,6 +54,23 @@ describe('findUnsafeKeys', () => {
         'endpoints.custom.11.headers',
       ),
     ).toEqual([{ path: 'endpoints.custom.11.headers', key: 'x.thread.id' }]);
+  });
+
+  it('with dotted keys allowed, finds only the keys the server refuses', () => {
+    expect(
+      findUnsafeKeys(
+        {
+          inferenceProfiles: { 'us.anthropic.x': 'arn' },
+          headers: [{ key: '$x', value: '1', valueType: 'string' }],
+          nested: { deeper: { $set: 1, 'a.b': 2 } },
+        },
+        'endpoints.bedrock',
+        true,
+      ),
+    ).toEqual([
+      { path: 'endpoints.bedrock.headers', key: '$x' },
+      { path: 'endpoints.bedrock.nested.deeper', key: '$set' },
+    ]);
   });
 
   it('ignores dots in values and returns nothing for safe input', () => {

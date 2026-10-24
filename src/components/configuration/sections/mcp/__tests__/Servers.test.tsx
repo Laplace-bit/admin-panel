@@ -18,8 +18,10 @@ import {
 } from '@/utils';
 import { extractSchemaTree, getSchemaPathSet } from '@/server/config';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
+import { ConfigContractContext } from '@/contexts/ContractContext';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { usePendingConfigValues } from '@/hooks/config/layers';
+import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
 import { useConfigEdits } from '@/hooks/config/edits';
 import { McpServersRenderer } from '../Servers';
 
@@ -106,6 +108,7 @@ function Harness({
   showConfiguredOnly = false,
   preset,
   extra,
+  contract = BUNDLED_CONFIG_CONTRACT,
 }: {
   scope?: boolean;
   scopeData?: Partial<t.ResolvedConfigData>;
@@ -113,6 +116,7 @@ function Harness({
   showConfiguredOnly?: boolean;
   preset?: t.FlatConfigMap;
   extra?: t.ConfigRecord;
+  contract?: t.ConfigContract;
 }) {
   const layers = useMemo(() => layersFor(scope, scopeData, extra), [scope, scopeData, extra]);
   const config = layers.effective ?? {};
@@ -136,26 +140,28 @@ function Harness({
     [layers, editedValues, shown, visibilityEdits],
   );
   return (
-    <ConfigValuesProvider value={data}>
-      <RowFilterContext.Provider value={filter}>
-        <McpServersRenderer
-          fields={mcpFields}
-          parentPath="mcpServers"
-          parentValue={config.mcpServers}
-          getValue={(path, fallback) => deriveFieldValue(path, fallback, data)}
-          onChange={edits.handleFieldChange}
-          onDiscardField={edits.handleDiscardField}
-          onHideField={edits.handleHideField}
-          onUnhideField={edits.handleUnhideField}
-          onRenameEntry={edits.handleRenameEntry}
-          editedValues={editedValues}
-          yamlBaseKeys={new Set(Object.keys(YAML_SERVERS))}
-          isEditingScope={scope}
-          showConfiguredOnly={showConfiguredOnly}
-          editSessionId={edits.editSessionId}
-        />
-      </RowFilterContext.Provider>
-    </ConfigValuesProvider>
+    <ConfigContractContext.Provider value={contract}>
+      <ConfigValuesProvider value={data}>
+        <RowFilterContext.Provider value={filter}>
+          <McpServersRenderer
+            fields={mcpFields}
+            parentPath="mcpServers"
+            parentValue={config.mcpServers}
+            getValue={(path, fallback) => deriveFieldValue(path, fallback, data)}
+            onChange={edits.handleFieldChange}
+            onDiscardField={edits.handleDiscardField}
+            onHideField={edits.handleHideField}
+            onUnhideField={edits.handleUnhideField}
+            onRenameEntry={edits.handleRenameEntry}
+            editedValues={editedValues}
+            yamlBaseKeys={new Set(Object.keys(YAML_SERVERS))}
+            isEditingScope={scope}
+            showConfiguredOnly={showConfiguredOnly}
+            editSessionId={edits.editSessionId}
+          />
+        </RowFilterContext.Provider>
+      </ConfigValuesProvider>
+    </ConfigContractContext.Provider>
   );
 }
 
@@ -759,6 +765,226 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     expect(edits.editedValues).toMatchObject({
       'mcpServers.acme-copy.url': 'https://mcp.acme.dev/mcp',
       'mcpServers.acme-copy.title': 'Acme Docs copy',
+    });
+  });
+});
+
+describe('McpServersRenderer — dotted record keys (dottedKeys)', () => {
+  const dottedContract: t.ConfigContract = {
+    ...BUNDLED_CONFIG_CONTRACT,
+    features: { ...BUNDLED_CONFIG_CONTRACT.features, dottedKeys: true },
+  };
+  const HEADERS: t.ConfigRecord = { 'X-Team': 'docs', 'x.api.version': '2024-10' };
+  const USER_VARS: t.ConfigRecord = {
+    'MY.TOKEN': { title: 'Token', description: 'Your token' },
+  };
+  const versioned: t.ConfigRecord = {
+    versioned: {
+      type: 'streamable-http',
+      url: 'https://mcp.versioned.dev/mcp',
+      headers: HEADERS,
+      customUserVars: USER_VARS,
+    },
+  };
+
+  /** Pending edit paths under a server's record field (none means it was written whole). */
+  function splitPaths(server: string, field: string): string[] {
+    return Object.keys(edits.editedValues).filter((path) =>
+      path.startsWith(`mcpServers.${server}.${field}.`),
+    );
+  }
+
+  it('creates a server with a dotted header as one headers record', async () => {
+    render(<Harness contract={dottedContract} />);
+    fireEvent.click(screen.getByRole('button', { name: /com_config_create_mcp_server/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(
+      within(dialog).getByPlaceholderText('com_config_mcp_create_name_placeholder'),
+      { target: { value: 'srv-v' } },
+    );
+    const url = dialog.querySelector<HTMLInputElement>('#mcpDraft-url input, input#mcpDraft-url');
+    if (!url) throw new Error('no URL input');
+    fireEvent.change(url, { target: { value: 'https://mcp.example.com/v' } });
+    fireEvent.blur(url);
+    const headers = dialog.querySelector<HTMLElement>('#mcpDraft-headers');
+    if (!headers) throw new Error('no headers editor');
+    for (const [n, [key, value]] of Object.entries(HEADERS).entries()) {
+      fireEvent.click(within(headers).getByRole('button', { name: /com_ui_add_item/ }));
+      const keyInput = within(headers).getByRole('textbox', { name: `com_ui_key ${n + 1}` });
+      fireEvent.change(keyInput, { target: { value: key } });
+      fireEvent.blur(keyInput);
+      const valueInput = within(headers).getByRole('textbox', { name: `com_ui_value ${n + 1}` });
+      fireEvent.change(valueInput, { target: { value } });
+      fireEvent.blur(valueInput);
+    }
+    const create = within(dialog).getByRole('button', { name: 'com_ui_create' });
+    expect(create).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(create);
+    });
+    expect(edits.editedValues['mcpServers.srv-v.headers']).toEqual(HEADERS);
+    expect(splitPaths('srv-v', 'headers')).toEqual([]);
+  });
+
+  /** Opens Create with a valid URL and adds the user variable `MY.TOKEN`, its fields still empty. */
+  async function createWithDottedVariable() {
+    render(<Harness contract={dottedContract} />);
+    fireEvent.click(screen.getByRole('button', { name: /com_config_create_mcp_server/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(
+      within(dialog).getByPlaceholderText('com_config_mcp_create_name_placeholder'),
+      { target: { value: 'srv-u' } },
+    );
+    const url = dialog.querySelector<HTMLInputElement>('#mcpDraft-url input, input#mcpDraft-url');
+    if (!url) throw new Error('no URL input');
+    fireEvent.change(url, { target: { value: 'https://mcp.example.com/u' } });
+    fireEvent.blur(url);
+    fireEvent.click(within(dialog).getByRole('button', { name: /com_config_mcp_group_user_vars/ }));
+    const vars = dialog.querySelector<HTMLElement>('#mcpDraft-customUserVars');
+    if (!vars) throw new Error('no user variables editor');
+    fireEvent.click(within(vars).getByRole('button', { name: /com_ui_add_item/ }));
+    fireEvent.change(within(vars).getByRole('textbox', { name: 'com_ui_key' }), {
+      target: { value: 'MY.TOKEN' },
+    });
+    fireEvent.click(within(vars).getByRole('button', { name: 'com_ui_add' }));
+    return { dialog, vars };
+  }
+
+  it('creates a server with a dotted user variable as one customUserVars record', async () => {
+    const { dialog, vars } = await createWithDottedVariable();
+    for (const [leaf, value] of [
+      ['title', 'Token'],
+      ['description', 'Your token'],
+    ]) {
+      const input = vars.querySelector<HTMLInputElement>(
+        `input[id$="-${leaf}"], [id$="-${leaf}"] input, textarea[id$="-${leaf}"]`,
+      );
+      if (!input) throw new Error(`no ${leaf} input`);
+      fireEvent.change(input, { target: { value } });
+      fireEvent.blur(input);
+    }
+    const create = within(dialog).getByRole('button', { name: 'com_ui_create' });
+    expect(create).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(create);
+    });
+    expect(edits.editedValues['mcpServers.srv-u.customUserVars']).toEqual(USER_VARS);
+    expect(splitPaths('srv-u', 'customUserVars')).toEqual([]);
+  });
+
+  it('duplicates a server keeping its dotted header and user variable whole', async () => {
+    render(<Harness contract={dottedContract} extra={versioned} />);
+    openMenu('versioned');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_duplicate'));
+    });
+    expect(edits.editedValues).toEqual({
+      'mcpServers.versioned-copy.type': 'streamable-http',
+      'mcpServers.versioned-copy.url': 'https://mcp.versioned.dev/mcp',
+      'mcpServers.versioned-copy.headers': HEADERS,
+      'mcpServers.versioned-copy.customUserVars': USER_VARS,
+    });
+  });
+
+  it('keeps the record whole on an older server too, so Save refuses the key instead of splitting it', async () => {
+    render(<Harness extra={versioned} />);
+    openMenu('versioned');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_duplicate'));
+    });
+    expect(edits.editedValues['mcpServers.versioned-copy.headers']).toEqual(HEADERS);
+    expect(splitPaths('versioned-copy', 'headers')).toEqual([]);
+  });
+
+  it('renames a server keeping its dotted header and user variable whole', async () => {
+    render(<Harness contract={dottedContract} extra={versioned} />);
+    openMenu('versioned');
+    await act(async () => {
+      fireEvent.click(menuItem('com_config_mcp_action_rename'));
+    });
+    const input = screen.getByRole('textbox', { name: 'com_a11y_rename_entry:versioned' });
+    fireEvent.change(input, { target: { value: 'versioned-v2' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(edits.editedValues).toEqual({
+      'mcpServers.versioned': undefined,
+      'mcpServers.versioned-v2.type': 'streamable-http',
+      'mcpServers.versioned-v2.url': 'https://mcp.versioned.dev/mcp',
+      'mcpServers.versioned-v2.headers': HEADERS,
+      'mcpServers.versioned-v2.customUserVars': USER_VARS,
+    });
+    expand('versioned-v2');
+    const headers = card('versioned-v2').querySelector<HTMLElement>(
+      '#mcpServers-versioned-v2-headers',
+    );
+    if (!headers) throw new Error('no headers editor');
+    expect(within(headers).getByDisplayValue('x.api.version')).toBeInTheDocument();
+  });
+
+  describe('user variables of a saved server', () => {
+    const PLAIN: t.ConfigRecord = { title: 'Region', description: 'Your region' };
+    const mixed: t.ConfigRecord = {
+      versioned: {
+        type: 'streamable-http',
+        url: 'https://mcp.versioned.dev/mcp',
+        customUserVars: { ...USER_VARS, REGION: PLAIN },
+      },
+    };
+
+    /** The user variables editor of `versioned`, its group open. */
+    function userVariables(): HTMLElement {
+      expand('versioned');
+      openGroup('versioned', 'com_config_mcp_group_user_vars');
+      const vars = card('versioned').querySelector<HTMLElement>(
+        '#mcpServers-versioned-customUserVars',
+      );
+      if (!vars) throw new Error('no user variables editor');
+      return vars;
+    }
+
+    function retitle(vars: HTMLElement, name: string, title: string) {
+      const entry = vars.querySelector<HTMLElement>(
+        `#section-mcpServers-versioned-customUserVars-${name}`,
+      );
+      if (!entry) throw new Error(`no card for ${name}`);
+      const toggle = entry.querySelector<HTMLButtonElement>('button[aria-expanded]');
+      if (toggle?.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle!);
+      const input = entry.querySelector<HTMLInputElement>('input[id$="-title"]');
+      if (!input) throw new Error(`no title input for ${name}`);
+      fireEvent.change(input, { target: { value: title } });
+      fireEvent.blur(input);
+    }
+
+    it('writes only the edited variable when a dotted one is inherited from Base', () => {
+      render(<Harness scope contract={dottedContract} extra={mixed} />);
+      expand('versioned');
+      fireEvent.click(
+        within(card('versioned')).getByRole('button', { name: 'com_config_mcp_override_fields' }),
+      );
+      retitle(userVariables(), 'REGION', 'Area');
+      expect(edits.editedValues).toEqual({
+        'mcpServers.versioned.customUserVars.REGION': { ...PLAIN, title: 'Area' },
+      });
+    });
+
+    it('writes only the edited variable of a Base server whose other variable is dotted', () => {
+      render(<Harness extra={mixed} />);
+      retitle(userVariables(), 'REGION', 'Area');
+      expect(edits.editedValues).toEqual({
+        'mcpServers.versioned.customUserVars.REGION': { ...PLAIN, title: 'Area' },
+      });
+    });
+
+    it('keeps the variables one record while removing a dotted one is pending', () => {
+      render(<Harness contract={dottedContract} extra={mixed} />);
+      const vars = userVariables();
+      fireEvent.click(within(vars).getByRole('button', { name: 'com_ui_delete MY.TOKEN' }));
+      expect(edits.editedValues).toEqual({
+        'mcpServers.versioned.customUserVars': { REGION: PLAIN },
+      });
+      retitle(vars, 'REGION', 'Area');
+      expect(edits.editedValues).toEqual({
+        'mcpServers.versioned.customUserVars': { REGION: { ...PLAIN, title: 'Area' } },
+      });
     });
   });
 });

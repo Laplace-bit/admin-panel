@@ -1,5 +1,6 @@
 import type * as t from '@/types';
 import { isConfigRecord, hasConfigValue } from '@/utils';
+import { PROCESS_MCP_FIELDS } from '@/constants';
 
 /** Transports in the order the type choice lists them: Streamable HTTP is the default and recommended. */
 export const TRANSPORTS = ['streamable-http', 'sse', 'websocket', 'stdio'] as const;
@@ -16,13 +17,7 @@ export const INSPECTOR_DERIVED: ReadonlySet<string> = new Set([
 ]);
 
 /** A stdio server's process fields: only librechat.yaml can set them (D10). */
-export const PROCESS_FIELDS: ReadonlySet<string> = new Set([
-  'command',
-  'args',
-  'env',
-  'cwd',
-  'stderr',
-]);
+export const PROCESS_FIELDS: ReadonlySet<string> = new Set(PROCESS_MCP_FIELDS);
 
 /** Fields only one kind of transport reads. */
 const TRANSPORT_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {

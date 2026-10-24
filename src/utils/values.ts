@@ -50,8 +50,10 @@ const BLOCK_SHADOWED_KEYS: ReadonlySet<string> = new Set([
   'titlePromptTemplate',
 ]);
 
-/** Activity and reasoning-label settings where a value in `endpoints.all` wins per field. */
+/** Settings where a value in `endpoints.all` wins per field: title timing, stream rate, activity and reasoning labels. */
 const FIELD_SHADOWED_KEYS: ReadonlySet<string> = new Set([
+  'titleTiming',
+  'streamRate',
   'activityLabel',
   'activityModel',
   'activityEndpoint',

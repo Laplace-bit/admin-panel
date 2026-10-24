@@ -76,6 +76,21 @@ export function isSecretPath(path: string): boolean {
   return getFieldMeta(path)?.secret === true;
 }
 
+/** How the metadata registry names any key of a record. */
+const RECORD_KEY = '{}';
+
+/**
+ * Whether the value at `segments` must never be shown (`isSecretPath`). A
+ * segment with a dot is a record key (a header, an inference profile ID), a
+ * free name rather than a field's, so it is read as any key of its record:
+ * its text (`tenant.apiKey`) never makes the value a secret.
+ */
+function isSecretSegments(segments: readonly string[]): boolean {
+  return isSecretPath(
+    segments.map((segment) => (segment.includes('.') ? RECORD_KEY : segment)).join('.'),
+  );
+}
+
 export function isObjectList(value: t.ConfigValue): value is t.ConfigRecord[] {
   return Array.isArray(value) && value.length > 0 && value.every(isConfigRecord);
 }
@@ -438,6 +453,25 @@ function diffPositionalList(
   return items;
 }
 
+/**
+ * Items of the value under `key` of the object at `path`. A key with a dot
+ * (`us.anthropic.claude-sonnet-4-6`) reads as several keys in a dot-path, so
+ * these items carry their path's segments, the key kept whole, and a secret
+ * read from the dot-path is checked again by them (`isSecretSegments`). Items
+ * under a dotted key nested deeper already carry theirs: only the part up to
+ * this key is replaced.
+ */
+function underKey(items: t.ChangeSummaryItem[], path: string, key: string): t.ChangeSummaryItem[] {
+  if (!key.includes('.')) return items;
+  const parent = path.split('.');
+  const depth = parent.length + key.split('.').length;
+  return items.map((item) => {
+    const segments = [...parent, key, ...(item.segments ?? item.path.split('.')).slice(depth)];
+    if (!item.secret) return { ...item, segments };
+    return { ...item, segments, secret: isSecretSegments(segments) || undefined };
+  });
+}
+
 /** Entries of a record collection (`mcpServers`) saved as a whole, matched by key. */
 function diffRecordCollection(
   path: string,
@@ -452,9 +486,31 @@ function diffRecordCollection(
       entryPath: `${path}.${key}`,
       identity: key,
     };
-    if (before[key] == null) return [entryItem('added', entryRef, undefined, after[key], ctx)];
-    if (after[key] == null) return [entryItem('removed', entryRef, before[key], undefined, ctx)];
-    return diffValue(entryRef.entryPath, before[key], after[key], ctx, entryRef);
+    if (before[key] == null) {
+      return underKey([entryItem('added', entryRef, undefined, after[key], ctx)], path, key);
+    }
+    if (after[key] == null) {
+      return underKey([entryItem('removed', entryRef, before[key], undefined, ctx)], path, key);
+    }
+    return underKey(
+      diffValue(entryRef.entryPath, before[key], after[key], ctx, entryRef),
+      path,
+      key,
+    );
+  });
+}
+
+/** Leaves of an object set where nothing was, each a row (`flattenObject`, dotted keys kept whole). */
+function addedLeaves(
+  path: string,
+  after: t.ConfigRecord,
+  ctx: DiffContext,
+  entry: t.ChangeEntryRef | undefined,
+): t.ChangeSummaryItem[] {
+  return Object.entries(after).flatMap(([key, value]) => {
+    const leaves = Object.entries(flattenObject({ [key]: value }, path));
+    const items = leaves.map(([leafPath, leaf]) => leafItem(leafPath, undefined, leaf, ctx, entry));
+    return underKey(items, path, key);
   });
 }
 
@@ -495,12 +551,13 @@ function diffValue(
   }
   if (isConfigRecord(after) && isConfigRecord(before)) {
     const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])];
-    return keys.flatMap((key) => diffValue(`${path}.${key}`, before[key], after[key], ctx, entry));
+    return keys.flatMap((key) =>
+      underKey(diffValue(`${path}.${key}`, before[key], after[key], ctx, entry), path, key),
+    );
   }
   if (isConfigRecord(after) && before == null) {
     if (isEntryPath && entry) return [entryItem('added', entry, undefined, after, ctx)];
-    const leaves = Object.entries(flattenObject(after, path));
-    return leaves.map(([leafPath, value]) => leafItem(leafPath, undefined, value, ctx, entry));
+    return addedLeaves(path, after, ctx, entry);
   }
   if (after == null && isEntryPath && entry) {
     return [entryItem('removed', entry, before, undefined, ctx)];

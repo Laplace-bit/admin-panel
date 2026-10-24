@@ -131,7 +131,12 @@ function TabPage({ tab, tree, yaml, overrides, expandAll, state }: HarnessProps)
       collections: edits.collectionEdits,
       visibility: edits.visibilityEdits,
     });
-    return planConfigChanges(changes.ops, { stored: overrides, lower: yaml, lowerKind: 'yaml' });
+    return planConfigChanges(changes.ops, {
+      stored: overrides,
+      tombstones: [],
+      lower: yaml,
+      lowerKind: 'yaml',
+    });
   };
 
   return (

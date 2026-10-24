@@ -4,12 +4,12 @@ import type * as t from '@/types';
 import { isRowVisible, getSecretPreviewValue, isInterfacePermissionPath } from '@/utils';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
 import { countConfigured, hasPathOverlap, isPathSet } from '../counts';
+import { isStartupOnlyPath, isYamlManagedPath } from '@/constants';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { getControlType, orderFields } from '../controls';
 import { UnknownSettings } from '../UnknownSettings';
 import { SingleFieldRenderer } from './SingleField';
 import { ManagedNotice } from '../ManagedNotice';
-import { isYamlManagedPath } from '@/constants';
 import { NestedGroup } from './NestedGroup';
 import { labelForPath } from '../meta';
 import { useLocalize } from '@/hooks';
@@ -24,6 +24,37 @@ function asEnabled(value: t.ConfigValue): boolean | undefined {
   if (value === true || isPlainRecord(value)) return true;
   if (value === false) return false;
   return undefined;
+}
+
+/** The notice a field managed only in librechat.yaml shows at its root, or null below the root or for any other field. */
+function managedNoticeKind(path: string, parentPath: string): t.ManagedNoticeKind | null {
+  if (!isYamlManagedPath(path) || isYamlManagedPath(parentPath)) return null;
+  return isStartupOnlyPath(path) ? 'startup' : 'yaml';
+}
+
+/**
+ * Each managed field's notice, by the index of the field it is shown above,
+ * with the paths it covers: consecutive startup-only fields share one notice
+ * above the first of them. A managed group shows its own notice inside it.
+ */
+function managedNoticeRuns(
+  groups: ReadonlyArray<{ type: string; path: string }>,
+  parentPath: string,
+): Map<number, string[]> {
+  const runs = new Map<number, string[]>();
+  let start = -1;
+  let kind: t.ManagedNoticeKind | null = null;
+  groups.forEach((group, index) => {
+    const next = group.type === 'nested' ? null : managedNoticeKind(group.path, parentPath);
+    if (next === 'startup' && next === kind) {
+      runs.get(start)?.push(group.path);
+      return;
+    }
+    kind = next;
+    start = index;
+    if (next != null) runs.set(index, [group.path]);
+  });
+  return runs;
 }
 
 /** `boolean | object` fields get an on/off header; interface permission fields stay plain groups. */
@@ -101,19 +132,34 @@ export function FieldRenderer({
     }
   }
 
-  const managedNotice = (path: string): ReactNode => (
-    <ManagedNotice
-      hasOverride={hasPathOverlap(path, dbOverridePaths ?? NO_PATHS)}
-      pendingRemoval={pendingResets?.has(path) ?? false}
-      onRemoveOverride={disabled || !onResetField ? undefined : () => onResetField(path)}
-    />
-  );
+  const noticeRuns = managedNoticeRuns(groups, parentPath);
+
+  /** The notice of managed fields (`settings`: how many it covers), offering to remove their stale overrides. */
+  const managedNotice = (paths: string[], settings = paths.length): ReactNode => {
+    const overridden = paths.filter((path) => hasPathOverlap(path, dbOverridePaths ?? NO_PATHS));
+    return (
+      <ManagedNotice
+        kind={isStartupOnlyPath(paths[0]) ? 'startup' : 'yaml'}
+        count={settings}
+        hasOverride={overridden.length > 0}
+        pendingRemoval={
+          overridden.length > 0 && overridden.every((path) => pendingResets?.has(path))
+        }
+        onRemoveOverride={
+          disabled || !onResetField
+            ? undefined
+            : () => overridden.forEach((path) => onResetField(path))
+        }
+      />
+    );
+  };
 
   return (
     <ConfiguredOnlyContext.Provider value={Boolean(showConfiguredOnly && !previewMode)}>
-      {groups.map((group) => {
+      {groups.map((group, index) => {
         const managed = isYamlManagedPath(group.path);
         const managedRoot = managed && !isYamlManagedPath(parentPath);
+        const noticeRun = noticeRuns.get(index);
         const groupDisabled = disabled || managed;
         if (group.type === 'nested') {
           const nestedValue =
@@ -131,7 +177,7 @@ export function FieldRenderer({
               disabled={groupDisabled}
               revealPaths={[group.path]}
             >
-              {managedRoot && managedNotice(group.path)}
+              {managedRoot && managedNotice([group.path], group.field.children?.length)}
               <FieldRenderer
                 fields={group.field.children!}
                 parentValue={nestedValue}
@@ -200,7 +246,7 @@ export function FieldRenderer({
           const enabled = asEnabled(current) ?? asEnabled(schemaDefaults?.[group.path]) ?? false;
           return (
             <Fragment key={group.field.path}>
-              {managedRoot && managedNotice(group.path)}
+              {noticeRun && managedNotice(noticeRun)}
               {single}
               {enabled && (group.field.children?.length ?? 0) > 0 && (
                 <div className="settings-group">
@@ -238,7 +284,7 @@ export function FieldRenderer({
 
         return (
           <Fragment key={group.field.path}>
-            {managedRoot && managedNotice(group.path)}
+            {noticeRun && managedNotice(noticeRun)}
             {single}
           </Fragment>
         );

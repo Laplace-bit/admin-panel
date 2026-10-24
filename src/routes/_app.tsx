@@ -3,6 +3,7 @@ import { Icon } from '@clickhouse/click-ui';
 import { createFileRoute, Outlet, useRouter, Link, redirect } from '@tanstack/react-router';
 import type { ErrorComponentProps } from '@tanstack/react-router';
 import { useCapabilities, useCommandMenu, useLocalize } from '@/hooks';
+import { ConfigContractProvider } from '@/contexts/ContractContext';
 import { CommandMenu } from '@/components/CommandMenu';
 import { AccessDenied } from '@/components/shared';
 import { SystemCapabilities } from '@/constants';
@@ -79,16 +80,18 @@ function AppLayout() {
   const title = matchedKey ? localize(ROUTE_TITLE_KEYS[matchedKey]) : undefined;
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar user={user} collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Header title={title} onSearchClick={() => setOpen(true)} />
-        <main className="flex min-h-0 flex-1 flex-col overflow-auto">
-          <Outlet />
-        </main>
+    <ConfigContractProvider>
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar user={user} collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <Header title={title} onSearchClick={() => setOpen(true)} />
+          <main className="flex min-h-0 flex-1 flex-col overflow-auto">
+            <Outlet />
+          </main>
+        </div>
+        <CommandMenu open={open} onOpenChange={setOpen} />
       </div>
-      <CommandMenu open={open} onOpenChange={setOpen} />
-    </div>
+    </ConfigContractProvider>
   );
 }
 

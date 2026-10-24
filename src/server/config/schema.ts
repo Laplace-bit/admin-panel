@@ -1,6 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
 import { configSchema } from 'librechat-data-provider';
 import { createServerFn } from '@tanstack/react-start';
+import type { TStartupConfig } from 'librechat-data-provider';
 import type * as t from '@/types';
 import {
   unwrapSchema,
@@ -15,13 +16,19 @@ import {
 import { RUNTIME_NUMBER_LIMITS } from '@/constants';
 import { apiFetch } from '../utils/api';
 
-/** Hide the Langfuse section when LibreChat reports fanout is disabled. When the
- *  fanout state is unknown (older backends), the schema-provided section is kept. */
+/**
+ * Hides the Langfuse section when LibreChat reports the signed-in admin can't
+ * use its connection settings (`langfuseConnectionAccess`: tracing or tenant
+ * export is off, credentials come from the environment, or the admin lacks
+ * the Langfuse capability). A backend without that flag is judged by
+ * `langfuseFanoutEnabled`; with neither, the schema-provided section is kept.
+ */
 export function applyLangfuseSchemaVisibility(
   tree: t.SchemaField[],
-  fanoutEnabled: boolean | undefined,
+  startup: Pick<TStartupConfig, 'langfuseFanoutEnabled' | 'langfuseConnectionAccess'> | undefined,
 ): t.SchemaField[] {
-  if (fanoutEnabled !== false) return tree;
+  const available = startup?.langfuseConnectionAccess ?? startup?.langfuseFanoutEnabled;
+  if (available !== false) return tree;
   const langfuseIndex = tree.findIndex((section) => section.key === 'langfuse');
   if (langfuseIndex >= 0) tree.splice(langfuseIndex, 1);
   return tree;
@@ -568,9 +575,9 @@ export const getConfigSchemaFields = createServerFn({ method: 'GET' }).handler(a
     const tree = extractSchemaTree(configSchema);
     const startupConfigResponse = await apiFetch('/api/config');
     const startupConfig = startupConfigResponse.ok
-      ? ((await startupConfigResponse.json()) as { langfuseFanoutEnabled?: boolean })
+      ? ((await startupConfigResponse.json()) as TStartupConfig)
       : undefined;
-    applyLangfuseSchemaVisibility(tree, startupConfig?.langfuseFanoutEnabled);
+    applyLangfuseSchemaVisibility(tree, startupConfig);
     for (const section of tree) {
       if (section.key === 'interface' && section.children) {
         section.children = filterInterfacePermissionChildren(section.children);

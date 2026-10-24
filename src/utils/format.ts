@@ -63,8 +63,18 @@ export function getInitials(name: string): string {
 }
 
 /**
+ * Whether an object has a key containing `.` (a Bedrock inference profile ID,
+ * a MIME type, a dotted header name). A dot-path can't name such a key, so
+ * the object is a leaf of its tree: it is read and written whole.
+ */
+export function hasDottedKey(value: t.ConfigValue): boolean {
+  return isConfigRecord(value) && Object.keys(value).some((key) => key.includes('.'));
+}
+
+/**
  * Recursively flattens a nested object into dot-separated paths.
- * Plain objects become prefixes; arrays, primitives, and null become leaf entries.
+ * Plain objects become prefixes; arrays, primitives, and null become leaf entries,
+ * and so does an object with a dotted key (`hasDottedKey`), which no path can split.
  * e.g. { balance: { startBalance: 100 } } → { 'balance.startBalance': 100 }
  */
 export function flattenObject(obj: Record<string, t.ConfigValue>, prefix = ''): t.FlatConfigMap {
@@ -77,7 +87,8 @@ export function flattenObject(obj: Record<string, t.ConfigValue>, prefix = ''): 
       value !== null &&
       typeof value === 'object' &&
       !Array.isArray(value) &&
-      Object.keys(value).length > 0
+      Object.keys(value).length > 0 &&
+      !hasDottedKey(value)
     ) {
       Object.assign(result, flattenObject(value as Record<string, t.ConfigValue>, path));
     } else {

@@ -15,7 +15,9 @@ import {
 } from '@/utils';
 import { extractSchemaTree, extractSchemaDefaults, getSchemaPathSet } from '@/server/config';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
+import { ConfigContractContext } from '@/contexts/ContractContext';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
+import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
 
 const TREE = extractSchemaTree(configSchema as t.ZodSchemaLike);
 const SCHEMA_PATHS = getSchemaPathSet();
@@ -41,6 +43,8 @@ interface SectionSetup {
   /** Data paths the tab filter matches. */
   filter?: string[];
   props?: Partial<t.FieldRendererProps>;
+  /** Admin config features the server reports (none: an older server). */
+  features?: Partial<t.ConfigFeatures>;
 }
 
 function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -78,6 +82,10 @@ export function renderSection(Component: ComponentType<t.FieldRendererProps>, se
   };
   const configuredPaths = new Set([...collectLeafPaths(yaml), ...collectLeafPaths(overrides)]);
   const filter = setup.filter ? createPathIndex(setup.filter) : null;
+  const contract: t.ConfigContract = {
+    ...BUNDLED_CONFIG_CONTRACT,
+    features: { ...BUNDLED_CONFIG_CONTRACT.features, ...setup.features },
+  };
   let newSession = () => {};
 
   function Page() {
@@ -133,11 +141,13 @@ export function renderSection(Component: ComponentType<t.FieldRendererProps>, se
       ...setup.props,
     };
     return (
-      <ConfigValuesProvider value={values}>
-        <RowFilterContext.Provider value={filter}>
-          <Component {...props} />
-        </RowFilterContext.Provider>
-      </ConfigValuesProvider>
+      <ConfigContractContext.Provider value={contract}>
+        <ConfigValuesProvider value={values}>
+          <RowFilterContext.Provider value={filter}>
+            <Component {...props} />
+          </RowFilterContext.Provider>
+        </ConfigValuesProvider>
+      </ConfigContractContext.Provider>
     );
   }
 

@@ -3,12 +3,11 @@ import { useId, useState, useContext, useCallback, useEffect, useRef, memo } fro
 import type * as t from '@/types';
 import { RowProblemsContext } from '@/contexts/RowProblemsContext';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
-import { cn, isRowVisible, isUnsafeConfigKey } from '@/utils';
-import { BLOCK_UNSAFE_CONFIG_KEYS } from '@/constants';
+import { useLocalize, useConfigKeyProblem } from '@/hooks';
 import { AddItemButton } from '@/components/shared';
 import { ObjectEntryCard } from './ObjectEntryCard';
+import { cn, isRowVisible } from '@/utils';
 import { INPUT_CLASSES } from './display';
-import { useLocalize } from '@/hooks';
 
 function asRecord(value: t.ConfigValue): t.ConfigRecord {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -49,6 +48,7 @@ export function RecordObjectField({
   addLabel,
 }: t.RecordObjectFieldProps) {
   const localize = useLocalize();
+  const unsafeKeyProblem = useConfigKeyProblem();
   const keyListId = keyOptions ? `${id}-keys` : undefined;
   const rowFilter = useContext(RowFilterContext);
   const [showAddInput, setShowAddInput] = useState(false);
@@ -111,7 +111,7 @@ export function RecordObjectField({
   const handleRename = (oldKey: string, renamed: string) => {
     const current = recordRef.current;
     if (renamed === oldKey || renamed in current) return;
-    if (BLOCK_UNSAFE_CONFIG_KEYS && isUnsafeConfigKey(renamed)) return;
+    if (unsafeKeyProblem(renamed)) return;
     const next: t.ConfigRecord = {};
     for (const [k, v] of Object.entries(current)) {
       next[k === oldKey ? renamed : k] = v;
@@ -228,6 +228,7 @@ const AddKeyInput = memo(function AddKeyInput({
   keyListId?: string;
 }) {
   const localize = useLocalize();
+  const unsafeKeyProblem = useConfigKeyProblem();
   const [newKey, setNewKey] = useState('');
   const [error, setError] = useState<string | null>(null);
   const errorId = useId();
@@ -250,8 +251,9 @@ const AddKeyInput = memo(function AddKeyInput({
       setError(localize('com_config_ctl_kv_duplicate'));
       return;
     }
-    if (BLOCK_UNSAFE_CONFIG_KEYS && isUnsafeConfigKey(trimmed)) {
-      setError(localize('com_config_unsafe_key_error'));
+    const unsafe = unsafeKeyProblem(trimmed);
+    if (unsafe) {
+      setError(unsafe);
       return;
     }
     const problem = validateKey?.(trimmed) ?? null;

@@ -1,3 +1,4 @@
+import { PrincipalType } from 'librechat-data-provider';
 import { useState, useEffect, useCallback } from 'react';
 import { Button, Dialog, Tabs } from '@clickhouse/click-ui';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
@@ -8,6 +9,7 @@ import {
   removeRoleMemberFn,
   roleQueryOptions,
   roleMembersQueryOptions,
+  availableScopesOptions,
   updateRoleFn,
   updateRolePermissionsFn,
   MEMBERS_PAGE_SIZE,
@@ -16,13 +18,14 @@ import {
   Avatar,
   LoadingState,
   Pagination,
+  DecorativeIcon,
   SelectedMemberList,
   TrashButton,
   UserSearchInline,
 } from '@/components/shared';
 import { RolePermissionsPanel } from './RolePermissionsPanel';
+import { useLocalize, useConfigFeatures } from '@/hooks';
 import { cn, notifySuccess, notifyError } from '@/utils';
-import { useLocalize } from '@/hooks';
 
 type EditRoleTab = 'details' | 'permissions' | 'members';
 
@@ -43,6 +46,15 @@ export function EditRoleDialog({ role, canManage, onClose }: t.EditRoleDialogPro
     ...roleQueryOptions(role?.id ?? ''),
     enabled: !!role,
   });
+
+  const { roleRenameMovesProfile } = useConfigFeatures();
+  const { data: scopes } = useQuery({ ...availableScopesOptions, enabled: !!role });
+  const hasProfile =
+    role != null &&
+    (scopes ?? []).some(
+      (scope) => scope.principalType === PrincipalType.ROLE && scope.principalId === role.name,
+    );
+  const isRenaming = role != null && name.trim() !== '' && name.trim() !== role.name;
 
   useEffect(() => {
     if (roleDetail.data && permissions === null) {
@@ -147,6 +159,9 @@ export function EditRoleDialog({ role, canManage, onClose }: t.EditRoleDialogPro
       if (data.roleId !== role?.id) {
         queryClient.invalidateQueries({ queryKey: ['roleMembers', data.roleId] });
       }
+      if (hasProfile && data.name !== role?.name) {
+        queryClient.invalidateQueries({ queryKey: ['availableScopes'] });
+      }
       notifySuccess(localize('com_toast_role_updated', { name: data.name }));
       onClose();
     },
@@ -223,8 +238,18 @@ export function EditRoleDialog({ role, canManage, onClose }: t.EditRoleDialogPro
                     disabled={role?.isSystemRole || !canManage}
                     readOnly={!canManage}
                     autoFocus
+                    aria-describedby={
+                      isRenaming && hasProfile ? 'edit-role-rename-note' : undefined
+                    }
                     className="rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) px-3 py-2 text-sm text-(--cui-color-text-default) placeholder:text-(--cui-color-text-disabled) disabled:cursor-not-allowed disabled:opacity-50"
                   />
+                  {isRenaming && hasProfile && (
+                    <RenameProfileNote
+                      id="edit-role-rename-note"
+                      name={role.name}
+                      moves={roleRenameMovesProfile}
+                    />
+                  )}
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label
@@ -372,6 +397,33 @@ export function EditRoleDialog({ role, canManage, onClose }: t.EditRoleDialogPro
         </form>
       </Dialog.Content>
     </Dialog>
+  );
+}
+
+/**
+ * What renaming a role does to its configuration profile: LibreChat keeps a
+ * role's profile under the role's name, so before it moved profiles on rename
+ * (`roleRenameMovesProfile`) the profile stays behind and stops applying.
+ */
+function RenameProfileNote({ id, name, moves }: t.RenameProfileNoteProps) {
+  const localize = useLocalize();
+  return (
+    <p
+      id={id}
+      className={cn(
+        'm-0 flex items-start gap-1.5 text-xs',
+        moves ? 'text-(--cui-color-text-muted)' : 'text-(--settings-warn-fg)',
+      )}
+    >
+      <span className="mt-px flex shrink-0">
+        <DecorativeIcon name={moves ? 'info-in-circle' : 'warning'} size="xs" />
+      </span>
+      <span>
+        {moves
+          ? localize('com_access_rename_profile_moves')
+          : localize('com_access_rename_profile_warning', { name })}
+      </span>
+    </p>
   );
 }
 

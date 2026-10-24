@@ -59,3 +59,12 @@ export interface RolePermissionsPanelProps {
 export interface RolesTabProps {
   onCreateRole: () => void;
 }
+
+/** The note under a role's name while it is renamed and the role has a configuration profile. */
+export interface RenameProfileNoteProps {
+  id: string;
+  /** The role's current name, which its profile is stored under. */
+  name: string;
+  /** LibreChat moves the profile with the role (`roleRenameMovesProfile`). */
+  moves: boolean;
+}

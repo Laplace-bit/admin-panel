@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type * as t from '@/types';
-import { LangfuseRenderer } from '../LangfuseRenderer';
 import {
   getLangfuseConnectionFn,
   LANGFUSE_CONNECTION_QUERY_KEY,
   testLangfuseConnectionFn,
   updateLangfuseConnectionFn,
 } from '@/server';
+import { LangfuseRenderer } from '../LangfuseRenderer';
 
 vi.mock('@/hooks', () => ({
   useLocalize: () => (key: string) => key,
@@ -152,7 +152,7 @@ describe('LangfuseRenderer', () => {
       destinations,
       destination: 'eu',
       publicKey: 'pk-lf-1234567890abcdef',
-      displaySecretKey: 'sk-lf-...515f',
+      secretKeyPreview: 'sk-lf-...515f',
     });
     renderLangfuse();
 
@@ -173,7 +173,7 @@ describe('LangfuseRenderer', () => {
       destinations,
       destination: 'eu',
       publicKey: 'pk-lf-1234567890abcdef',
-      displaySecretKey: 'sk-lf-...515f',
+      secretKeyPreview: 'sk-lf-...515f',
     });
     renderLangfuse({ disabled: true });
 
@@ -190,11 +190,13 @@ describe('LangfuseRenderer', () => {
       destinations,
       destination: 'removed-region',
       publicKey: 'pk-lf-1234567890abcdef',
-      displaySecretKey: 'sk-lf-...515f',
+      secretKeyPreview: 'sk-lf-...515f',
     });
     renderLangfuse();
 
-    expect(await screen.findByRole('button', { name: 'com_config_langfuse_disable' })).toBeVisible();
+    expect(
+      await screen.findByRole('button', { name: 'com_config_langfuse_disable' }),
+    ).toBeVisible();
     expect(
       screen.queryByRole('button', { name: 'com_config_langfuse_save_and_enable' }),
     ).not.toBeInTheDocument();
@@ -207,7 +209,7 @@ describe('LangfuseRenderer', () => {
       destinations,
       destination: 'eu',
       publicKey: 'pk-lf-new',
-      displaySecretKey: 'sk-lf-...cret',
+      secretKeyPreview: 'sk-lf-...cret',
     });
     renderLangfuse();
 
@@ -250,7 +252,7 @@ describe('LangfuseRenderer', () => {
       destinations,
       destination: 'eu',
       publicKey: 'pk-lf-old',
-      displaySecretKey: 'sk-lf-...515f',
+      secretKeyPreview: 'sk-lf-...515f',
     };
     mockGet.mockResolvedValue(configuredStatus);
     mockUpdate.mockResolvedValue({ ...configuredStatus, publicKey: 'pk-lf-new' });
@@ -292,7 +294,7 @@ describe('LangfuseRenderer', () => {
       destinations,
       destination: 'eu',
       publicKey: 'pk-lf-stored',
-      displaySecretKey: 'sk-lf-...515f',
+      secretKeyPreview: 'sk-lf-...515f',
     };
     mockGet.mockResolvedValue(configuredStatus);
     const { queryClient } = renderLangfuse();
@@ -327,7 +329,7 @@ describe('LangfuseRenderer', () => {
       destinations,
       destination: 'eu',
       publicKey: 'pk-lf-stored',
-      displaySecretKey: 'sk-lf-...515f',
+      secretKeyPreview: 'sk-lf-...515f',
     };
     mockGet.mockResolvedValue(configuredStatus);
     mockTest.mockRejectedValueOnce(new Error('Langfuse is temporarily unavailable'));
@@ -384,7 +386,7 @@ describe('LangfuseRenderer', () => {
       destinations,
       destination: 'eu',
       publicKey: 'pk-lf-existing',
-      displaySecretKey: 'sk-lf-...515f',
+      secretKeyPreview: 'sk-lf-...515f',
     };
     mockGet.mockResolvedValue(configuredStatus);
     mockUpdate.mockResolvedValue({ ...configuredStatus, enabled: false });
@@ -411,7 +413,7 @@ describe('LangfuseRenderer', () => {
       destinations,
       destination: 'eu',
       publicKey: 'pk-lf-existing',
-      displaySecretKey: 'sk-lf-...515f',
+      secretKeyPreview: 'sk-lf-...515f',
     };
     mockGet.mockResolvedValue(configuredStatus);
     mockUpdate.mockResolvedValue({ ...configuredStatus, enabled: true });
@@ -440,7 +442,7 @@ describe('LangfuseRenderer', () => {
       destinations,
       destination: 'eu',
       publicKey: 'pk-lf-existing',
-      displaySecretKey: 'sk-lf-...515f',
+      secretKeyPreview: 'sk-lf-...515f',
     };
     mockGet.mockResolvedValue(configuredStatus);
     mockUpdate.mockResolvedValue({ ...configuredStatus, enabled: true, publicKey: 'pk-lf-new' });
@@ -469,7 +471,7 @@ describe('LangfuseRenderer', () => {
       destinations,
       destination: 'eu',
       publicKey: 'pk-lf-existing',
-      displaySecretKey: 'sk-lf-...515f',
+      secretKeyPreview: 'sk-lf-...515f',
     });
     renderLangfuse();
     await screen.findByText('com_config_langfuse_verified');

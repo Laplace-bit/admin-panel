@@ -1,12 +1,11 @@
 import { useState, useCallback, useRef, useEffect, useId } from 'react';
 import type * as t from '@/types';
-import { useLocalize, useValuesScope, useExpandableState } from '@/hooks';
+import { useLocalize, useValuesScope, useConfigKeyProblem, useExpandableState } from '@/hooks';
 import { DecorativeIcon, StateChip } from '@/components/shared';
-import { BLOCK_UNSAFE_CONFIG_KEYS } from '@/constants';
-import { cn, isUnsafeConfigKey } from '@/utils';
 import { getEntrySummary } from './entries';
 import { sourceLabel } from '../values';
 import { CodeField } from './CodeField';
+import { cn } from '@/utils';
 
 const ACTION_CLASSES =
   'inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md border-none bg-transparent p-1.5 text-xs text-(--cui-color-text-muted) transition-colors hover:bg-(--cui-color-background-hover) hover:text-(--cui-color-text-default) disabled:cursor-not-allowed disabled:opacity-50';
@@ -55,6 +54,7 @@ export function ObjectEntryCard({
   editSessionId,
 }: t.ObjectEntryCardProps) {
   const localize = useLocalize();
+  const unsafeKeyProblem = useConfigKeyProblem();
   const generatedId = useId();
   const [isExpanded, setIsExpanded] = useExpandableState(
     defaultExpanded,
@@ -147,8 +147,9 @@ export function ObjectEntryCard({
 
   const commitRename = useCallback(() => {
     const trimmed = editKey.trim();
-    if (BLOCK_UNSAFE_CONFIG_KEYS && trimmed !== entryKey && isUnsafeConfigKey(trimmed)) {
-      setRenameError(localize('com_config_unsafe_key_error'));
+    const unsafe = trimmed !== entryKey ? unsafeKeyProblem(trimmed) : null;
+    if (unsafe) {
+      setRenameError(unsafe);
       return;
     }
     const problem = trimmed && trimmed !== entryKey ? (validateKey?.(trimmed) ?? null) : null;
@@ -163,7 +164,7 @@ export function ObjectEntryCard({
     } else {
       setEditKey(entryKey);
     }
-  }, [editKey, entryKey, onRename, validateKey, localize]);
+  }, [editKey, entryKey, onRename, validateKey, unsafeKeyProblem]);
 
   const cancelRename = useCallback(() => {
     setEditKey(entryKey);

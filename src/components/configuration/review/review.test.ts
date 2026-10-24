@@ -762,6 +762,145 @@ describe('planRevert', () => {
       value: { ...zai, apiKey: 'k9' },
     });
   });
+
+  describe('dotted record keys', () => {
+    const PROFILES = 'endpoints.bedrock.inferenceProfiles';
+    const US = 'us.anthropic.claude-sonnet-4-6';
+    const GLOBAL = 'global.anthropic.claude-opus-5-5';
+    const pairs = (record: Record<string, string>) =>
+      Object.entries(record).map(([key, value]) => ({ key, value }));
+    const withProfiles = (profiles?: t.ConfigRecord): t.ConfigRecord =>
+      profiles ? { endpoints: { bedrock: { inferenceProfiles: profiles } } } : {};
+
+    function rowsOf(profiles: t.ConfigRecord | undefined, pending: Record<string, string>) {
+      const tree = withProfiles(profiles);
+      const saves = [{ fieldPath: PROFILES, value: pending }];
+      const items = summarizeChanges(makeInput({ baseline: tree, saves, isOwned: () => true }));
+      return { tree, items, edited: { [PROFILES]: pairs(pending) } };
+    }
+
+    it('keeps the key whole in the row, so Revert drops only that added key', () => {
+      const pending = { plainA: 'arn:a', [US]: 'arn:us', [GLOBAL]: 'arn:global' };
+      const { tree, items, edited } = rowsOf({ plainA: 'arn:a' }, pending);
+      expect(items.map((item) => item.path)).toEqual([
+        `${PROFILES}.${US}`,
+        `${PROFILES}.${GLOBAL}`,
+      ]);
+      const us = items[0];
+      expect(us.segments).toEqual(['endpoints', 'bedrock', 'inferenceProfiles', US]);
+      expect(planRevert(us, edited, tree)).toEqual({
+        op: 'set',
+        path: PROFILES,
+        value: { plainA: 'arn:a', [GLOBAL]: 'arn:global' },
+      });
+    });
+
+    it('puts a removed stored key back and keeps the other change', () => {
+      const pending = { [US]: 'arn:us2' };
+      const { tree, items, edited } = rowsOf({ [US]: 'arn:us', [GLOBAL]: 'arn:global' }, pending);
+      const removed = items.find((item) => item.kind === 'removed')!;
+      expect(removed.segments).toEqual(['endpoints', 'bedrock', 'inferenceProfiles', GLOBAL]);
+      expect(planRevert(removed, edited, tree)).toEqual({
+        op: 'set',
+        path: PROFILES,
+        value: { [US]: 'arn:us2', [GLOBAL]: 'arn:global' },
+      });
+      const changed = items.find((item) => item.kind === 'changed')!;
+      expect(planRevert(changed, edited, tree)).toEqual({
+        op: 'set',
+        path: PROFILES,
+        value: { [US]: 'arn:us' },
+      });
+    });
+
+    it('reverts a key of a record set where nothing was stored', () => {
+      const pending = { [US]: 'arn:us', [GLOBAL]: 'arn:global' };
+      const { tree, items, edited } = rowsOf(undefined, pending);
+      const global = items.find((item) => item.path === `${PROFILES}.${GLOBAL}`)!;
+      expect(global).toMatchObject({ kind: 'added', segments: [...PROFILES.split('.'), GLOBAL] });
+      expect(planRevert(global, edited, tree)).toEqual({
+        op: 'set',
+        path: PROFILES,
+        value: { [US]: 'arn:us' },
+      });
+    });
+
+    it('reverts a dotted header of a list entry and keeps its other change', () => {
+      const team = { ...moonshot, headers: { 'x-team': 'eng' } };
+      const tree = { ...baseline, endpoints: { custom: [team, zai, vercel] } };
+      const edited = {
+        ...team,
+        modelDisplayLabel: 'Kimi',
+        headers: { 'x-team': 'eng', 'x-portkey.config': 'cfg' },
+      };
+      const pending = [edited, zai, vercel];
+      const items = summarizeChanges(makeInput({ baseline: tree, saves: saveList(pending) }));
+      const header = items.find(
+        (item) => item.path === 'endpoints.custom.0.headers.x-portkey.config',
+      )!;
+      expect(header.segments).toEqual(['endpoints', 'custom', '0', 'headers', 'x-portkey.config']);
+      expect(planRevert(header, { 'endpoints.custom': pending }, tree)).toEqual({
+        op: 'set',
+        path: 'endpoints.custom',
+        value: [{ ...team, modelDisplayLabel: 'Kimi' }, zai, vercel],
+      });
+    });
+
+    it('shows a dotted key whose text ends in a secret name as the value it is', () => {
+      const header = 'tenant.apiKey';
+      const team = { ...moonshot, headers: { [header]: 'acme' } };
+      const tree = { ...baseline, endpoints: { custom: [team, zai, vercel] } };
+      const changed = { ...team, headers: { [header]: 'globex' } };
+      const added = { ...zai, headers: { [header]: 'initech' } };
+      const items = summarizeChanges(
+        makeInput({ baseline: tree, saves: saveList([changed, added, vercel]) }),
+      );
+      expect(items).toHaveLength(2);
+      expect(items[0]).toMatchObject({ kind: 'changed', before: 'acme', after: 'globex' });
+      expect(items[1]).toMatchObject({ kind: 'added', after: 'initech' });
+      for (const item of items) {
+        expect(item.segments?.at(-1)).toBe(header);
+        expect(item.secret).toBeUndefined();
+      }
+      const profiles = summarizeChanges(
+        makeInput({
+          baseline: withProfiles({ 'us.secretKey': 'arn:a' }),
+          saves: [{ fieldPath: PROFILES, value: { 'us.secretKey': 'arn:b' } }],
+          isOwned: () => true,
+        }),
+      );
+      expect(profiles).toEqual([
+        expect.objectContaining({ kind: 'changed', before: 'arn:a', after: 'arn:b' }),
+      ]);
+      expect(profiles[0].secret).toBeUndefined();
+    });
+
+    it('still hides a secret field under a dotted key', () => {
+      const before = { 'team.one': { apiKey: 'sk-old' } };
+      const after = { 'team.one': { apiKey: 'sk-new' } };
+      const [item] = summarizeChanges(
+        makeInput({ baseline: { vaults: before }, saves: [{ fieldPath: 'vaults', value: after }] }),
+      );
+      expect(item).toMatchObject({
+        path: 'vaults.team.one.apiKey',
+        segments: ['vaults', 'team.one', 'apiKey'],
+        secret: true,
+      });
+    });
+
+    it('restores a dotted entry name of a record collection saved as a whole', () => {
+      const docs = { type: 'http', url: 'https://docs.example/mcp' };
+      const tree = { mcpServers: { ...baseline.mcpServers, 'my.server': docs } };
+      const pending = { ...baseline.mcpServers };
+      const saves = [{ fieldPath: 'mcpServers', value: pending }];
+      const [removed] = summarizeChanges(makeInput({ baseline: tree, saves }));
+      expect(removed).toMatchObject({ kind: 'removed', segments: ['mcpServers', 'my.server'] });
+      expect(planRevert(removed, { mcpServers: pending }, tree)).toEqual({
+        op: 'discard',
+        paths: ['mcpServers'],
+      });
+    });
+  });
 });
 
 describe('formatReviewValue', () => {

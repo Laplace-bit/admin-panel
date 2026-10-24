@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Select, TextField } from '@clickhouse/click-ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { LangfuseConnectionStatus } from '@/server';
+import type { TLangfuseConnectionStatus } from 'librechat-data-provider';
 import type * as t from '@/types';
 import {
   getLangfuseConnectionFn,
@@ -14,7 +14,7 @@ import { useLocalize } from '@/hooks';
 
 type VerificationState = 'idle' | 'unverified' | 'checking' | 'verified' | 'failed';
 
-function getConnectionKey(status?: LangfuseConnectionStatus): string | undefined {
+function getConnectionKey(status?: TLangfuseConnectionStatus): string | undefined {
   if (!status?.configured || !status.destination || !status.publicKey) return undefined;
   return `${status.destination}\u0000${status.publicKey}`;
 }
@@ -60,7 +60,7 @@ function getVerificationDotClass(state: VerificationState): string {
 export function LangfuseRenderer({ disabled, isEditingScope }: t.FieldRendererProps) {
   const localize = useLocalize();
   const queryClient = useQueryClient();
-  const [status, setStatus] = useState<LangfuseConnectionStatus>();
+  const [status, setStatus] = useState<TLangfuseConnectionStatus>();
   const [destination, setDestination] = useState('');
   const [publicKey, setPublicKey] = useState('');
   const [secretKey, setSecretKey] = useState('');
@@ -264,7 +264,7 @@ export function LangfuseRenderer({ disabled, isEditingScope }: t.FieldRendererPr
   const handleCancel = () => {
     hasDraftRef.current = false;
     const latestStatus =
-      queryClient.getQueryData<LangfuseConnectionStatus>(LANGFUSE_CONNECTION_QUERY_KEY) ?? status;
+      queryClient.getQueryData<TLangfuseConnectionStatus>(LANGFUSE_CONNECTION_QUERY_KEY) ?? status;
     setStatus(latestStatus);
     const storedDestination = latestStatus?.destination;
     setDestination(storedDestination ?? '');
@@ -395,7 +395,7 @@ export function LangfuseRenderer({ disabled, isEditingScope }: t.FieldRendererPr
             }}
             aria-label={`${localize('com_ui_edit')} ${localize('com_config_langfuse_secret_key')}`}
           >
-            <code className="text-sm">{status?.displaySecretKey}</code>
+            <code className="text-sm">{status?.secretKeyPreview}</code>
           </button>
         ) : (
           <TextField

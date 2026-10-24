@@ -28,6 +28,16 @@ describe('collectLeafPaths', () => {
     ]);
   });
 
+  it('keeps an object with a dotted key whole, since no path can name the key', () => {
+    expect(
+      collectLeafPaths({
+        endpoints: {
+          bedrock: { inferenceProfiles: { 'us.anthropic.x': 'arn:a', plain: 'arn:b' }, x: 1 },
+        },
+      }),
+    ).toEqual(['endpoints.bedrock.inferenceProfiles', 'endpoints.bedrock.x']);
+  });
+
   it('returns the prefix itself for a primitive under a prefix', () => {
     expect(collectLeafPaths(true, 'interface.schedules')).toEqual(['interface.schedules']);
     expect(collectLeafPaths(undefined, 'x')).toEqual([]);

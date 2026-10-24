@@ -11,7 +11,7 @@ import {
   secretPathForPreviewPath,
   stripSecretPreviewValues,
 } from '@/utils';
-import { SKIP_REASON_KEYS } from '@/constants';
+import { SKIP_REASON_KEYS, BUNDLED_CONFIG_FEATURES } from '@/constants';
 import { findSchemaField } from './controls';
 import { normalizeForSave } from './edits';
 
@@ -19,8 +19,19 @@ import { normalizeForSave } from './edits';
 export const IMPORT_SKIP_KEYS: Readonly<Record<t.ImportSkipReason, string>> = {
   ...SKIP_REASON_KEYS,
   unsafeKey: 'com_config_review_import_skip_unsafe',
+  reservedKey: 'com_config_review_import_skip_reserved',
+  dottedKey: 'com_config_review_import_skip_dotted',
+  dottedName: 'com_config_review_import_skip_dotted_name',
   processMcp: 'com_config_review_import_skip_process',
 };
+
+/** Skips of one key, reported at the object holding it: a section the panel never writes wins. */
+const KEY_SKIP_REASONS: ReadonlySet<t.ImportSkipReason> = new Set([
+  'unsafeKey',
+  'reservedKey',
+  'dottedKey',
+  'dottedName',
+]);
 
 /**
  * One save entry per leaf of the imported YAML, minus metadata, empty objects
@@ -29,16 +40,20 @@ export const IMPORT_SKIP_KEYS: Readonly<Record<t.ImportSkipReason, string>> = {
  * no value (`allowedDomains: [""]`, `titleModel: ""`) is reported as skipped
  * instead of being stored as an empty override that LibreChat would read as
  * "allow nothing". Keys the admin API can't store are reported as `unsafeKey`
- * (with the object holding them) instead of being split into nested paths.
+ * (`reservedKey` on a server that keeps dotted keys), a dotted key where
+ * the schema expects a setting name as `dottedKey`, and a dotted name of a
+ * setting group (an MCP server) as `dottedName`, with the object holding
+ * them, instead of being split into nested paths.
  */
 export function collectImportEntries(
   appConfig: t.ConfigRecord,
   fields: t.SchemaField[],
   schemaPathSet: ReadonlySet<string>,
+  features: t.ConfigFeatures = BUNDLED_CONFIG_FEATURES,
 ): t.ImportEntries {
   const entries: t.SaveEntry[] = [];
   const skipped: t.ImportSkippedKey[] = [];
-  const { leaves, unsafe } = flattenImport(appConfig);
+  const { leaves, unsafe, dotted, dottedNames } = flattenImport(appConfig, features);
   for (const [fieldPath, raw] of Object.entries(leaves)) {
     if (isConfigRecord(raw) && Object.keys(raw).length === 0) continue;
     if (secretPathForPreviewPath(fieldPath, schemaPathSet) != null) continue;
@@ -49,8 +64,18 @@ export function collectImportEntries(
     if (value == null) skipped.push({ fieldPath, reason: 'empty' });
     else entries.push({ fieldPath, value });
   }
-  for (const { path, key } of unsafe) skipped.push({ fieldPath: path, reason: 'unsafeKey', key });
+  const unsafeReason = unsafeKeyReason(features);
+  for (const { path, key } of unsafe) skipped.push({ fieldPath: path, reason: unsafeReason, key });
+  for (const { path, key } of dotted) skipped.push({ fieldPath: path, reason: 'dottedKey', key });
+  for (const { path, key } of dottedNames) {
+    skipped.push({ fieldPath: path, reason: 'dottedName', key });
+  }
   return { entries, skipped };
+}
+
+/** Why a key the admin API can't store is left out: dotted or `$` keys, or (with `dottedKeys`) `$` keys only. */
+function unsafeKeyReason(features: t.ConfigFeatures): t.ImportSkipReason {
+  return features.dottedKeys ? 'reservedKey' : 'unsafeKey';
 }
 
 /** The MCP server a path belongs to when that server is process-backed (stdio: command/args/env). */
@@ -72,11 +97,14 @@ function skipReasonOf(
   path: string,
   value: t.ConfigValue,
   isScope: boolean,
+  features: t.ConfigFeatures,
 ): t.ImportSkipReason | null {
   const reason = getWriteSkipReason(path, false) ?? (isScope ? scopeGateSkipReason(path) : null);
   if (reason) return reason;
   if (findYamlManagedValues(path, value).length > 0) return 'yamlOnly';
-  if (findUnsafeKeys(value, path).length > 0) return 'unsafeKey';
+  if (findUnsafeKeys(value, path, features.dottedKeys).length > 0) {
+    return unsafeKeyReason(features);
+  }
   return null;
 }
 
@@ -93,8 +121,9 @@ export function planImport(
   fields: t.SchemaField[],
   schemaPathSet: ReadonlySet<string>,
   isScope = false,
+  features: t.ConfigFeatures = BUNDLED_CONFIG_FEATURES,
 ): t.ImportPlan {
-  const collected = collectImportEntries(appConfig, fields, schemaPathSet);
+  const collected = collectImportEntries(appConfig, fields, schemaPathSet, features);
   const entries: t.SaveEntry[] = [];
   const skipped: t.ImportSkippedKey[] = [];
   const unknown = new Set<string>();
@@ -107,7 +136,7 @@ export function planImport(
       processServers.add(server);
       continue;
     }
-    const reason = skipReasonOf(entry.fieldPath, entry.value, isScope);
+    const reason = skipReasonOf(entry.fieldPath, entry.value, isScope, features);
     if (reason) {
       skipped.push({ fieldPath: entry.fieldPath, reason });
       continue;
@@ -122,7 +151,7 @@ export function planImport(
     const server = processServerOf(skip.fieldPath, appConfig);
     if (server && processServers.has(server)) continue;
     const holderReason =
-      skip.reason === 'unsafeKey' && skip.fieldPath
+      KEY_SKIP_REASONS.has(skip.reason) && skip.fieldPath
         ? getWriteSkipReason(skip.fieldPath, false)
         : null;
     skipped.push(holderReason ? { fieldPath: skip.fieldPath, reason: holderReason } : skip);

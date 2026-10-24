@@ -2,10 +2,10 @@ import { useId } from 'react';
 import type * as t from '@/types';
 import { SecretField, SecretInput } from '../../fields/SecretField';
 import { FieldControl } from '../../renderer/FieldControl';
+import { useLocalize, useConfigFeatures } from '@/hooks';
 import { DecorativeIcon } from '@/components/shared';
 import { TextField } from '../../fields/TextField';
 import { credentialState } from './state';
-import { useLocalize } from '@/hooks';
 import { cn } from '@/utils';
 
 /** `${SERPER_API_KEY}`: how librechat.yaml references the credential's environment variable. */
@@ -19,14 +19,29 @@ const TONE_CLASSES: Record<t.StatusTone, string> = {
   warn: 'text-(--settings-warn-fg)',
 };
 
-/** The status line of a credential: its source, and whether something is wrong. */
+/** States in which the credential's value is the one typed or stored here, not an environment reference. */
+const LITERAL_STATES: ReadonlySet<t.CredentialStatus> = new Set(['pending', 'stored', 'set']);
+
+/**
+ * The status line of a credential: its source, and whether something is
+ * wrong. Before `webSearchStoredKeys`, LibreChat resolves web search values
+ * only from `${VAR}` references, so a value typed or stored here is ignored.
+ */
 function statusLine(
   state: t.CredentialState,
   credential: t.WebSearchCredential,
   serviceName: string,
   inUse: boolean,
+  storedKeysUsed: boolean,
   localize: t.LocalizeFn,
 ): t.CredentialStatusLine | null {
+  if (!storedKeysUsed && LITERAL_STATES.has(state.status)) {
+    return {
+      tone: 'warn',
+      icon: 'warning',
+      text: localize('com_config_features_cred_env_only', { ref: envRef(credential) }),
+    };
+  }
   switch (state.status) {
     case 'pending':
       return credential.encrypted
@@ -88,10 +103,11 @@ export function CredentialControl({
   ...props
 }: t.CredentialControlProps) {
   const localize = useLocalize();
+  const { webSearchStoredKeys } = useConfigFeatures();
   const statusId = useId();
   if (props.disabled) return <FieldControl {...props} />;
   const state = credentialState({ ...props, credential });
-  const line = statusLine(state, credential, serviceName, inUse, localize);
+  const line = statusLine(state, credential, serviceName, inUse, webSearchStoredKeys, localize);
   const text = typeof props.value === 'string' ? props.value : '';
   const placeholder = localize(
     credential.secret

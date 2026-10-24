@@ -1,13 +1,12 @@
 import { useRef, useState, useEffect, useContext, useLayoutEffect } from 'react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
+import { useDraftValue, useListKeys, useLocalize, useConfigKeyProblem } from '@/hooks';
 import { RowProblemsContext } from '@/contexts/RowProblemsContext';
-import { useDraftValue, useListKeys, useLocalize } from '@/hooks';
 import { AddItemButton, TrashButton } from '@/components/shared';
-import { cn, isBlankText, isUnsafeConfigKey } from '@/utils';
-import { BLOCK_UNSAFE_CONFIG_KEYS } from '@/constants';
 import { TextareaField } from './TextareaField';
 import { SelectField } from './SelectField';
+import { cn, isBlankText } from '@/utils';
 import { INPUT_CLASSES } from './display';
 import { FieldNotice } from './Notice';
 
@@ -121,6 +120,7 @@ export function KeyValueField({
   'aria-label': ariaLabel,
 }: t.KeyValueFieldProps) {
   const localize = useLocalize();
+  const unsafeKeyProblem = useConfigKeyProblem();
   const availableTypes = valueTypes ?? DEFAULT_TYPES;
   const keys = useListKeys({ items: pairs, identity: pairKey, prefix: `${id}-row` });
   const [drafts, setDrafts] = useState<Array<{ id: number; pair: t.KeyValuePair }>>([]);
@@ -230,9 +230,8 @@ export function KeyValueField({
     if (isDraft && key === '' && !isBlankText(pair.value)) {
       return localize('com_config_ctl_kv_key_missing');
     }
-    if (BLOCK_UNSAFE_CONFIG_KEYS && isUnsafeConfigKey(key)) {
-      return localize('com_config_unsafe_key_error');
-    }
+    const unsafe = unsafeKeyProblem(key);
+    if (unsafe) return unsafe;
     const taken = isDraft ? pairs.some((existing) => existing.key === key) : isTaken(key, index);
     if (key !== '' && taken) return localize('com_config_ctl_kv_duplicate');
     return null;

@@ -16,15 +16,16 @@ import {
   ADMIN_API_KEY_FIELD,
   validateMcpCrossField,
 } from '@/components/configuration/sections/mcp/validation';
+import { TERMS_NOT_ACCEPTED_ISSUE, TERMS_NOT_ACCEPTED_CODE, UNSAFE_KEY_CODES } from '@/constants';
 import { buildConfigChanges, normalizeEditValue } from '@/components/configuration/edits';
 import { specListIssues } from '@/components/configuration/sections/specs/validation';
 import { isResetSent, summarizeChanges } from '@/components/configuration/summary';
 import { describeSkippedChanges } from '@/components/configuration/review/group';
-import { TERMS_NOT_ACCEPTED_ISSUE, TERMS_NOT_ACCEPTED_CODE } from '@/constants';
 import { applyConfigChangesFn, resetBaseConfigFn } from '@/server';
 import { describeIssues } from '@/components/configuration/issues';
 import { hasPathOverlap } from '@/components/configuration/counts';
 import { labelForPath } from '@/components/configuration/meta';
+import { useConfigFeatures } from './contract';
 import { useLocalize } from '../useLocalize';
 
 function toTargetRef(target: t.WriteTarget): t.WriteTargetRef {
@@ -80,6 +81,7 @@ export function useConfigSave({
 }: t.ConfigSaveOptions): t.ConfigSaveState {
   const localize = useLocalize();
   const queryClient = useQueryClient();
+  const features = useConfigFeatures();
   const {
     configValues,
     dbOverrides,
@@ -242,19 +244,28 @@ export function useConfigSave({
     [touchedPaths, editedValues, schemaPathSet, changeContext],
   );
 
-  /** The target's stored overrides and the layer beneath, as loaded (the server re-reads them). */
+  /** The target's stored overrides and tombstones and the layer beneath, as loaded (the server re-reads them). */
   const snapshot = useMemo<t.WriteSnapshot>(() => {
     if (isEditingScope) {
       return {
         stored: valueLayers?.scope?.overrides ?? {},
+        tombstones: [...(valueLayers?.scope?.tombstones ?? [])],
         lower: configValues ?? {},
         lowerKind: 'inherited',
       };
     }
-    return { stored: dbOverrides ?? {}, lower: yamlConfig ?? {}, lowerKind: 'yaml' };
+    return {
+      stored: dbOverrides ?? {},
+      tombstones: [...(valueLayers?.baseTombstones ?? [])],
+      lower: yamlConfig ?? {},
+      lowerKind: 'yaml',
+    };
   }, [isEditingScope, valueLayers, configValues, dbOverrides, yamlConfig]);
 
-  const plan = useMemo(() => planConfigChanges(changeSet.ops, snapshot), [changeSet, snapshot]);
+  const plan = useMemo(
+    () => planConfigChanges(changeSet.ops, snapshot, features),
+    [changeSet, snapshot, features],
+  );
 
   const clientIssues = useMemo(
     () => [...changeSet.issues, ...plan.issues, ...specListIssues(changeSet)],
@@ -302,7 +313,7 @@ export function useConfigSave({
   const unsafeKeys = useMemo(
     () =>
       plan.issues
-        .filter((issue) => issue.code === 'UNSAFE_KEY')
+        .filter((issue) => issue.code != null && UNSAFE_KEY_CODES.has(issue.code))
         .map((issue) => ({ path: issue.path, key: String(issue.params?.key ?? '') })),
     [plan.issues],
   );

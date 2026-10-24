@@ -292,6 +292,27 @@ describe('applyConfigChanges — validated, ordered, compensated (SV-2)', () => 
     expect(api.current!.stored()).toBeUndefined();
   });
 
+  it('words a backend issue it gets no parameters for without placeholders', async () => {
+    api.current!.setOverride((request) =>
+      request.method === 'PATCH'
+        ? {
+            status: 400,
+            body: {
+              error: 'Invalid config override',
+              code: 'CONFIG_OVERRIDE_INVALID',
+              issues: [{ path: 'balance.startBalance', code: 'too_small' }],
+            },
+          }
+        : undefined,
+    );
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.startBalance', value: 5 },
+    ]);
+    expect(result.failed).toEqual([
+      { path: 'balance.startBalance', code: 'too_small', message: 'is too small' },
+    ]);
+  });
+
   it('blocks provider: openai with the field and entry named', async () => {
     const gpt = customEntries[1];
     const result = await applyConfigChanges(base, [
@@ -323,6 +344,15 @@ describe('applyConfigChanges — clear/reset and verification (SV-4, SV-5, SV-7)
     ]);
     expect(api.current!.writes()[0].path).not.toContain('startBalance');
     expect(api.current!.stored()).toEqual({});
+  });
+
+  it('keeps a stored tombstone when removing an override would empty its section (BE-11)', async () => {
+    api.current!.seed('role/__base__', { balance: { startBalance: 5 } }, ['balance.refillAmount']);
+    await applyConfigChanges(base, [{ op: 'reset', path: 'balance.startBalance' }]);
+    expect(api.current!.writes()).toMatchObject([
+      { method: 'DELETE', path: expect.stringContaining('fieldPath=balance.startBalance') },
+    ]);
+    expect(api.current!.tombstones()).toEqual(['balance.refillAmount']);
   });
 
   it('reports a value LibreChat dropped as not stored', async () => {
@@ -438,5 +468,53 @@ describe('applyConfigChanges — switching a union away from a librechat.yaml ke
     expect(result.issues.length).toBeGreaterThan(0);
     expect(result.issues.every((issue) => issue.path.startsWith('memory.agent'))).toBe(true);
     expect(api.current.writes()).toEqual([]);
+  });
+});
+
+describe('applyConfigChanges — the server contract (GET /api/admin/config/meta)', () => {
+  const profiles = { 'us.anthropic.claude-sonnet-4-6': 'arn:aws:bedrock:us:1:profile/x' };
+
+  it('blocks a dotted record key on a server without the contract (it would drop the key)', async () => {
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'endpoints.bedrock.inferenceProfiles', value: profiles },
+    ]);
+    expect(result.issues.map((issue) => issue.code)).toEqual(['UNSAFE_KEY']);
+    expect(api.current!.writes()).toEqual([]);
+    expect(api.current!.requests.map((request) => request.path)).toContain(
+      '/api/admin/config/meta',
+    );
+  });
+
+  it('writes a dotted record whole when the server keeps dotted keys', async () => {
+    api.current!.reportMeta({ features: { dottedKeys: true } });
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'endpoints.bedrock.inferenceProfiles', value: profiles },
+    ]);
+    expect(result).toMatchObject({ issues: [], failed: [], applied: 1, skipped: [] });
+    expect(api.current!.writes()).toMatchObject([
+      {
+        method: 'PATCH',
+        body: { entries: [{ fieldPath: 'endpoints.bedrock.inferenceProfiles', value: profiles }] },
+      },
+    ]);
+  });
+
+  it('still refuses a $ key when the server keeps dotted keys', async () => {
+    api.current!.reportMeta({ features: { dottedKeys: true } });
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'endpoints.bedrock.inferenceProfiles', value: { $where: 'x' } },
+    ]);
+    expect(result.issues.map((issue) => issue.code)).toEqual(['RESERVED_KEY']);
+    expect(api.current!.writes()).toEqual([]);
+  });
+
+  it("splits sets into PATCHes of the server's maxPatchEntries", async () => {
+    api.current!.reportMeta({ limits: { maxPatchEntries: 2 } });
+    await applyConfigChanges(base, [
+      { op: 'set', path: 'balance.startBalance', value: 5 },
+      { op: 'set', path: 'balance.refillAmount', value: 6 },
+      { op: 'set', path: 'balance.refillIntervalValue', value: 7 },
+    ]);
+    expect(api.current!.writes().map((request) => request.body?.entries?.length)).toEqual([2, 1]);
   });
 });

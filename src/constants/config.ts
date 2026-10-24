@@ -2,15 +2,15 @@ import { BASE_ONLY_CONFIG_SECTIONS, BASE_PRINCIPAL_CONFIG_SECTIONS } from 'libre
 import type * as t from '@/types';
 
 /**
- * LibreChat's request sanitizer silently drops object keys that contain `.` or
- * start with `$` from every admin config write, so the panel blocks them up
- * front. Set to `false` once the admin config API accepts such keys.
+ * Issue codes of a record key the admin API can't store. `UNSAFE_KEY`: an
+ * older LibreChat's request sanitizer silently drops keys that contain `.`
+ * or start with `$`. `RESERVED_KEY`: a server that keeps dotted keys
+ * (`dottedKeys`) refuses `$`-prefixed keys and the prototype names.
  */
-export const BLOCK_UNSAFE_CONFIG_KEYS = true;
+export const UNSAFE_KEY_CODES: ReadonlySet<string> = new Set(['UNSAFE_KEY', 'RESERVED_KEY']);
 
-/** Why a key blocked by `BLOCK_UNSAFE_CONFIG_KEYS` cannot be saved or imported. */
-export const UNSAFE_CONFIG_KEY_MESSAGE =
-  "keys containing '.' or starting with '$' can't be saved through the admin API yet; set this in librechat.yaml";
+/** `deleteUserFn`'s error when the LibreChat server has no admin user-delete route (it ships disabled). */
+export const USER_DELETE_UNAVAILABLE = 'user_delete_unavailable';
 
 /** The admin API's 403 code while the signed-in admin hasn't accepted LibreChat's terms of service. */
 export const TERMS_NOT_ACCEPTED_CODE = 'terms_not_accepted';
@@ -68,9 +68,31 @@ export const APP_SERVICE_KEY_ALIASES: Readonly<Record<string, string>> = {
 };
 
 /**
+ * Settings LibreChat reads once at startup, from librechat.yaml alone
+ * (`getAppConfig({ baseOnly: true })` while the server boots), so an admin
+ * override never takes effect: the agents' background, event and approval
+ * hook runtime, and MCP catalog recovery's state limits and fence retry
+ * worker. `catalogRecovery.authorizationFenceTimeoutMs` is not one: requests
+ * read it from the merged config too.
+ */
+export const STARTUP_ONLY_FIELDS: ReadonlySet<string> = new Set([
+  'endpoints.agents.eventDriven',
+  'endpoints.agents.subagentActivity',
+  'endpoints.agents.toolApproval.hooks',
+  'endpoints.agents.backgroundTasks.shutdownInterruptGraceMs',
+  'endpoints.agents.backgroundTasks.completionResultBatchSize',
+  'endpoints.agents.backgroundTasks.completionReceiptBatching',
+  'mcpSettings.catalogRecovery.maxStateEntries',
+  'mcpSettings.catalogRecovery.maxDetachedDiscoveries',
+  'mcpSettings.catalogRecovery.authorizationFenceRetryIntervalMs',
+  'mcpSettings.catalogRecovery.authorizationFenceRetryBatchSize',
+]);
+
+/**
  * Fields LibreChat only processes from librechat.yaml (overrides are merged
- * after `azureConfigSetup`/`vertexConfigSetup` run), so edits would be silent
- * no-ops. Rendered read-only until the backend re-processes overrides.
+ * after `azureConfigSetup`/`vertexConfigSetup` run, or read only at startup),
+ * so edits would be silent no-ops. Rendered read-only until the backend
+ * re-processes overrides.
  */
 export const YAML_MANAGED_FIELDS: ReadonlySet<string> = new Set([
   'endpoints.azureOpenAI.groups',
@@ -80,6 +102,7 @@ export const YAML_MANAGED_FIELDS: ReadonlySet<string> = new Set([
   /** Social sign-in and OpenID discovery are set up once at startup from librechat.yaml. */
   'registration.oauthStateTtlMs',
   'registration.openidDiscovery',
+  ...STARTUP_ONLY_FIELDS,
 ]);
 
 /** Config keys for values that must never be displayed in plain text. */
@@ -107,6 +130,12 @@ export const SKIP_REASON_KEYS: Readonly<Record<t.SkipReason, string>> = {
   inheritedMerged: 'com_scope_skip_inherited_merged',
 };
 
+/** Why a lower-layer key comes back after a write: LibreChat merges it in, so it is reported but not lost. */
+export const MERGED_BACK_REASONS: ReadonlySet<t.SkipReason> = new Set([
+  'yamlMerged',
+  'inheritedMerged',
+]);
+
 /** The top-level config section of a dot-path (`balance.startBalance` → `balance`). */
 export function getConfigSection(path: string): string {
   const dot = path.indexOf('.');
@@ -118,10 +147,19 @@ export function getReadOnlyReason(path: string): t.ReadOnlyReason | undefined {
   return READ_ONLY_CONFIG_SECTIONS.get(getConfigSection(path));
 }
 
-/** Whether `path` is, or is inside, a field managed only in librechat.yaml. */
-export function isYamlManagedPath(path: string): boolean {
-  for (const managed of YAML_MANAGED_FIELDS) {
-    if (path === managed || path.startsWith(`${managed}.`)) return true;
+function isAtOrUnderAny(path: string, fields: ReadonlySet<string>): boolean {
+  for (const field of fields) {
+    if (path === field || path.startsWith(`${field}.`)) return true;
   }
   return false;
+}
+
+/** Whether `path` is, or is inside, a field managed only in librechat.yaml. */
+export function isYamlManagedPath(path: string): boolean {
+  return isAtOrUnderAny(path, YAML_MANAGED_FIELDS);
+}
+
+/** Whether `path` is, or is inside, a setting LibreChat reads only at startup (`STARTUP_ONLY_FIELDS`). */
+export function isStartupOnlyPath(path: string): boolean {
+  return isAtOrUnderAny(path, STARTUP_ONLY_FIELDS);
 }

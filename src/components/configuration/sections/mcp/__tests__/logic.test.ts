@@ -251,4 +251,13 @@ describe('leafEntries', () => {
       [['d'], {}],
     ]);
   });
+
+  it('keeps an object with a dotted key whole, so no dot-path splits the key', () => {
+    const headers = { 'X-Team': 'docs', 'x.api.version': '2024-10' };
+    expect(leafEntries({ url: 'https://x.dev', headers, apiKey: { source: 'admin' } })).toEqual([
+      [['url'], 'https://x.dev'],
+      [['headers'], headers],
+      [['apiKey', 'source'], 'admin'],
+    ]);
+  });
 });
