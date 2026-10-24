@@ -635,10 +635,11 @@ function writeByKey(
 const ENTRY_KEY_UNADDRESSABLE = 'entry_key_unaddressable';
 
 /**
- * Refuses the entries a by-key save adds (`written`, neither stored by the target in `own` nor
- * defined beneath it) under a name a keyed path can't hold (`isAddressableEntryKey`): LibreChat
- * removes and hides entries of such a list only by key, so one stored under that name could never
- * be removed again. An entry already saved under such a name stays as it is.
+ * Refuses the entries a by-key save adds to the target (`written`, not already stored by it in
+ * `own`) under a name a keyed path can't hold (`isAddressableEntryKey`): LibreChat removes and
+ * hides entries of such a list only by key, so one stored under that name could never be removed
+ * or reverted again. That includes a first override of an entry defined beneath the target under
+ * such a name. An entry the target already stores under such a name stays as it is.
  */
 function refuseUnaddressableEntries(
   state: PlanState,
@@ -646,10 +647,7 @@ function refuseUnaddressableEntries(
   written: readonly t.ConfigValue[],
   own: readonly t.ConfigValue[],
 ): void {
-  const lower = getValueAtPath(state.snapshot.lower, collection.path);
-  const known = new Set(
-    [...own, ...(Array.isArray(lower) ? lower : [])].map((entry) => identityIn(collection, entry)),
-  );
+  const known = new Set(own.map((entry) => identityIn(collection, entry)));
   for (const entry of written) {
     const name = getEntryKey(entry, collection.key);
     if (name === undefined || known.has(identityIn(collection, entry))) continue;

@@ -1434,6 +1434,31 @@ describe('planConfigChanges — keyed tombstones', () => {
     expect(write([...list, legacy, added], before).issues).toEqual([]);
   });
 
+  it('refuses a first override of an inherited entry whose name LibreChat could not remove by key', () => {
+    const limits = { ...BUNDLED_CONFIG_LIMITS, maxEntryKeyLength: 3 };
+    const list = (own.endpoints as t.ConfigRecord).custom as t.ConfigValue[];
+    const plan = planConfigChanges(
+      [
+        {
+          op: 'set',
+          path: 'endpoints.custom',
+          value: [...list, { name: 'Gateway', titleModel: 'm' }],
+        },
+      ],
+      profile(own),
+      keyed,
+      BUNDLED_WRITE_RULES,
+      limits,
+    );
+    expect(plan.issues).toEqual([
+      expect.objectContaining({
+        code: 'entry_key_unaddressable',
+        entryIdentity: 'Gateway',
+        params: { name: 'Gateway', max: 3 },
+      }),
+    ]);
+  });
+
   it('never resets the whole list when its last own entry goes, which would drop every hide under it', () => {
     const remove: t.ConfigChange = {
       op: 'removeEntry',
