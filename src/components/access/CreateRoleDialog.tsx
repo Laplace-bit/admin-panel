@@ -40,11 +40,13 @@ export function CreateRoleDialog({ open, onClose }: t.CreateRoleDialogProps) {
       }
       return { name: submittedName };
     },
-    onSuccess: (data) => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['roles'] });
       queryClient.invalidateQueries({ queryKey: ['roleMembers'] });
-      void refreshScopes();
       queryClient.invalidateQueries({ queryKey: ['roleAssignments'] });
+      void refreshScopes();
+    },
+    onSuccess: (data) => {
       notifySuccess(localize('com_toast_role_created', { name: data.name }));
       resetAndClose();
     },

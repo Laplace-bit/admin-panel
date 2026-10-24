@@ -37,11 +37,13 @@ export function CreateGroupDialog({ open, onClose }: t.CreateGroupDialogProps) {
       }
       return { name: submittedName };
     },
-    onSuccess: (data) => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['groups'] });
       queryClient.invalidateQueries({ queryKey: ['groupMembers'] });
-      void refreshScopes();
       queryClient.invalidateQueries({ queryKey: ['groupAssignments'] });
+      void refreshScopes();
+    },
+    onSuccess: (data) => {
       notifySuccess(localize('com_toast_group_created', { name: data.name }));
       resetAndClose();
     },

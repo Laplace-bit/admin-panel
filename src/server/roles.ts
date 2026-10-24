@@ -13,6 +13,7 @@ import type { AdminMember } from '@librechat/data-schemas';
 import type * as t from '@/types';
 import { apiFetch, extractApiError } from './utils/api';
 import { MEMBERS_PAGE_SIZE } from './groups';
+import { fetchAllPages } from '@/utils';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ function toRole(raw: RawRole): t.Role {
 
 export const ROLES_PAGE_SIZE = 50;
 
-/** Backend max per request is 200. Consumers needing all roles use this cap. */
+/** Backend max per request is 200; consumers needing all roles read pages of this size. */
 const ALL_ROLES_LIMIT = 200;
 
 // ── Server functions ─────────────────────────────────────────────────
@@ -89,7 +90,13 @@ export const rolesQueryOptions = (page = 1) =>
 
 export const allRolesQueryOptions = queryOptions<t.Role[]>({
   queryKey: ['roles', 'all'],
-  queryFn: () => getRolesFn({ data: { limit: ALL_ROLES_LIMIT } }).then((r) => r.roles),
+  queryFn: () =>
+    fetchAllPages((offset) =>
+      getRolesFn({ data: { limit: ALL_ROLES_LIMIT, offset } }).then(({ roles, total }) => ({
+        items: roles,
+        total,
+      })),
+    ),
   staleTime: 30_000,
 });
 

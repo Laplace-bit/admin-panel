@@ -11,6 +11,7 @@ import { createServerFn } from '@tanstack/react-start';
 import type { AdminGroup, AdminMember } from '@librechat/data-schemas';
 import type * as t from '@/types';
 import { apiFetch, extractApiError } from './utils/api';
+import { fetchAllPages } from '@/utils';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -42,7 +43,7 @@ function toAdminGroup(raw: RawGroup): AdminGroup {
 export const GROUPS_PAGE_SIZE = 50;
 export const MEMBERS_PAGE_SIZE = 50;
 
-/** Backend max per request is 200. Consumers needing all groups use this cap. */
+/** Backend max per request is 200; consumers needing all groups read pages of this size. */
 const ALL_GROUPS_LIMIT = 200;
 
 const GROUP_SOURCE_LOCAL = 'local' as const;
@@ -93,7 +94,13 @@ export const groupsQueryOptions = (page = 1, search = '') =>
 
 export const allGroupsQueryOptions = queryOptions<AdminGroup[]>({
   queryKey: ['groups', 'all'],
-  queryFn: () => getGroupsFn({ data: { limit: ALL_GROUPS_LIMIT } }).then((r) => r.groups),
+  queryFn: () =>
+    fetchAllPages((offset) =>
+      getGroupsFn({ data: { limit: ALL_GROUPS_LIMIT, offset } }).then(({ groups, total }) => ({
+        items: groups,
+        total,
+      })),
+    ),
   staleTime: 30_000,
 });
 

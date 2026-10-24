@@ -17,6 +17,7 @@ export * from './layers';
 export * from './leaves';
 export * from './mime';
 export * from './navigation';
+export * from './pages';
 export * from './paths';
 export * from './removals';
 export * from './schema';
