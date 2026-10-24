@@ -19,6 +19,7 @@ export interface FakeAdminRequest {
     priority?: number;
     ops?: t.ConfigBatchOp[];
     expectedRevision?: string;
+    renames?: t.RenameHint[];
   };
 }
 
@@ -37,7 +38,18 @@ export type FakeAdminOverride = (
   request: FakeAdminRequest,
 ) => { status: number; body: unknown } | undefined;
 
-const SECRET_KEYS = new Set(['apiKey']);
+/** Secrets by the key that holds them: anywhere (`apiKey`), or under one parent (an MCP server's `apiKey.key`). */
+const SECRET_KEYS: ReadonlyMap<string, string | null> = new Map([
+  ['apiKey', null],
+  ['key', 'apiKey'],
+  ['client_secret', 'oauth'],
+]);
+
+function isSecretAt(key: string, parent: string | undefined): boolean {
+  if (!SECRET_KEYS.has(key)) return false;
+  const required = SECRET_KEYS.get(key);
+  return required == null || required === parent;
+}
 
 const BASE_KEY = 'role/__base__';
 
@@ -77,16 +89,34 @@ function isPassthrough(value: string): boolean {
 }
 
 /** The admin API's read redaction, reduced to the panel-relevant part: encrypted secrets are replaced by their preview. */
-function redact(value: t.ConfigValue): t.ConfigValue {
-  if (Array.isArray(value)) return value.map(redact);
+function redact(value: t.ConfigValue, parent?: string): t.ConfigValue {
+  if (Array.isArray(value)) return value.map((item) => redact(item));
   if (!isConfigRecord(value)) return value;
   const result: t.ConfigRecord = {};
   for (const [key, child] of Object.entries(value)) {
-    if (SECRET_KEYS.has(key) && typeof child === 'string' && child.startsWith('enc:')) {
+    if (isSecretAt(key, parent) && typeof child === 'string' && child.startsWith('enc:')) {
       result[`${key}Preview`] = `${child.slice(4, 7)}...`;
       continue;
     }
-    result[key] = redact(child);
+    result[key] = redact(child, key);
+  }
+  return result;
+}
+
+/** `target` with each secret `source` stores and `target` omits copied in (a `renames` hint, a rename). */
+function carrySecrets(
+  source: t.ConfigValue,
+  target: t.ConfigValue,
+  parent?: string,
+): t.ConfigValue {
+  if (!isConfigRecord(source) || !isConfigRecord(target)) return target;
+  const result: t.ConfigRecord = { ...target };
+  for (const [key, child] of Object.entries(source)) {
+    if (isSecretAt(key, parent) && typeof child === 'string') {
+      if (!(key in result)) result[key] = child;
+    } else if (isConfigRecord(child) && isConfigRecord(result[key])) {
+      result[key] = carrySecrets(child, result[key], key);
+    }
   }
   return result;
 }
@@ -123,7 +153,11 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
   const written = (request: FakeAdminRequest, body: object) =>
     reply(200, { ...body, ...report?.(request) });
 
-  function encryptSecrets(value: t.ConfigValue, existing: t.ConfigValue): t.ConfigValue {
+  function encryptSecrets(
+    value: t.ConfigValue,
+    existing: t.ConfigValue,
+    parent?: string,
+  ): t.ConfigValue {
     if (Array.isArray(value)) {
       const previous = Array.isArray(existing) ? existing : [];
       return value.map((item) => {
@@ -137,15 +171,27 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
     for (const [key, child] of Object.entries(value)) {
       if (key.endsWith('Preview')) continue;
       result[key] =
-        SECRET_KEYS.has(key) && typeof child === 'string' && !isPassthrough(child)
+        isSecretAt(key, parent) && typeof child === 'string' && !isPassthrough(child)
           ? `enc:${child}`
-          : encryptSecrets(child, isConfigRecord(existing) ? existing[key] : undefined);
+          : encryptSecrets(child, isConfigRecord(existing) ? existing[key] : undefined, key);
     }
     const previous = isConfigRecord(existing) ? existing : {};
-    for (const key of SECRET_KEYS) {
-      if (!(key in result) && typeof previous[key] === 'string') result[key] = previous[key];
+    for (const key of SECRET_KEYS.keys()) {
+      if (!(key in result) && isSecretAt(key, parent) && typeof previous[key] === 'string') {
+        result[key] = previous[key];
+      }
     }
     return result;
+  }
+
+  /** A value written at `fieldPath` as stored: its secrets encrypted, omitted ones kept from `existing`. */
+  function encryptAt(fieldPath: string, value: t.ConfigValue, existing: t.ConfigValue) {
+    const segments = fieldPath.split('.');
+    const key = segments[segments.length - 1];
+    if (typeof value === 'string' && isSecretAt(key, segments[segments.length - 2])) {
+      return isPassthrough(value) ? value : `enc:${value}`;
+    }
+    return encryptSecrets(value, existing, key);
   }
 
   function baseMerged(): t.ConfigRecord {
@@ -219,7 +265,17 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
     }
     for (const entry of entries) {
       const existing = getValueAtPath(current.overrides, entry.fieldPath);
-      overrides = setValueAtPath(overrides, entry.fieldPath, encryptSecrets(entry.value, existing));
+      overrides = setValueAtPath(
+        overrides,
+        entry.fieldPath,
+        encryptAt(entry.fieldPath, entry.value, existing),
+      );
+    }
+    for (const { path: recordPath, previousName, name } of body?.renames ?? []) {
+      const source = getValueAtPath(current.overrides, `${recordPath}.${previousName}`);
+      const targetPath = `${recordPath}.${name}`;
+      const carried = carrySecrets(source, getValueAtPath(overrides, targetPath));
+      overrides = setValueAtPath(overrides, targetPath, carried);
     }
     const paths: string[] = (body?.entries ?? []).map((e: t.SaveEntry) => e.fieldPath);
     store(key, {
@@ -271,9 +327,27 @@ export function createFakeAdminApi(yaml: t.ConfigRecord) {
     if (op.op === 'set') {
       const existing = getValueAtPath(current.overrides, fieldPath);
       return {
-        overrides: setValueAtPath(current.overrides, fieldPath, encryptSecrets(op.value, existing)),
+        overrides: setValueAtPath(
+          current.overrides,
+          fieldPath,
+          encryptAt(fieldPath, op.value, existing),
+        ),
         tombstones: current.tombstones.filter((p) => !clearsTombstone(fieldPath, p)),
       };
+    }
+    if (op.op === 'rename') {
+      const holder = getValueAtPath(current.overrides, fieldPath);
+      const renamed = Array.isArray(holder)
+        ? holder.map((item) =>
+            isConfigRecord(item) && item.name === op.from ? { ...item, name: op.to } : item,
+          )
+        : Object.fromEntries(
+            Object.entries(isConfigRecord(holder) ? holder : {}).map(([key, value]) => [
+              key === op.from ? op.to : key,
+              value,
+            ]),
+          );
+      return { ...current, overrides: setValueAtPath(current.overrides, fieldPath, renamed) };
     }
     const overrides = removePruned(current.overrides, fieldPath);
     const kept = current.tombstones.filter((p) => !isAtOrUnder(p, fieldPath));

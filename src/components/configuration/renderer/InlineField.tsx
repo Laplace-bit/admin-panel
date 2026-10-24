@@ -23,6 +23,7 @@ import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { ArrayObjectField } from '../fields/ArrayObjectField';
 import { ShadowBadge, shadowedSourceLabel } from '../values';
 import { BooleanChip, FieldControl } from './FieldControl';
+import { maskedSecretLabel } from '../fields/SecretField';
 import { TriStateField } from '../fields/TriStateField';
 import { fieldDescription, toFieldId } from './paths';
 import { VariantField } from '../fields/VariantField';
@@ -702,6 +703,7 @@ function InlineFieldBody({
           disabled={disabled}
           required={required}
           secretPreview={secretPreview != null && stringValue === '' ? secretPreview : null}
+          secretMaskLabel={maskedSecretLabel(state, localize)}
           hasPendingEdit={hasPendingSecret}
           onCancelSecret={() => {
             if (hasPendingSecret) onChange(field.key, undefined);

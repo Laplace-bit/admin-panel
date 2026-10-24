@@ -164,3 +164,8 @@ export interface DiscardPromptState {
   /** Hides the prompt without moving focus (typing resumed, the form closed). */
   dismiss: () => void;
 }
+
+/** Props of `WarningList`: short warnings under a row, one per item. */
+export interface WarningListProps {
+  notes: readonly string[];
+}

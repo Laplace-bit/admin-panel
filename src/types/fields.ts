@@ -12,6 +12,7 @@ import type {
   OptionSource,
 } from './config';
 import type { KeySuggestion, KeyValidator } from './files';
+import type { MovedCredential } from './changes';
 
 /**
  * Returns a field to "Default" (removes the edit target's own value). Returns
@@ -100,6 +101,8 @@ export interface SecretFieldProps {
   hasPendingEdit?: boolean;
   /** Removes the target's own stored secret (shown only when it owns one). */
   onRemove?: () => void;
+  /** How a fixed-mask preview (`SECRET_PREVIEW_MASK`) reads: where the hidden secret is set. */
+  maskLabel?: string;
   disabled?: boolean;
   width?: ControlWidth;
   'aria-label'?: string;
@@ -186,6 +189,8 @@ export interface StaticFieldProps {
   fallback?: ConfigValue;
   /** Masked display of a stored secret (already redacted by the backend), shown as-is. */
   secretPreview?: string | null;
+  /** How a fixed-mask preview reads (see `SecretFieldProps.maskLabel`). */
+  secretMaskLabel?: string;
   unit?: FieldUnit;
   width?: ControlWidth;
 }
@@ -392,3 +397,12 @@ export interface RefListFieldProps extends Omit<ListFieldProps, 'options'> {
 
 /** A model list's mode: the provider's defaults (no list set), or only the models listed. */
 export type ModelListMode = 'defaults' | 'only';
+
+/** Props of the notice under an inherited credential the target's overrides move (`secretRebinding`). */
+export interface SecretNotSentNoticeProps {
+  credential: MovedCredential;
+  /** The settings that moved it, labelled ("Base URL"). */
+  fields: string;
+  /** Read-only: the notice offers no restate. */
+  disabled?: boolean;
+}

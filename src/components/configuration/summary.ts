@@ -1,16 +1,12 @@
 import type * as t from '@/types';
 import {
   getEntryKey,
+  isSecretPath,
   isConfigRecord,
   isRelatedPath,
   isConfigValueEqual,
   getKeyedCollection,
-  isSecretKey,
 } from '@/utils';
-
-function lastSegment(path: string): string {
-  return path.slice(path.lastIndexOf('.') + 1);
-}
 
 function warningsFor(plan: t.WritePlan, path: string, identity?: string): t.ChangeWarning[] {
   const warnings = plan.warnings
@@ -33,9 +29,18 @@ function driftOf(path: string, layers: t.SummaryLayers): t.ChangeSummaryItem['dr
   return isConfigValueEqual(layers.editBaselines[path], current) ? undefined : { current };
 }
 
-/** Whether the plan sends a reset of `path` (itself or a widened ancestor, SV-7). */
+/**
+ * Whether the plan sends a reset of `path` (itself or a widened ancestor,
+ * SV-7), removes it with a rename that moves the entry to its new name, or
+ * replaces it with one set of the same path (a removal folded into writes
+ * under it: an entry deleted, then written again under its name).
+ */
 export function isResetSent(plan: t.WritePlan, path: string): boolean {
-  return plan.resets.some((reset) => path === reset || path.startsWith(`${reset}.`));
+  return (
+    plan.resets.some((reset) => path === reset || path.startsWith(`${reset}.`)) ||
+    plan.renames.some((rename) => path === `${rename.path}.${rename.from}`) ||
+    plan.sets.some(({ fieldPath }) => fieldPath === path)
+  );
 }
 
 function plainItems(
@@ -50,7 +55,7 @@ function plainItems(
       kind: before === undefined ? 'added' : 'changed',
       before,
       after: value,
-      secret: isSecretKey(lastSegment(fieldPath)),
+      secret: isSecretPath(fieldPath),
       drift: driftOf(fieldPath, layers),
     };
     return withWarnings(item, warningsFor(plan, fieldPath));
@@ -65,7 +70,7 @@ function plainItems(
         before: layers.ownAt(path),
         after: revertTarget.value,
         revertTarget,
-        secret: isSecretKey(lastSegment(path)),
+        secret: isSecretPath(path),
         drift: driftOf(path, layers),
       };
     });
@@ -104,13 +109,14 @@ function entryFieldItems(
     .filter((key) => !isConfigValueEqual(beforeRecord[key], afterRecord[key]))
     .map((key) => {
       const before = beforeRecord[key] ?? hiddenSecretBefore(collection, key, loaded);
+      const path = `${collection.path}.${index}.${key}`;
       return {
-        path: `${collection.path}.${index}.${key}`,
+        path,
         entryIdentity: identity,
         kind: fieldChangeKind(before, afterRecord[key]),
         before,
         after: afterRecord[key],
-        secret: isSecretKey(key),
+        secret: isSecretPath(path),
       };
     });
 }

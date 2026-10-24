@@ -110,6 +110,11 @@ export interface AzureGroupRow {
   index: number;
   group: string;
   apiKey?: string;
+  /**
+   * The masked preview the server reads back for a key it hides
+   * (`azureGroupSecrets`, `yamlSecretPreview`); the key itself never is.
+   */
+  apiKeyPreview?: string;
   instanceName?: string;
   baseURL?: string;
   deploymentName?: string;
@@ -140,6 +145,13 @@ export interface AzureGroupsTableProps {
   field?: SchemaField;
 }
 
+/** Props of an Azure group's credential in its details: the value as read, and a stored key's preview. */
+export interface AzureCredentialProps {
+  value: string | undefined;
+  /** The masked preview of a key LibreChat stores encrypted (`azureGroupSecrets`), or the fixed mask. */
+  preview?: string;
+}
+
 export interface AzureGroupDrawerProps {
   group: AzureGroupRow | null;
   /** The data path of the groups list. */
@@ -150,10 +162,15 @@ export interface AzureGroupDrawerProps {
   returnFocus?: RefObject<HTMLButtonElement | null>;
 }
 
-/** A credential shown without its secret: an env reference by name, a literal masked. */
+/**
+ * A credential shown without its secret: an env reference by name, a
+ * literal (or a key read back as the fixed mask) masked, a stored key by its
+ * masked preview.
+ */
 export type MaskedCredential =
   | { kind: 'env'; name: string }
   | { kind: 'masked' }
+  | { kind: 'stored'; preview: string }
   | { kind: 'none' };
 
 export interface NetworkAccessCardProps extends Omit<FieldRendererProps, 'fields'> {
@@ -244,6 +261,8 @@ export interface StaleOverrideProps {
   pendingRemoval: boolean;
   /** Queues the override's removal; absent when the target cannot be edited. */
   onRemove?: () => void;
+  /** LibreChat applies a stored groups override (`azureGroupSecrets`): it is in effect, not stale. */
+  applied?: boolean;
 }
 
 /** One entry of LibreChat's `GET /api/endpoints` payload (only the keys the panel reads). */

@@ -45,7 +45,8 @@ function holdsMethodKey(record: t.ConfigRecord | undefined, key: string): boolea
 
 /**
  * What choosing `next` writes (MCP-4): the other methods' settings go, and
- * an API key starts with its defaults. Settings the layer beneath defines
+ * an API key starts with its defaults; `next`'s own settings the entry lacks
+ * may come back as saved (`restore`). Settings the layer beneath defines
  * can't be removed (D3), so they block the switch.
  */
 export function planAuthSwitch(
@@ -59,7 +60,8 @@ export function planAuthSwitch(
   const locked = prune.filter((key) => holdsMethodKey(lower, key));
   const set: Array<[string, t.ConfigValue]> =
     next === 'apiKey' && !hasConfigValue(entry.apiKey) ? [['apiKey', { ...API_KEY_DEFAULTS }]] : [];
-  return { prune, set, locked };
+  const restore = AUTH_METHOD_KEYS[next].filter((key) => !holdsMethodKey(entry, key));
+  return { prune, set, locked, restore };
 }
 
 /** Methods the layer beneath pins: when it sets a method's keys, only that method can be shown. */

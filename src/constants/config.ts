@@ -182,6 +182,13 @@ export const STARTUP_ONLY_FIELDS: ReadonlySet<string> = BUNDLED_WRITE_RULES.star
 /** Fields only librechat.yaml sets, as the panel knew them before servers reported their rules. */
 export const YAML_MANAGED_FIELDS: ReadonlySet<string> = BUNDLED_WRITE_RULES.yamlManagedFields;
 
+/**
+ * The preview a server with `yamlSecretPreview` reads back for a secret it
+ * holds without one (a librechat.yaml literal, or a key stored before
+ * previews): the secret is set, and nothing of it is shown.
+ */
+export const SECRET_PREVIEW_MASK = '********';
+
 /** Config keys for values that must never be displayed in plain text. */
 export const SECRET_CONFIG_KEYS: ReadonlySet<string> = new Set([
   'apiKey',
@@ -207,6 +214,7 @@ export const SKIP_REASON_KEYS: Readonly<Record<t.SkipReason, string>> = {
   inheritedMerged: 'com_scope_skip_inherited_merged',
   processServer: 'com_config_skip_process_server',
   secretRebinding: 'com_config_skip_secret_rebinding',
+  hiddenBySave: 'com_config_skip_hidden_by_save',
 };
 
 /**

@@ -8,12 +8,20 @@ import {
   isHttpTransport,
   transportLabelKey,
 } from './transport';
-import { isConfigRecord, isConfigValueEqual, asConfigRecord, hasConfigValue } from '@/utils';
+import {
+  isConfigRecord,
+  asConfigRecord,
+  hasConfigValue,
+  isConfigValueEqual,
+  toSecretPreviewKey,
+} from '@/utils';
 import { renderCollectionEntryFields, renderInlineField, toFieldId } from '../../renderer';
 import { RecordObjectField } from '../../fields/RecordObjectField';
+import { SecretNotSentNotice } from '../../fields/SecretField';
 import { UnknownSettings } from '../../UnknownSettings';
 import { InstructionsField } from './Instructions';
 import { TransportSelect } from './Transport';
+import { labelForPath } from '../../meta';
 import { McpAuthMethod } from './Method';
 import { McpFieldGroup } from './Group';
 import { useLocalize } from '@/hooks';
@@ -56,6 +64,24 @@ const GROUPED: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * A secret's parent object (`apiKey`) with the masked preview of the secret
+ * the server carries to it from the saved server it comes from, while this
+ * one leaves the secret unset: the row shows the key that moves along.
+ */
+function withCarriedPreview(
+  own: t.ConfigRecord,
+  carried: t.ConfigValue,
+  key: string,
+): t.ConfigRecord {
+  const previewKey = toSecretPreviewKey(key);
+  const preview = asConfigRecord(carried)[previewKey];
+  if (typeof preview !== 'string' || own[key] !== undefined || own[previewKey] !== undefined) {
+    return own;
+  }
+  return { ...own, [previewKey]: preview };
+}
+
+/**
  * The purpose-built editor of one MCP server (MCP-1…MCP-8): Connection (the
  * transport and its fields only), Authentication (one method), Display,
  * Behavior, User variables and Advanced. Fields the transport doesn't read
@@ -77,6 +103,8 @@ export function McpServerEditor({
   quiet,
   owned,
   ownKeys,
+  movedCredentials,
+  carriedFrom,
   isPendingWhole,
   editSessionId,
 }: t.McpEditorProps) {
@@ -147,17 +175,27 @@ export function McpServerEditor({
     if (isNestedObject(field)) {
       return renderObject(field, asConfigRecord(entry[parent]), `${entryPath}.${parent}`, change);
     }
+    const moved = movedCredentials?.get(`${parent}.${key}`);
+    const notSent = moved ? (
+      <SecretNotSentNotice
+        credential={moved}
+        fields={moved.moved
+          .map((path) => labelForPath(`mcpServers.{}.${path}`, localize))
+          .join(', ')}
+      />
+    ) : undefined;
     return (
       <McpField
         key={`${parent}.${key}`}
         field={field}
         entryPath={`${entryPath}.${parent}`}
-        entry={asConfigRecord(entry[parent])}
+        entry={withCarriedPreview(asConfigRecord(entry[parent]), carriedFrom?.[parent], key)}
         onChange={change}
         onDiscard={onDiscard}
         disabled={disabled}
         quiet={quiet}
         owned={owned}
+        extra={notSent}
         {...options}
       />
     );

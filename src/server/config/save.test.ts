@@ -47,6 +47,8 @@ vi.mock('@tanstack/react-start', () => ({
 vi.mock('@tanstack/react-query', () => ({ queryOptions: (opts: unknown) => opts }));
 
 import { applyConfigChanges } from './save';
+import { issueDisplayPath } from '@/components/configuration/issues';
+import { getKeyedCollection } from '@/utils';
 
 const base: t.WriteTargetRef = { type: 'base' };
 const customEntries = (yaml.endpoints as t.ConfigRecord).custom as t.ConfigRecord[];
@@ -451,7 +453,12 @@ describe('applyConfigChanges — profiles (SV-9)', () => {
       { op: 'set', path: 'mcpServers.cloudflare.url', value: 'https://other.example.com/mcp' },
       { op: 'tombstone', path: 'mcpServers.cloudflare' },
     ]);
-    expect(result).toMatchObject({ applied: 1, issues: [], failed: [], skipped: [] });
+    expect(result).toMatchObject({
+      applied: 1,
+      issues: [],
+      failed: [],
+      skipped: [{ fieldPath: 'mcpServers.cloudflare.url', reason: 'hiddenBySave' }],
+    });
     expect(api.current!.writes().map((r) => r.method)).toEqual(['POST']);
     expect(api.current!.stored('group/eng')).toEqual({ mcpServers: {} });
     expect(api.current!.tombstones('group/eng')).toEqual(['mcpServers.cloudflare']);
@@ -1277,7 +1284,12 @@ describe('applyConfigChanges — change batches (changesBatch, expectedRevision)
       ],
       api.current!.revision('role/USER')!,
     );
-    expect(result).toMatchObject({ applied: 1, issues: [], failed: [], skipped: [] });
+    expect(result).toMatchObject({
+      applied: 1,
+      issues: [],
+      failed: [],
+      skipped: [{ fieldPath: 'mcpServers.cloudflare.url', reason: 'hiddenBySave' }],
+    });
     expect(posts()[0].body?.ops).toEqual([{ op: 'tombstone', fieldPath: 'mcpServers.cloudflare' }]);
     expect(api.current!.stored('role/USER')).toEqual({});
     expect(api.current!.tombstones('role/USER')).toEqual(['mcpServers.cloudflare']);
@@ -1314,5 +1326,406 @@ describe('applyConfigChanges — change batches (changesBatch, expectedRevision)
     expect(result.issues.length).toBeGreaterThan(0);
     expect(result.issues.every((issue) => issue.path.startsWith('memory.agent'))).toBe(true);
     expect(api.current.writes()).toEqual([]);
+  });
+});
+
+describe('applyConfigChanges — secrets of renamed and duplicated entries', () => {
+  const vault = {
+    type: 'streamable-http',
+    url: 'https://mcp.vault.dev/mcp',
+    apiKey: { source: 'admin', authorization_type: 'bearer', key: 'enc:sk-vault' },
+  };
+  const renameOps: t.ConfigChange[] = [
+    { op: 'set', path: 'mcpServers.vault-kb.type', value: 'streamable-http' },
+    { op: 'set', path: 'mcpServers.vault-kb.url', value: 'https://mcp.vault.dev/mcp' },
+    { op: 'set', path: 'mcpServers.vault-kb.apiKey.source', value: 'admin' },
+    { op: 'set', path: 'mcpServers.vault-kb.apiKey.authorization_type', value: 'bearer' },
+    { op: 'reset', path: 'mcpServers.vault' },
+    { op: 'carry', path: 'mcpServers', from: 'vault', to: 'vault-kb' },
+  ];
+
+  it('renames a stored MCP server in one batch, moving its encrypted key', async () => {
+    api.current!.reportMeta({
+      features: { changesBatch: true, expectedRevision: true, recordSecrets: true },
+    });
+    api.current!.seed('role/__base__', { mcpServers: { vault } });
+    const result = await applyConfigChanges(base, renameOps);
+    expect(result).toMatchObject({ issues: [], failed: [] });
+    expect(api.current!.writes().map((request) => request.body?.ops)).toEqual([
+      [
+        { op: 'rename', fieldPath: 'mcpServers', from: 'vault', to: 'vault-kb' },
+        {
+          op: 'set',
+          fieldPath: 'mcpServers.vault-kb',
+          value: {
+            type: 'streamable-http',
+            url: 'https://mcp.vault.dev/mcp',
+            apiKey: { source: 'admin', authorization_type: 'bearer' },
+          },
+        },
+      ],
+    ]);
+    expect(api.current!.stored()).toEqual({ mcpServers: { 'vault-kb': vault } });
+  });
+
+  it.each([
+    ['in a batch', { changesBatch: true, expectedRevision: true, recordSecrets: true }],
+    ['through field PATCHes', { recordSecrets: true }],
+  ])(
+    'reads a replaced MCP key as stored from the preview the read returns (%s)',
+    async (_, features) => {
+      api.current!.reportMeta({ features });
+      api.current!.seed('role/__base__', { mcpServers: { vault } });
+      const result = await applyConfigChanges(base, [
+        { op: 'set', path: 'mcpServers.vault.apiKey.key', value: 'sk-replaced-3333' },
+      ]);
+      expect(result).toMatchObject({ applied: 1, issues: [], failed: [], skipped: [] });
+      expect(api.current!.stored()).toEqual({
+        mcpServers: {
+          vault: { ...vault, apiKey: { ...vault.apiKey, key: 'enc:sk-replaced-3333' } },
+        },
+      });
+    },
+  );
+
+  it('reads an endpoint whose key and base URL change as stored, beside an entry whose key LibreChat keeps', async () => {
+    api.current!.reportMeta({
+      features: { changesBatch: true, expectedRevision: true, secretRebinding: true },
+    });
+    const alpha = { name: 'Alpha', baseURL: 'https://a.example.com', models, apiKey: 'enc:sk-a' };
+    const beta = { name: 'Beta', baseURL: 'https://b.example.com', models, apiKey: 'enc:sk-b' };
+    api.current!.seed('role/__base__', { endpoints: { custom: [alpha, beta] } });
+    const loaded = {
+      name: 'Alpha',
+      baseURL: 'https://a.example.com',
+      models,
+      apiKeyPreview: 'sk-...',
+    };
+    const result = await applyConfigChanges(base, [
+      upsert(
+        'Alpha',
+        'Alpha',
+        { ...loaded, baseURL: 'https://a2.example.com', apiKey: 'sk-a2' },
+        loaded,
+      ),
+    ]);
+    expect(result).toMatchObject({ applied: 1, issues: [], failed: [], skipped: [] });
+    expect(api.current!.stored()).toEqual({
+      endpoints: {
+        custom: [{ ...alpha, baseURL: 'https://a2.example.com', apiKey: 'enc:sk-a2' }, beta],
+      },
+    });
+  });
+
+  it('carries the key through a PATCH hint on a server without change batches', async () => {
+    api.current!.reportMeta({ features: { recordSecrets: true } });
+    api.current!.seed('role/__base__', { mcpServers: { vault } });
+    const result = await applyConfigChanges(base, renameOps);
+    expect(result).toMatchObject({ issues: [], failed: [] });
+    const [patch, remove] = api.current!.writes();
+    expect(patch.body?.renames).toEqual([
+      { path: 'mcpServers', previousName: 'vault', name: 'vault-kb' },
+    ]);
+    expect(remove).toMatchObject({ method: 'DELETE' });
+    expect(api.current!.stored()).toEqual({ mcpServers: { 'vault-kb': vault } });
+  });
+
+  it('sends no hint, and so no key, on a server without recordSecrets', async () => {
+    api.current!.seed('role/__base__', { mcpServers: { vault } });
+    await applyConfigChanges(base, renameOps);
+    expect(api.current!.writes().some((request) => request.body?.renames)).toBe(false);
+    expect(api.current!.stored()).toEqual({
+      mcpServers: {
+        'vault-kb': { ...vault, apiKey: { source: 'admin', authorization_type: 'bearer' } },
+      },
+    });
+  });
+
+  it('renames a custom endpoint with a stored key in a batch, keeping the key', async () => {
+    api.current!.reportMeta({ features: { changesBatch: true, expectedRevision: true } });
+    const stored = { name: 'Secret EP', baseURL: 'https://s', models, apiKey: 'enc:sk-ep' };
+    api.current!.seed('role/__base__', { endpoints: { custom: [stored] } });
+    const loaded = { name: 'Secret EP', baseURL: 'https://s', models, apiKeyPreview: 'sk-...' };
+    const result = await applyConfigChanges(base, [
+      upsert('Renamed EP', 'Secret EP', { ...loaded, name: 'Renamed EP' }, loaded),
+    ]);
+    expect(result).toMatchObject({ issues: [], failed: [] });
+    expect(api.current!.writes()[0].body?.ops?.[0]).toEqual({
+      op: 'rename',
+      fieldPath: 'endpoints.custom',
+      from: 'Secret EP',
+      to: 'Renamed EP',
+    });
+    expect(api.current!.stored()).toEqual({
+      endpoints: { custom: [{ ...stored, name: 'Renamed EP' }] },
+    });
+  });
+});
+
+describe('applyConfigChanges — dropped credentials reported for what a save renames or restates', () => {
+  const vault = {
+    type: 'streamable-http',
+    url: 'https://mcp.vault.dev/mcp',
+    apiKey: { source: 'admin', authorization_type: 'bearer', key: 'enc:sk-vault' },
+  };
+  const dropped = (...segments: string[]) => ({
+    path: segments.join('.'),
+    segments,
+    reason: 'secret_rebinding',
+  });
+  const noted = (fieldPath: string) => ({ fieldPath, reason: 'secretRebinding' });
+  const unrelated = dropped('endpoints', 'custom', 'GPT', 'apiKey');
+
+  it('keeps one for a server renamed in a batch, under its new name, and drops the rest', async () => {
+    api.current!.reportMeta({
+      features: {
+        changesBatch: true,
+        expectedRevision: true,
+        recordSecrets: true,
+        secretRebinding: true,
+      },
+    });
+    api.current!.seed('role/__base__', { mcpServers: { vault } });
+    api.current!.reportWrites(() => ({
+      ignored: [dropped('mcpServers', 'vault-kb', 'apiKey', 'key'), unrelated],
+    }));
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'mcpServers.vault-kb.type', value: 'streamable-http' },
+      { op: 'set', path: 'mcpServers.vault-kb.url', value: 'https://mcp.vault.dev/mcp' },
+      { op: 'reset', path: 'mcpServers.vault' },
+      { op: 'carry', path: 'mcpServers', from: 'vault', to: 'vault-kb' },
+    ]);
+    expect(result).toMatchObject({ issues: [], failed: [], skipped: [] });
+    expect(result.reported).toEqual([noted('mcpServers.vault-kb.apiKey.key')]);
+  });
+
+  it('keeps one for a server renamed through a PATCH hint', async () => {
+    api.current!.reportMeta({ features: { recordSecrets: true, secretRebinding: true } });
+    api.current!.seed('role/__base__', { mcpServers: { vault } });
+    api.current!.reportWrites(() => ({
+      ignored: [dropped('mcpServers', 'vault-kb', 'apiKey', 'key'), unrelated],
+    }));
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'mcpServers.vault-kb.type', value: 'streamable-http' },
+      { op: 'set', path: 'mcpServers.vault-kb.url', value: 'https://mcp.vault.dev/mcp' },
+      { op: 'reset', path: 'mcpServers.vault' },
+      { op: 'carry', path: 'mcpServers', from: 'vault', to: 'vault-kb' },
+    ]);
+    expect(result).toMatchObject({ issues: [], failed: [] });
+    expect(result.reported).toEqual([noted('mcpServers.vault-kb.apiKey.key')]);
+  });
+
+  it('keeps one for a custom endpoint renamed in a batch, and for one a restate alone writes', async () => {
+    api.current!.reportMeta({
+      features: { changesBatch: true, expectedRevision: true, secretRebinding: true },
+    });
+    const stored = { name: 'Secret EP', baseURL: 'https://s', models, apiKey: 'enc:sk-ep' };
+    api.current!.seed('role/__base__', {
+      endpoints: { custom: [stored, { name: 'Moonshot', baseURL: 'https://proxy.ms/v1' }] },
+    });
+    api.current!.reportWrites(() => ({
+      ignored: [
+        dropped('endpoints', 'custom', 'Renamed EP', 'apiKey'),
+        dropped('endpoints', 'custom', 'Moonshot', 'apiKey'),
+        unrelated,
+      ],
+    }));
+    const loaded = { name: 'Secret EP', baseURL: 'https://s', models, apiKeyPreview: 'sk-...' };
+    const renamed = await applyConfigChanges(base, [
+      upsert('Renamed EP', 'Secret EP', { ...loaded, name: 'Renamed EP' }, loaded),
+    ]);
+    expect(renamed.reported).toEqual([noted('endpoints.custom.Renamed EP.apiKey')]);
+    const restated = await applyConfigChanges(base, [
+      { op: 'restate', path: 'endpoints.custom', entry: 'Moonshot', secret: 'apiKey' },
+    ]);
+    expect(restated).toMatchObject({ issues: [], failed: [] });
+    expect(restated.reported).toEqual([noted('endpoints.custom.Moonshot.apiKey')]);
+  });
+});
+
+describe('applyConfigChanges — secrets sent to a new destination', () => {
+  const acme = {
+    type: 'streamable-http',
+    url: 'https://mcp.acme.dev/mcp',
+    apiKey: { source: 'admin', authorization_type: 'bearer', key: 'enc:sk-acme' },
+  };
+
+  beforeEach(() => {
+    api.current!.reportMeta({
+      features: { changesBatch: true, expectedRevision: true, recordSecrets: true },
+    });
+    api.current!.seed('role/__base__', { mcpServers: { acme } });
+  });
+
+  it('asks for a stored MCP key again before sending a URL change, and writes nothing', async () => {
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'mcpServers.acme.url', value: 'https://evil.example/mcp' },
+    ]);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        path: 'mcpServers.acme.apiKey.key',
+        code: 'secret_reentry_required',
+        params: { fieldPaths: 'mcpServers.{}.url' },
+      }),
+    ]);
+    expect(api.current!.writes()).toEqual([]);
+  });
+
+  it("shows the server's MCP re-entry refusal on the secret it names", async () => {
+    api.current!.setOverride((request) =>
+      request.path.endsWith('/changes')
+        ? {
+            status: 400,
+            body: {
+              error: 'Enter the API key again',
+              code: 'MCP_OAUTH_SECRET_REENTRY_REQUIRED',
+              server: 'acme',
+              fields: ['oauth.token_url'],
+            },
+          }
+        : undefined,
+    );
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'mcpServers.acme.title', value: 'Acme' },
+    ]);
+    expect(result.failed).toEqual([
+      expect.objectContaining({
+        path: 'mcpServers.acme.oauth.client_secret',
+        code: 'secret_reentry_required',
+        params: { fieldPaths: 'mcpServers.{}.oauth.token_url' },
+      }),
+    ]);
+  });
+
+  it('shows a web search re-entry refusal on the key beside the URL', async () => {
+    api.current!.setOverride((request) =>
+      request.path.endsWith('/changes')
+        ? {
+            status: 400,
+            body: {
+              error: 'Enter the stored API key again when changing the URL it is sent to',
+              code: 'CONFIG_SECRET_REENTRY_REQUIRED',
+              issues: [
+                {
+                  path: 'webSearch.searxngInstanceUrl',
+                  segments: ['webSearch', 'searxngInstanceUrl'],
+                  code: 'secret_reentry_required',
+                  secretPath: 'webSearch.searxngApiKey',
+                },
+              ],
+            },
+          }
+        : undefined,
+    );
+    const result = await applyConfigChanges(base, [
+      { op: 'set', path: 'webSearch.searxngInstanceUrl', value: 'https://other.dev' },
+    ]);
+    expect(result.failed).toEqual([
+      expect.objectContaining({
+        path: 'webSearch.searxngApiKey',
+        params: { fieldPaths: 'webSearch.searxngInstanceUrl' },
+      }),
+    ]);
+  });
+});
+
+describe('applyConfigChanges — custom endpoint keys sent to a new destination', () => {
+  const acme = {
+    name: 'AcmeLLM',
+    baseURL: 'https://api.acme.dev/v1',
+    models,
+    apiKey: 'enc:sk-acme',
+  };
+  const loaded = {
+    name: 'AcmeLLM',
+    baseURL: 'https://api.acme.dev/v1',
+    models,
+    apiKeyPreview: 'sk-...',
+  };
+  const moved = upsert(
+    'AcmeLLM',
+    'AcmeLLM',
+    { ...loaded, baseURL: 'https://api.acme-eu.dev/v1' },
+    loaded,
+  );
+  const refusal = {
+    status: 400,
+    body: {
+      error: 'Enter the stored API key again when changing where it is sent',
+      code: 'CONFIG_SECRET_REENTRY_REQUIRED',
+      issues: [
+        {
+          path: 'endpoints.custom.0.baseURL',
+          segments: ['endpoints', 'custom', '0', 'baseURL'],
+          code: 'secret_reentry_required',
+          secretPath: 'endpoints.custom.0.apiKey',
+        },
+      ],
+    },
+  };
+
+  beforeEach(() => {
+    api.current!.seed('role/__base__', { endpoints: { custom: [acme] } });
+  });
+
+  it("places the server's refusal on the endpoint it names, not the page's entry at that index", async () => {
+    api.current!.reportMeta({ features: { changesBatch: true, expectedRevision: true } });
+    api.current!.setOverride((request) =>
+      request.path.endsWith('/changes') ? refusal : undefined,
+    );
+    const result = await applyConfigChanges(base, [moved]);
+    expect(result.failed).toEqual([
+      expect.objectContaining({
+        path: 'endpoints.custom.0.apiKey',
+        code: 'secret_reentry_required',
+        entryIdentity: 'AcmeLLM',
+        entryPath: 'apiKey',
+        params: { fieldPaths: 'endpoints.custom.0.baseURL' },
+      }),
+    ]);
+    const shown = [...customEntries, { ...loaded, baseURL: 'https://api.acme-eu.dev/v1' }];
+    const collections: t.PendingCollection[] = [
+      {
+        collection: getKeyedCollection('endpoints.custom')!,
+        items: shown,
+        edit: { baseline: shown, origins: [] },
+      },
+    ];
+    expect(issueDisplayPath(result.failed[0], collections)).toBe('endpoints.custom.3.apiKey');
+  });
+
+  it('asks for the key again before sending a base URL change where the server guards it', async () => {
+    api.current!.reportMeta({
+      features: { changesBatch: true, expectedRevision: true, secretRebinding: true },
+    });
+    const result = await applyConfigChanges(base, [moved]);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        path: 'endpoints.custom.0.apiKey',
+        entryIdentity: 'AcmeLLM',
+        entryPath: 'apiKey',
+      }),
+    ]);
+    expect(api.current!.writes()).toEqual([]);
+  });
+
+  it('restates an inherited librechat.yaml key with the new base URL', async () => {
+    api.current!.reportMeta({
+      features: { changesBatch: true, expectedRevision: true, secretRebinding: true },
+    });
+    const moonshot = customEntries[0];
+    const result = await applyConfigChanges(base, [
+      upsert('Moonshot', 'Moonshot', { ...moonshot, baseURL: 'https://proxy.ms/v1' }, moonshot),
+      { op: 'restate', path: 'endpoints.custom', entry: 'Moonshot', secret: 'apiKey' },
+    ]);
+    expect(result).toMatchObject({ issues: [], failed: [] });
+    expect(api.current!.stored()).toEqual({
+      endpoints: {
+        custom: [
+          acme,
+          { name: 'Moonshot', baseURL: 'https://proxy.ms/v1', apiKey: '${MOONSHOT_API_KEY}' },
+        ],
+      },
+    });
   });
 });

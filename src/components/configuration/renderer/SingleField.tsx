@@ -12,6 +12,7 @@ import { useLocalize, useFieldState, useValuesScope } from '@/hooks';
 import { getKeyedCollection, isConfigValueEqual } from '@/utils';
 import { deriveFieldDefault, lowerLayerKeys } from './defaults';
 import { BooleanChip, FieldControl } from './FieldControl';
+import { maskedSecretLabel } from '../fields/SecretField';
 import { TriStateField } from '../fields/TriStateField';
 import { VariantField } from '../fields/VariantField';
 import { InlineFieldRenderer } from './InlineField';
@@ -202,6 +203,7 @@ export function SingleFieldRenderer({
     disabled,
     required: !field.isOptional,
     secretPreview: showsStoredSecret ? secretPreviewValue : null,
+    secretMaskLabel: maskedSecretLabel(state, localize),
     hasPendingEdit,
     onCancelSecret: () => onDiscardField?.(path),
     editSessionId,

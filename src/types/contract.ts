@@ -144,6 +144,16 @@ export interface ConfigWriteRules {
   startupOnlyFields: ReadonlySet<string>;
 }
 
+/** Which renames and duplicates keep the secrets their source stores (see `getSecretCarry`). */
+export interface SecretCarry {
+  /** A renamed custom endpoint keeps its stored API key. */
+  endpointRename: boolean;
+  /** A renamed MCP server keeps its stored API key and OAuth client secret. */
+  mcpRename: boolean;
+  /** A duplicated MCP server starts with its source's stored secrets. */
+  mcpCopy: boolean;
+}
+
 /** `GET /api/admin/config/meta` as parsed: every part optional, since forks and older servers differ. */
 export interface AdminConfigMetaBody {
   versions?: Partial<ConfigVersions>;

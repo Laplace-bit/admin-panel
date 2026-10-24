@@ -2,8 +2,8 @@ import { Dropdown, Icon } from '@clickhouse/click-ui';
 import { PrincipalType } from 'librechat-data-provider';
 import type { AdminConfig } from '@librechat/data-schemas';
 import type { ComponentProps, ReactNode } from 'react';
+import type { StoredSecret, VisibilityEdit, EntryKeyMoveInput } from './changes';
 import type { ConfigRecord, ConfigValue, SchemaField } from './config';
-import type { VisibilityEdit } from './changes';
 
 export type IconName = ComponentProps<typeof Icon>['name'];
 export type MenuIconName = ComponentProps<typeof Dropdown.Item>['icon'];
@@ -27,8 +27,69 @@ export interface ConfigScope {
    * entry by entry (`endpoints.custom` → `['Claude']`): one override each.
    */
   overrideEntries?: Record<string, string[]>;
+  /**
+   * The settings each of those entries sets, as leaf paths inside the entry
+   * (`endpoints.custom` → `Claude` → `['baseURL']`), its name and secrets
+   * left out.
+   */
+  overrideEntryPaths?: Record<string, Record<string, string[]>>;
   /** Paths the profile hides from the layers below it. */
   tombstones?: string[];
+  /** The secrets the profile stores, read back only as their masked previews. */
+  storedSecrets?: StoredSecret[];
+}
+
+/** A profile that overrides or hides a collection entry by its name (`findEntryOverrides`). */
+export interface EntryOverride {
+  scope: ConfigScope;
+  /** It sets or adds settings of the entry. */
+  overrides: boolean;
+  /**
+   * The secrets of its own it stores there, by where they are in the entry
+   * (`apiKey.key`, `oauth.client_secret`; a custom endpoint's `apiKey`).
+   */
+  secrets: string[];
+  /** The settings it sets there, as leaf paths inside the entry (`url`, `apiKey.authorization_type`). */
+  settings: string[];
+  /** It hides the entry. */
+  hidden: boolean;
+}
+
+/**
+ * What a save in Base does to an entry other profiles override by name
+ * (`name`, the name they override it under):
+ * - `renamed`: it gets the name `next`; `taken` when another entry holds the
+ *   old name once the save is applied (a swap, a chain);
+ * - `removed`: it goes;
+ * - `moved`: it keeps its name but sends the keys they store there somewhere
+ *   else (`findUnboundOverrides`);
+ * - `took`: a rename or a new entry takes a name they still override, and
+ *   LibreChat sends their own keys there to it unless it binds keys to where
+ *   they were entered (`sendsKeys`).
+ */
+export type EntryOverrideChange =
+  | { kind: 'renamed'; name: string; next: string; taken: boolean }
+  | { kind: 'removed'; name: string }
+  | { kind: 'moved'; name: string }
+  | { kind: 'took'; name: string; sendsKeys: boolean };
+
+/**
+ * The notes a card in Base shows on an entry for the profiles that override
+ * it by name (`useEntryOverrideNotes`), each empty when none is affected.
+ */
+export interface EntryOverrideNotes {
+  /** A rename (`rename`) or a removal (without one) leaves their overrides of `name` under it. */
+  left: (name: string, rename?: { next: string; taken: boolean }) => EntryOverrideNote[];
+  /** The edits move where `name` sends the keys they store there (`entryKeyMoves`). */
+  moved: (name: string, entry: EntryKeyMoveInput) => EntryOverrideNote[];
+  /** A rename or a new entry takes `name`, which they still override. */
+  took: (name: string) => EntryOverrideNote[];
+}
+
+/** A change in Base to an entry, and the profiles it affects that override it by name. */
+export interface EntryOverrideNote {
+  change: EntryOverrideChange;
+  overrides: EntryOverride[];
 }
 
 export type ScopeSelection = { type: 'BASE' } | { type: 'SCOPE'; scope: ConfigScope };

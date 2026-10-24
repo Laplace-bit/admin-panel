@@ -9,7 +9,7 @@ import type {
 } from './config';
 import type { LocalizeFn, ConfigLayers, ConfigSaveState, ConfigEditsState } from './hooks';
 import type { ImportTab, SaveEntry, TargetMode, SkippedChange } from './config-ui';
-import type { ChangeSummaryItem, ChangeWarning } from './changes';
+import type { ChangeSummaryItem, ChangeWarning, EntryKeyMove } from './changes';
 import type { RevertTarget } from './values';
 import type { ConfigScope } from './scope';
 
@@ -40,6 +40,17 @@ export interface ChangeEntryRef {
   collectionPath: string;
   entryPath: string;
   identity?: string;
+}
+
+/**
+ * Where a stored secret a save removes is, as review rows name it: inside a
+ * collection entry (by identity, so a renamed or moved entry still matches)
+ * at `path` within it, else at `path`; `display` is its path on the page.
+ */
+export interface SecretLocation {
+  entry?: ChangeEntryRef;
+  path: string;
+  display: string;
 }
 
 /** The layers below the edit target, for `lowerValue` (WS7). */
@@ -88,7 +99,7 @@ export interface ReviewRow {
   label: string;
   /** Collection noun for entry-level changes ("endpoint", "MCP server"). */
   noun?: string;
-  /** Leaves of an added entry, listed under it. */
+  /** Leaves of an added entry, or what a change deletes with it (`dropped`), listed under it. */
   details?: ReviewRow[];
   issues?: ReviewIssue[];
   /** Option labels of an enum setting by value ("remaining_tokens" → "Remaining tokens"). */
@@ -180,20 +191,27 @@ export interface ChangeReviewOptions {
     | 'isDirty'
     | 'saveError'
     | 'handleFieldChange'
-    | 'handleResetField'
     | 'handleDiscardField'
     | 'handleDiscard'
     | 'visibilityEdits'
     | 'renameEdits'
+    | 'restateEdits'
     | 'handleHideField'
     | 'handleUnhideField'
     | 'handleRenameEntry'
+    | 'handleRestateCredential'
+    | 'snapshot'
+    | 'editSessionId'
+    | 'handleRestoreEdits'
   >;
   save: Pick<
     ConfigSaveState,
     | 'savePlan'
     | 'fieldErrors'
     | 'changes'
+    | 'warnings'
+    | 'removedSecrets'
+    | 'keyMoves'
     | 'saving'
     | 'sessionExpired'
     | 'termsUrl'
@@ -201,12 +219,17 @@ export interface ChangeReviewOptions {
     | 'openReview'
     | 'cancelReview'
     | 'handleConfirmSave'
+    | 'finishWithoutWrites'
+    | 'editRevision'
+    | 'holdRevision'
     | 'conflict'
     | 'reloadLatest'
     | 'saveOverLatest'
   >;
   /** Switches the page to a tab (the review's "Go to field"). */
   onTabChange: (tabId: string) => void;
+  /** Every profile, in the order they apply: a rename or removal in Base names those it leaves overrides behind in. */
+  profiles?: readonly ConfigScope[];
 }
 
 /** The change review and unsaved-changes bar state (WS7). */
@@ -273,6 +296,28 @@ export interface ReviewRowViewProps {
   compact?: boolean;
 }
 
+/** What the review names the profiles that override Base's entries by name against (`overrideNotes`). */
+export interface OverrideNoteOptions {
+  profiles: readonly ConfigScope[];
+  /** The entries the save keeps while moving where profiles' own keys there go (`findEntryKeyMoves`). */
+  keyMoves: readonly EntryKeyMove[];
+  /** LibreChat sends a profile's own key to whatever entry holds the name (no `secretRebinding`). */
+  sendsKeys: boolean;
+  /** The configuration before the save, where a name already in use is no leftover. */
+  before: ConfigValue;
+}
+
+/** What a save's rows in Base are checked against for those profiles: the options, and the entries rows write. */
+export interface OverrideNoteContext extends OverrideNoteOptions {
+  /** The entries a row writes under their name once the save is applied (`collection\u0000name`). */
+  written: ReadonlySet<string>;
+}
+
+/** Props of a detail under a review row: a leaf of an added entry, or a part the change deletes with it. */
+export interface ReviewDetailValueProps {
+  detail: ReviewRow;
+}
+
 /** Why an imported key is left out (WS7). */
 export type ImportSkipReason =
   | SkippedChange['reason']
@@ -281,6 +326,16 @@ export type ImportSkipReason =
   | 'dottedKey'
   | 'dottedName'
   | 'processMcp';
+
+/**
+ * An imported secret an import never writes (WS7): the value is the mask
+ * LibreChat shows for a hidden key (`masked`), or the key it would replace is
+ * hidden from the panel, a librechat.yaml literal (`hidden`).
+ */
+export interface WithheldSecret {
+  path: string;
+  reason: 'hidden' | 'masked';
+}
 
 /** An imported leaf that will not be written, and why (WS7). */
 export interface ImportSkippedKey {

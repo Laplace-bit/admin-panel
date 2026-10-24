@@ -1,11 +1,17 @@
 import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
-import { flattenObject, getValueAtPath, isConfigRecord, findKeyedCollectionEntry } from '@/utils';
+import {
+  isSecretPath,
+  flattenObject,
+  getValueAtPath,
+  isConfigRecord,
+  findKeyedCollectionEntry,
+} from '@/utils';
 import { CONFIG_TABS, OTHER_TAB, SECTION_META, splitCamelCase } from '../configMeta';
 import { SKIP_REASON_KEYS, BUILT_IN_PROVIDERS, getConfigSection } from '@/constants';
-import { identityKeyFor, isSecretPath, findEntry } from './diff';
 import { findSchemaField, getFieldOptions } from '../controls';
 import { getFieldMeta, labelForPath } from '../meta';
+import { identityKeyFor, findEntry } from './diff';
 import { fieldVariants } from '../renderer/kinds';
 
 /** Locale keys for what an entry of a known collection is called. */
@@ -74,6 +80,8 @@ export function locate(path: string, localize: t.LocalizeFn): t.ChangeLocation {
  * Breadcrumb of the named segments of `path` below `basePath` ("Terms of
  * service › Modal title"). With the schema, a key of a record (a header, a
  * parameter such as `max_tokens`) is shown as written, not as a field label.
+ * A label its parent already reads (an MCP server's `apiKey.key`, "API key")
+ * is not repeated.
  */
 export function fieldLabel(
   path: string,
@@ -92,7 +100,8 @@ export function fieldLabel(
     if (INDEX_SEGMENT_RE.test(segment)) continue;
     const record = fields != null ? findSchemaField(fields, parent) : null;
     if (record?.type !== 'record') {
-      labels.push(labelForPath(prefix, localize));
+      const label = labelForPath(prefix, localize);
+      if (labels[labels.length - 1] !== label) labels.push(label);
       continue;
     }
     /** A key of a record of plain values is the rest of the path (`us.anthropic.claude-sonnet-4-6`). */
@@ -257,6 +266,35 @@ function addedDetails(item: t.ChangeSummaryItem, key: string, ctx: t.ReviewLabel
 }
 
 /**
+ * The label of a part a change deletes with it: by its path under the row,
+ * else under its entry or section; a part of another list entry is named by
+ * the entry.
+ */
+function partLabel(
+  part: t.ChangeSummaryItem,
+  item: t.ChangeSummaryItem,
+  ctx: t.ReviewLabelContext,
+) {
+  const under = part.path === item.path || part.path.startsWith(`${item.path}.`);
+  const base = under ? item.path : (part.entryPath ?? locate(part.path, ctx.localize).sectionKey);
+  const field = fieldLabel(part.path, base, ctx.localize, ctx.fields);
+  const named = part.entryIdentity && part.entryIdentity !== item.entryIdentity;
+  return named ? `${part.entryIdentity}${BREADCRUMB}${field}` : field;
+}
+
+/** What a change deletes of the target's own value with it (`dropped`), listed under its row. */
+function droppedDetails(item: t.ChangeSummaryItem, key: string, ctx: t.ReviewLabelContext) {
+  return item.dropped?.map(
+    (part, i): t.ReviewRow => ({
+      key: `${key}:dropped:${i}`,
+      label: partLabel(part, item, ctx),
+      item: part,
+      valueLabels: valueLabelsAt(part.path, ctx),
+    }),
+  );
+}
+
+/**
  * The entry of a keyed list that a nested collection's change belongs to (a
  * parameter definition inside `endpoints.custom.3`), so the row is listed
  * under that entry's title, like the entry's own field changes.
@@ -353,7 +391,8 @@ export function buildReviewModel(
         item,
         label: entryTitle(item, ctx),
         noun: collectionNoun(item.collectionPath ?? '', ctx.localize),
-        details: item.kind === 'added' ? addedDetails(item, key, ctx) : undefined,
+        details:
+          item.kind === 'added' ? addedDetails(item, key, ctx) : droppedDetails(item, key, ctx),
       };
       (outer ? groupRows(section, outer) : section.rows).push(row);
       allRows.push(row);
@@ -366,6 +405,7 @@ export function buildReviewModel(
         item,
         label: outer ? `${entryTitle(item, ctx)}${BREADCRUMB}${field}` : field,
         valueLabels: valueLabelsAt(item.path, ctx),
+        details: droppedDetails(item, key, ctx),
       };
       groupRows(section, outer ?? item).push(row);
       allRows.push(row);
@@ -376,6 +416,7 @@ export function buildReviewModel(
       item,
       label: fieldLabel(item.path, location.sectionKey, ctx.localize, ctx.fields),
       valueLabels: valueLabelsAt(item.path, ctx),
+      details: droppedDetails(item, key, ctx),
     };
     section.rows.push(row);
     allRows.push(row);

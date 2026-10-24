@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type * as t from '@/types';
-import { DecorativeIcon, KebabMenu, StateChip } from '@/components/shared';
+import { DecorativeIcon, KebabMenu, StateChip, WarningList } from '@/components/shared';
 import { useExpandableState, useLocalize, useValuesScope } from '@/hooks';
 import { RegionNameContext } from '@/contexts/RegionNameContext';
 import { transportLabelKey, transportOf } from './transport';
@@ -335,15 +335,7 @@ export function McpServerCard({
 }
 
 /** A server deleted in this session, until Save (D9): struck through, with Undo. */
-export function McpDeletedRow({
-  serverKey,
-  onUndo,
-  focusUndo,
-}: {
-  serverKey: string;
-  onUndo: () => void;
-  focusUndo: boolean;
-}) {
+export function McpDeletedRow({ serverKey, onUndo, focusUndo, notes }: t.McpDeletedRowProps) {
   const localize = useLocalize();
   const undoRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -372,21 +364,22 @@ export function McpDeletedRow({
         <DecorativeIcon name="history" size="sm" />
         <span>{localize('com_config_ctl_entry_undo')}</span>
       </button>
+      {notes && <WarningList notes={notes} />}
     </div>
   );
 }
 
+/** How a hidden server reads: saved or pending, and whether the hide also blocks its use. */
+const HIDDEN_KEYS = {
+  saved: { list: 'com_config_mcp_hidden', boundary: 'com_config_mcp_hidden_boundary' },
+  pending: {
+    list: 'com_config_mcp_hidden_pending',
+    boundary: 'com_config_mcp_hidden_pending_boundary',
+  },
+} as const;
+
 /** A server the open profile hides (MCP-10): its name, "Hidden for …", and Unhide (or Undo of a pending hide). */
-export function McpHiddenRow({
-  serverKey,
-  pending,
-  onUnhide,
-}: {
-  serverKey: string;
-  /** The hide is unsaved: the button undoes it. */
-  pending: boolean;
-  onUnhide?: () => void;
-}) {
+export function McpHiddenRow({ serverKey, pending, blocksUse, onUnhide }: t.McpHiddenRowProps) {
   const localize = useLocalize();
   const scope = useValuesScope();
   const scopeName = sourceLabel('scope', localize, scope);
@@ -404,7 +397,7 @@ export function McpHiddenRow({
           {serverKey}
         </span>
         <span className="text-xs text-(--cui-color-text-muted)">
-          {localize(pending ? 'com_config_mcp_hidden_pending' : 'com_config_mcp_hidden', {
+          {localize(HIDDEN_KEYS[pending ? 'pending' : 'saved'][blocksUse ? 'boundary' : 'list'], {
             scope: scopeName,
           })}
         </span>

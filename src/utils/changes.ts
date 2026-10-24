@@ -7,6 +7,7 @@ import type * as t from '@/types';
 import {
   getEntryKey,
   diffOverride,
+  entriesByKey,
   entryLocation,
   hasHiddenSecret,
   mergeConfigLayers,
@@ -15,13 +16,31 @@ import {
   findKeyedCollectionEntry,
 } from './collections';
 import {
+  credentialKey,
+  withCarriedSecrets,
+  findUncopiedSecrets,
+  restatableCredential,
+  findRebindingWarnings,
+  findDroppedEndpointKey,
+  findDroppedCredentials,
+  findSecretReentryIssues,
+} from './binding';
+import {
   hasDottedKey,
+  asConfigRecord,
   isConfigRecord,
   getValueAtPath,
   setValueAtPath,
   removeValueAtPath,
   isConfigValueEqual,
 } from './format';
+import {
+  getConfigSection,
+  getReadOnlyReason,
+  TOO_MANY_CHANGES_CODE,
+  BUNDLED_WRITE_RULES,
+  BUNDLED_CONFIG_FEATURES,
+} from '@/constants';
 import {
   validateEntry,
   validateField,
@@ -30,18 +49,19 @@ import {
   validateLoadableEndpoint,
 } from './validation';
 import {
-  getConfigSection,
-  getReadOnlyReason,
-  SECRET_CONFIG_KEYS,
-  BUNDLED_WRITE_RULES,
-  BUNDLED_CONFIG_FEATURES,
-} from '@/constants';
-import { isSecretKey, toSecretPreviewKey, valueOrSecretPreview } from './secrets';
+  isSecretPath,
+  holdsSecretAt,
+  isStoredSecretKey,
+  secretPreviewPath,
+  isSecretPreviewKey,
+  valueOrSecretPreview,
+  secretKeyForPreviewKey,
+} from './secrets';
 import { findYamlManagedValues, getWriteSkipReason } from './writes';
 import { isBlankText, findBlankText, findUnsafeKeys } from './keys';
+import { getSecretCarry, usesChangeBatch } from './contract';
 import { resolveSubSchema, unwrapSchema } from './schema';
 import { scopeGateSkipReason } from './scopes';
-import { usesChangeBatch } from './contract';
 
 /** Whether a write at `path` sets a process-backed (stdio) MCP server field, which the admin API rejects. */
 export function isProcessMcpWrite(path: string, value: t.ConfigValue): boolean {
@@ -150,6 +170,10 @@ interface PlanState {
   tombstones: string[];
   untombstones: string[];
   entryOps: Map<string, t.EntryChange[]>;
+  carries: t.CarryChange[];
+  restates: t.RestateChange[];
+  renames: t.EntryRename[];
+  renameHints: t.RenameHint[];
   skipped: t.SkippedChange[];
   issues: t.ConfigIssue[];
   warnings: t.ConfigWarning[];
@@ -271,7 +295,8 @@ function expandIndexedArraySet(state: PlanState, path: string, value: t.ConfigVa
 /**
  * Sorts the ops into the plan. A hide removes what the target stores at and
  * under its path, so a set there in the same batch is not written: the hide
- * wins, whatever order the two are written in.
+ * wins, whatever order the two are written in, and the set is reported as
+ * not sent (`hiddenBySave`).
  */
 function collectOps(state: PlanState, ops: t.ConfigChange[]): void {
   const isProfile = state.snapshot.lowerKind === 'inherited';
@@ -286,13 +311,18 @@ function collectOps(state: PlanState, ops: t.ConfigChange[]): void {
       continue;
     }
     if (op.op === 'set') sets.push([op.path, op.value]);
+    else if (op.op === 'carry') state.carries.push(op);
+    else if (op.op === 'restate') state.restates.push(op);
     else if (op.op === 'upsertEntry' || op.op === 'removeEntry') addEntryOp(state, op);
     else if (op.op === 'reset') state.resets.push(op.path);
     else if (op.op === 'tombstone') state.tombstones.push(op.path);
     else state.untombstones.push(op.path);
   }
   for (const [path, value] of sets) {
-    if (state.tombstones.some((hidden) => isAtOrUnder(path, hidden))) continue;
+    if (state.tombstones.some((hidden) => isAtOrUnder(path, hidden))) {
+      state.skipped.push({ fieldPath: path, reason: 'hiddenBySave' });
+      continue;
+    }
     collectSet(state, path, value);
   }
 }
@@ -327,13 +357,203 @@ function resolveCollections(state: PlanState): void {
       lower: getValueAtPath(state.snapshot.lower, path),
       lowerKind: state.snapshot.lowerKind,
       ops: list,
+      carriesSecrets: getSecretCarry(state.features).endpointRename,
     });
     state.issues.push(...resolution.issues);
+    state.renames.push(...resolution.renames);
     state.warnings.push(...resolution.warnings);
     state.effective += resolution.effective;
-    if (!resolution.changed) continue;
-    if (resolution.next !== undefined) state.sets.set(path, resolution.next);
+    const next = keepRestatedKeys(state, collection, resolution.next, list);
+    const restated = !isConfigValueEqual(next, resolution.next);
+    if (restated && !resolution.changed) state.effective++;
+    if (!resolution.changed && !restated) continue;
+    if (next !== undefined) state.sets.set(path, next);
     else state.resets.push(path);
+  }
+}
+
+/**
+ * The credentials of `path` a save restates (`restate`) that LibreChat binds
+ * to a destination, each with the value the layer beneath holds; none before
+ * `secretRebinding`.
+ */
+function restatedCredentials(state: PlanState, path: string): t.RestatedCredential[] {
+  if (!state.features.secretRebinding) return [];
+  return state.restates.flatMap((ref) => {
+    if (ref.path !== path) return [];
+    const value = restatableCredential(state.snapshot.lower, ref);
+    return value === undefined ? [] : [{ ref, value }];
+  });
+}
+
+/**
+ * Collections a save restates a credential in are resolved even when it
+ * changes none of their entries, validating the restated entries.
+ */
+function addRestatedEntries(state: PlanState): void {
+  for (const ref of state.restates) {
+    if (!getKeyedCollection(ref.path)) continue;
+    if (!state.entryOps.has(ref.path)) state.entryOps.set(ref.path, []);
+    const touched = state.touchedEntries.get(ref.path) ?? new Set<string>();
+    touched.add(ref.entry);
+    state.touchedEntries.set(ref.path, touched);
+  }
+}
+
+/** Whether the save's changes of entry `identity` leave its `key` as it was. */
+function leavesKey(ops: readonly t.EntryChange[], identity: string, key: string): boolean {
+  return ops.every((op) => {
+    if (op.op !== 'upsertEntry' || op.identity !== identity) return true;
+    if (op.baseline === undefined) return !(key in asConfigRecord(op.value));
+    return isConfigValueEqual(asConfigRecord(op.baseline)[key], asConfigRecord(op.value)[key]);
+  });
+}
+
+/**
+ * The key of an inherited entry its override restates, where the override
+ * moves where the entry sends it (`secretRebinding`): the one the save
+ * restates (`restate`), or the one the target's override already holds as
+ * a readable value and the save's changes of the entry leave alone. An
+ * override otherwise stores only what differs from the layer beneath, so it
+ * would leave the key out, and LibreChat would drop it.
+ */
+function keepRestatedKeys(
+  state: PlanState,
+  collection: t.KeyedCollection,
+  next: t.ConfigValue[] | undefined,
+  ops: readonly t.EntryChange[],
+): t.ConfigValue[] | undefined {
+  const secretKey = collection.secret?.key;
+  if (!secretKey || !next || !state.features.secretRebinding) return next;
+  const restated = new Map(
+    restatedCredentials(state, collection.path)
+      .filter(({ ref }) => ref.secret === secretKey)
+      .map(({ ref, value }) => [ref.entry, value]),
+  );
+  const lower = entriesByKey(getValueAtPath(state.snapshot.lower, collection.path), collection.key);
+  const stored = entriesByKey(
+    getValueAtPath(state.snapshot.stored, collection.path),
+    collection.key,
+  );
+  return next.map((entry) => {
+    const identity = getEntryKey(entry, collection.key);
+    if (identity === undefined || asConfigRecord(entry)[secretKey] !== undefined) return entry;
+    const own = asConfigRecord(stored.get(identity))[secretKey];
+    const kept = typeof own === 'string' && leavesKey(ops, identity, secretKey) ? own : undefined;
+    const value = restated.get(identity) ?? kept;
+    if (value === undefined) return entry;
+    if (findDroppedEndpointKey(lower.get(identity), entry).length === 0) return entry;
+    if (restated.has(identity)) {
+      state.warnings.push({
+        path: collection.path,
+        entryIdentity: identity,
+        warning: 'secretRestated',
+        keys: [secretKey],
+      });
+    }
+    return { ...asConfigRecord(entry), [secretKey]: value };
+  });
+}
+
+/** Writes `value` at `path` within the plan's sets: into the set at or above it, else as a set of its own. */
+function setWithin(state: PlanState, path: string, value: t.ConfigValue): void {
+  const holder = [...state.sets.keys()].find((setPath) => isAtOrUnder(path, setPath));
+  if (holder === undefined) {
+    state.sets.set(path, value);
+    state.effective++;
+    return;
+  }
+  const inner = path.slice(holder.length + 1);
+  const held = asConfigRecord(state.sets.get(holder));
+  state.sets.set(holder, inner === '' ? value : setValueAtPath(held, inner, value));
+}
+
+/**
+ * MCP server credentials a save restates (`restate`), written into the
+ * server's override where the plan leaves it moving the credential the layer
+ * beneath holds without one of its own, so LibreChat sends it there too. A
+ * restate of a credential the plan does not drop writes nothing.
+ */
+function resolveServerRestates(state: PlanState): void {
+  const restated = restatedCredentials(state, 'mcpServers');
+  if (restated.length === 0) return;
+  const dropped = new Set(
+    findDroppedCredentials(applyToStored(state), state.snapshot.lower).map(credentialKey),
+  );
+  for (const { ref, value } of restated) {
+    if (!dropped.has(credentialKey(ref))) continue;
+    const path = `${ref.path}.${ref.entry}.${ref.secret}`;
+    setWithin(state, path, value);
+    state.warnings.push({ path, warning: 'secretRestated' });
+  }
+}
+
+/** Whether the target's own stored record at `path` has key `key`. */
+function storesKey(record: t.ConfigValue, key: string): boolean {
+  return isConfigRecord(record) && Object.hasOwn(record, key);
+}
+
+/**
+ * Whether the server can carry what the target stores on record entry
+ * `from` to the new name `to` (a rename or copy): the target stores `from`
+ * itself (an entry of the layer beneath can't be renamed, and a hint names a
+ * stored entry), and `to` is free in both layers, so a swap or a chain onto
+ * a stored name can't carry.
+ */
+export function isCarriableRename(
+  stored: t.ConfigValue,
+  lower: t.ConfigValue,
+  from: string,
+  to: string,
+): boolean {
+  if (from === to || !storesKey(stored, from) || storesKey(lower, from)) return false;
+  return !storesKey(stored, to) && !storesKey(lower, to);
+}
+
+/** Whether a carry can apply (`isCarriableRename`) to an MCP server the save writes. */
+function isCarriable(state: PlanState, op: t.CarryChange): boolean {
+  if (op.path !== 'mcpServers') return false;
+  const stored = getValueAtPath(state.snapshot.stored, op.path);
+  const lower = getValueAtPath(state.snapshot.lower, op.path);
+  if (!isCarriableRename(stored, lower, op.from, op.to)) return false;
+  const target = `${op.path}.${op.to}`;
+  return [...state.sets.keys()].some((path) => isAtOrUnder(path, target));
+}
+
+/** Folds every set at and under `path` into one set of `path`, as one object. */
+function foldInto(state: PlanState, path: string): void {
+  const held = state.sets.get(path);
+  let combined: t.ConfigRecord = isConfigRecord(held) ? held : {};
+  for (const [setPath, value] of [...state.sets]) {
+    if (!setPath.startsWith(`${path}.`)) continue;
+    combined = setValueAtPath(combined, setPath.slice(path.length + 1), value);
+    state.sets.delete(setPath);
+  }
+  state.sets.set(path, combined);
+}
+
+/**
+ * Plans what a renamed or duplicated MCP server takes along of the secrets
+ * its source stores (`getSecretCarry`). A batch renames the stored server
+ * (`rename`) and then sets the renamed one whole, so a field removed since
+ * the rename stays removed, and the removal of the old name goes. Field
+ * PATCHes carry the secrets through a `renames` hint; the old name is still
+ * removed. A carry that can't apply is left out: its secrets are entered again.
+ */
+function resolveCarries(state: PlanState): void {
+  const carry = getSecretCarry(state.features);
+  const batch = usesChangeBatch(state.features);
+  for (const op of state.carries) {
+    const allowed = op.copy ? carry.mcpCopy : carry.mcpRename;
+    if (!allowed || !isCarriable(state, op)) continue;
+    if (op.copy || !batch) {
+      state.renameHints.push({ path: op.path, previousName: op.from, name: op.to });
+      continue;
+    }
+    const source = `${op.path}.${op.from}`;
+    state.renames.push({ path: op.path, from: op.from, to: op.to });
+    state.resets = state.resets.filter((path) => !isAtOrUnder(path, source));
+    foldInto(state, `${op.path}.${op.to}`);
   }
 }
 
@@ -482,15 +702,57 @@ function emptiedAncestor(
 /** Removes `path` from stored overrides, with a secret's preview companion (LibreChat removes both). */
 function removeStored(stored: t.ConfigRecord, path: string): t.ConfigRecord {
   const removed = removeValueAtPath(stored, path);
-  const dot = path.lastIndexOf('.');
-  const key = path.slice(dot + 1);
-  if (!isRedactedKey(key)) return removed;
-  return removeValueAtPath(removed, `${path.slice(0, dot + 1)}${toSecretPreviewKey(key)}`);
+  return isSecretPath(path) ? removeValueAtPath(removed, secretPreviewPath(path)) : removed;
 }
 
+/** `record` with key `from` moved to `to`, keeping the key order. */
+function renameKey(record: t.ConfigRecord, from: string, to: string): t.ConfigRecord {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [key === from ? to : key, value]),
+  );
+}
+
+/**
+ * `next` as LibreChat stores it over `previous`: an object that omits a
+ * stored secret keeps it, so its preview companion (all the redacted read
+ * shows of it) stays beside the new value.
+ */
+function keepOmittedSecrets(previous: t.ConfigValue, next: t.ConfigValue): t.ConfigValue {
+  if (!isConfigRecord(previous) || !isConfigRecord(next)) return next;
+  const result: t.ConfigRecord = { ...next };
+  for (const [key, value] of Object.entries(previous)) {
+    const secret = secretKeyForPreviewKey(key);
+    if (secret !== null && typeof value === 'string' && !(secret in next) && !(key in next)) {
+      result[key] = value;
+    } else if (isConfigRecord(value) && isConfigRecord(next[key])) {
+      result[key] = keepOmittedSecrets(value, next[key]);
+    }
+  }
+  return result;
+}
+
+/**
+ * The target's stored overrides once the plan is applied as LibreChat
+ * applies it: renames, sets (a stored secret an object omits is kept), the
+ * secrets `renames` hints carry from the stored entry each names, then
+ * removals.
+ */
 function applyToStored(state: PlanState): t.ConfigRecord {
   let stored = state.snapshot.stored;
-  for (const [path, value] of state.sets) stored = setValueAtPath(stored, path, value);
+  for (const { path, from, to } of state.renames) {
+    const record = getValueAtPath(stored, path);
+    if (isConfigRecord(record)) stored = setValueAtPath(stored, path, renameKey(record, from, to));
+  }
+  for (const [path, value] of state.sets) {
+    stored = setValueAtPath(stored, path, keepOmittedSecrets(getValueAtPath(stored, path), value));
+  }
+  for (const { path, previousName, name } of state.renameHints) {
+    const target = `${path}.${name}`;
+    const server = getValueAtPath(stored, target);
+    if (!isConfigRecord(server)) continue;
+    const source = getValueAtPath(state.snapshot.stored, `${path}.${previousName}`);
+    stored = setValueAtPath(stored, target, withCarriedSecrets(server, source));
+  }
   for (const path of [...state.resets, ...state.tombstones]) stored = removeStored(stored, path);
   return stored;
 }
@@ -526,11 +788,13 @@ function validateCollectionSet(
   const lowerEntries = getValueAtPath(state.snapshot.lower, collection.path);
   const lowerList = Array.isArray(lowerEntries) ? lowerEntries : [];
   const storedEntries = getValueAtPath(state.snapshot.stored, collection.path);
-  const storedKeys = new Set(
-    (Array.isArray(storedEntries) ? storedEntries : [])
+  /** Entries with a stored key: those the target stores, and those a batch renames with theirs. */
+  const storedKeys = new Set([
+    ...(Array.isArray(storedEntries) ? storedEntries : [])
       .filter((entry) => hasHiddenSecret(entry, collection))
       .map((entry) => getEntryKey(entry, collection.key)),
-  );
+    ...state.renames.filter(({ path }) => path === collection.path).map(({ to }) => to),
+  ]);
   return value.flatMap((entry, index) => {
     const identity = getEntryKey(entry, collection.key);
     if (touched && (identity === undefined || !touched.has(identity))) return [];
@@ -690,9 +954,7 @@ function findMergedBackKeys(state: PlanState): void {
     if (!isConfigRecord(value) || getKeyedCollection(path)) continue;
     const lowerValue = getValueAtPath(state.snapshot.lower, path);
     if (!isConfigRecord(lowerValue)) continue;
-    const keys = diffOverride(lowerValue, value).unremovable.filter(
-      (key) => !SECRET_CONFIG_KEYS.has(key.slice(key.lastIndexOf('.') + 1)),
-    );
+    const keys = diffOverride(lowerValue, value).unremovable.filter((key) => !isSecretPath(key));
     if (keys.length > 0) state.warnings.push({ path, warning: 'yamlOnly', keys });
   }
 }
@@ -704,6 +966,58 @@ function changedLocations(state: PlanState): string[] {
     const entries = state.touchedEntries.get(path);
     return entries ? [...entries].map((name) => entryLocation(path, name)) : [path];
   });
+}
+
+/**
+ * Duplicated MCP servers the plan writes without the stored secrets of the
+ * server they copy (no `renames` hint carries them): a `secretNotCopied`
+ * warning names the secrets each one uses but doesn't enter.
+ */
+function findUncopiedCopies(state: PlanState, storedAfter: t.ConfigRecord): void {
+  const { lower, stored } = state.snapshot;
+  for (const op of state.carries) {
+    if (!op.copy) continue;
+    const carried = state.renameHints.some(
+      (hint) => hint.path === op.path && hint.name === op.to && hint.previousName === op.from,
+    );
+    const target = `${op.path}.${op.to}`;
+    if (carried || getValueAtPath(storedAfter, target) === undefined) continue;
+    const source = `${op.path}.${op.from}`;
+    const keys = findUncopiedSecrets(
+      mergeConfigLayers(getValueAtPath(lower, source), getValueAtPath(stored, source)),
+      mergeConfigLayers(getValueAtPath(lower, target), getValueAtPath(storedAfter, target)),
+    );
+    if (keys.length === 0) continue;
+    state.warnings.push({ path: op.path, entryIdentity: op.to, warning: 'secretNotCopied', keys });
+  }
+}
+
+/**
+ * Where the plan moves a credential (`binding.ts`): a stored secret it keeps
+ * while changing its destination blocks the save until it is entered again,
+ * and an inherited one it stops LibreChat from sending is a warning. A
+ * renamed or copied MCP server is judged against the server it comes from.
+ */
+function findBindingChanges(state: PlanState, storedAfter: t.ConfigRecord): void {
+  const renamedIn = (record: string) =>
+    state.renames.filter(({ path }) => path === record).map(({ from, to }) => [to, from] as const);
+  const origins = new Map([
+    ...renamedIn('mcpServers'),
+    ...state.renameHints.map(({ previousName, name }) => [name, previousName] as const),
+  ]);
+  const input: t.CredentialBindingInput = {
+    stored: state.snapshot.stored,
+    storedAfter,
+    lower: state.snapshot.lower,
+    hidden: {
+      before: state.snapshot.tombstones,
+      after: tombstonesAfter(state, [...state.sets.keys()]),
+    },
+    origins,
+    endpointOrigins: new Map(renamedIn('endpoints.custom')),
+  };
+  state.issues.push(...findSecretReentryIssues(input, state.features));
+  state.warnings.push(...findRebindingWarnings(input, state.features));
 }
 
 /**
@@ -732,6 +1046,10 @@ export function planConfigChanges(
     tombstones: [],
     untombstones: [],
     entryOps: new Map(),
+    carries: [],
+    restates: [],
+    renames: [],
+    renameHints: [],
     skipped: [],
     issues: [],
     warnings: [],
@@ -739,19 +1057,26 @@ export function planConfigChanges(
     touchedEntries: new Map(),
   };
   collectOps(state, ops);
+  addRestatedEntries(state);
   resolveCollections(state);
+  resolveCarries(state);
   foldNestedSets(state);
   foldResets(state);
   dropNoopResets(state);
+  resolveServerRestates(state);
   state.effective += state.tombstones.length + state.untombstones.length;
   const storedAfter = pruneEmptyParents(state);
   validateSections(state, validateSets(state));
   findMergedBackKeys(state);
+  findBindingChanges(state, storedAfter);
+  findUncopiedCopies(state, storedAfter);
   return {
     sets: [...state.sets].map(([fieldPath, value]) => ({ fieldPath, value })),
     resets: state.resets,
     tombstones: state.tombstones,
     untombstones: state.untombstones,
+    renames: state.renames,
+    renameHints: state.renameHints,
     skipped: state.skipped,
     issues: state.issues,
     warnings: state.warnings,
@@ -761,17 +1086,87 @@ export function planConfigChanges(
   };
 }
 
+/** `carry` changes of one kind, from new entry path → the saved entry path it comes from. */
+function toCarries(entries: Readonly<Record<string, string>>, copy: boolean): t.ConfigChange[] {
+  return Object.entries(entries).flatMap(([toPath, fromPath]): t.ConfigChange[] => {
+    const dot = toPath.lastIndexOf('.');
+    const path = toPath.slice(0, Math.max(dot, 0));
+    if (dot <= 0 || !fromPath.startsWith(`${path}.`)) return [];
+    const from = fromPath.slice(path.length + 1);
+    const to = toPath.slice(dot + 1);
+    return [{ op: 'carry', path, from, to, ...(copy && { copy }) }];
+  });
+}
+
+/**
+ * The `carry` changes of the record entries renamed (`renames`) and
+ * duplicated (`copies`) this session, each keyed by its new entry path
+ * (`mcpServers.acme-docs`) and naming the saved entry it comes from.
+ */
+export function carryChanges(
+  renames: Readonly<Record<string, string>>,
+  copies: Readonly<Record<string, string>>,
+): t.ConfigChange[] {
+  return [...toCarries(renames, false), ...toCarries(copies, true)];
+}
+
+/** The `restate` changes of the inherited credentials restated this session. */
+export function restateChanges(
+  restates: Readonly<Record<string, t.CredentialRef>>,
+): t.ConfigChange[] {
+  return Object.values(restates).map(
+    ({ path, entry, secret }): t.ConfigChange => ({ op: 'restate', path, entry, secret }),
+  );
+}
+
+/** Entries a plan gives the secrets of the entry they come from, in the record at `path`. */
+export function carriedEntries(plan: t.WritePlan, path: string): Set<string> {
+  return new Set([
+    ...plan.renames.filter((rename) => rename.path === path).map((rename) => rename.to),
+    ...plan.renameHints.filter((hint) => hint.path === path).map((hint) => hint.name),
+  ]);
+}
+
+/** How many changes of a batch fall in each config section, in the order the sections first appear. */
+export function countSectionChanges(ops: t.ConfigBatchOp[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const { fieldPath } of ops) {
+    const section = getConfigSection(fieldPath);
+    counts.set(section, (counts.get(section) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * The sections holding more changes than one batch takes (`maxChangeOps`):
+ * a save never splits a section, so LibreChat can't take one of these.
+ */
+export function findOversizedSections(
+  counts: ReadonlyMap<string, number>,
+  limit: number,
+): t.ConfigIssue[] {
+  if (limit <= 0) return [];
+  return [...counts].flatMap(([section, count]): t.ConfigIssue[] => {
+    if (count <= limit) return [];
+    const params = { count, limit };
+    const message = describeIssueCode(TOO_MANY_CHANGES_CODE, params, '');
+    return [{ path: section, code: TOO_MANY_CHANGES_CODE, message, params }];
+  });
+}
+
 function toUnsetOp(fieldPath: string): t.ConfigBatchOp {
   return { op: 'unset', fieldPath };
 }
 
 /**
- * A plan as the changes of one `POST …/changes` batch: unhides, hides, sets,
- * then resets, one `unset` per path a hide or set does not already write (a
- * batch refuses two changes at one path). An unhide removes everything at and
- * under its path, so it goes first: after them, it would remove a set or hide
- * inside it (an MCP server shown again with its URL edited). The server
- * applies the changes in that order and validates the end state.
+ * A plan as the changes of one `POST …/changes` batch: unhides, hides,
+ * renames, sets, then resets, one `unset` per path a hide or set does not
+ * already write (a batch refuses two changes at one path). An unhide removes
+ * everything at and under its path, so it goes first: after them, it would
+ * remove a set or hide inside it (an MCP server shown again with its URL
+ * edited). A rename moves a stored entry, secrets included, before the sets
+ * write it under its new name. The server applies the changes in that order
+ * and validates the end state.
  */
 export function toBatchOps(plan: t.WritePlan): t.ConfigBatchOp[] {
   const written = new Set([...plan.tombstones, ...plan.sets.map(({ fieldPath }) => fieldPath)]);
@@ -781,35 +1176,86 @@ export function toBatchOps(plan: t.WritePlan): t.ConfigBatchOp[] {
   return [
     ...unhides.map(toUnsetOp),
     ...plan.tombstones.map((fieldPath): t.ConfigBatchOp => ({ op: 'tombstone', fieldPath })),
+    ...plan.renames.map(
+      ({ path, from, to }): t.ConfigBatchOp => ({ op: 'rename', fieldPath: path, from, to }),
+    ),
     ...plan.sets.map(({ fieldPath, value }): t.ConfigBatchOp => ({ op: 'set', fieldPath, value })),
     ...resets.map(toUnsetOp),
   ];
 }
 
-/** Keys the admin API redacts on read (secrets and their preview companions). */
-function isRedactedKey(key: string): boolean {
-  return isSecretKey(key) || key.endsWith('Preview');
+/** Whether `key` (inside `parent`) is what the admin API redacts on read: a secret's value, or its masked preview. */
+function isRedactedKey(parent: string | undefined, key: string, value: t.ConfigValue): boolean {
+  return (
+    (!isConfigRecord(value) && isStoredSecretKey(parent, key)) || isSecretPreviewKey(parent, key)
+  );
 }
 
-function stripSecrets(value: t.ConfigValue): t.ConfigValue {
-  if (Array.isArray(value)) return value.map(stripSecrets);
+/** A stored value without its secrets and their masked previews (`key`: where it is stored); an object left empty reads as absent. */
+function stripSecrets(value: t.ConfigValue, key?: string): t.ConfigValue {
+  if (Array.isArray(value)) return value.map((item) => stripSecrets(item));
   if (!isConfigRecord(value)) return value;
   const result: t.ConfigRecord = {};
-  for (const [key, child] of Object.entries(value)) {
-    if (!isRedactedKey(key)) result[key] = stripSecrets(child);
+  for (const [childKey, child] of Object.entries(value)) {
+    if (!isRedactedKey(key, childKey, child)) result[childKey] = stripSecrets(child, childKey);
   }
   return Object.keys(result).length === 0 ? undefined : result;
+}
+
+/** `key` inside the relative path `prefix` (the value itself when empty). */
+function childPath(prefix: string, key: string): string {
+  return prefix ? `${prefix}.${key}` : key;
+}
+
+/** Where (relative) a stored value holds a secret: its value or the masked preview a redacted read keeps of it. */
+function heldSecrets(value: t.ConfigValue, prefix = '', key?: string): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => heldSecrets(item, childPath(prefix, String(index))));
+  }
+  if (!isConfigRecord(value)) return [];
+  return Object.entries(value).flatMap(([childKey, child]) => {
+    const at = childPath(prefix, secretKeyForPreviewKey(childKey) ?? childKey);
+    if (isRedactedKey(key, childKey, child)) return typeof child === 'string' && child ? [at] : [];
+    return heldSecrets(child, childPath(prefix, childKey), childKey);
+  });
+}
+
+/**
+ * Whether `stored` (what LibreChat stores, as its redacted read returns it)
+ * holds what the plan stores at `path` (`intended`): the same settings, and
+ * every secret the plan stores there, read from its value or its masked
+ * preview. A secret LibreChat keeps that the write leaves out (a stored key
+ * of an entry the write doesn't touch) is not the write's to check.
+ */
+function storesWrite(intended: t.ConfigRecord, stored: t.ConfigRecord, path: string): boolean {
+  const value = getValueAtPath(intended, path);
+  if (!isConfigRecord(value) && !Array.isArray(value) && isSecretPath(path)) {
+    return !holdsSecretAt(intended, path) || holdsSecretAt(stored, path);
+  }
+  const key = path.slice(path.lastIndexOf('.') + 1);
+  const actual = getValueAtPath(stored, path);
+  if (!isConfigValueEqual(stripSecrets(value, key), stripSecrets(actual, key))) return false;
+  return heldSecrets(value, '', key).every((secret) => holdsSecretAt(actual, secret));
+}
+
+/** Whether `stored` still holds something at `path`: a value, or for a secret its masked preview. */
+function holdsAt(stored: t.ConfigRecord, path: string): boolean {
+  const value = getValueAtPath(stored, path);
+  if (isConfigRecord(value) || !isSecretPath(path)) return value !== undefined;
+  return holdsSecretAt(stored, path);
 }
 
 /**
  * Leaf paths (relative) and values of a value; arrays are leaves, and so is an
  * object with a dotted key, which no path can split (`hasDottedKey`); secrets
- * are skipped.
+ * and their masked previews are skipped (`key`: where `value` is stored).
  */
-function leavesOf(value: t.ConfigValue, prefix = ''): Array<[string, t.ConfigValue]> {
+function leavesOf(value: t.ConfigValue, prefix = '', key?: string): Array<[string, t.ConfigValue]> {
   if (!isConfigRecord(value) || hasDottedKey(value)) return [[prefix, value]];
-  return Object.entries(value).flatMap(([key, child]) =>
-    isRedactedKey(key) ? [] : leavesOf(child, prefix ? `${prefix}.${key}` : key),
+  return Object.entries(value).flatMap(([childKey, child]) =>
+    isRedactedKey(key, childKey, child)
+      ? []
+      : leavesOf(child, prefix ? `${prefix}.${childKey}` : childKey, childKey),
   );
 }
 
@@ -824,7 +1270,7 @@ function lacksEffect(
   snapshot: t.WriteSnapshot,
   effective: t.ConfigRecord,
 ): boolean {
-  return leavesOf(value).some(([rest, leaf]) => {
+  return leavesOf(value, '', path.slice(path.lastIndexOf('.') + 1)).some(([rest, leaf]) => {
     const leafPath = joinPath(path, rest);
     const actual = getValueAtPath(effective, leafPath);
     const lowerLeaf = getValueAtPath(snapshot.lower, leafPath);
@@ -873,14 +1319,11 @@ export function verifyWrite(
     result.push({ fieldPath, reason });
   };
   for (const { fieldPath, value } of plan.sets) {
-    if (isRedactedKey(fieldPath.slice(fieldPath.lastIndexOf('.') + 1))) continue;
-    const intended = stripSecrets(getValueAtPath(plan.storedAfter, fieldPath));
-    const stored = stripSecrets(getValueAtPath(storedActual, fieldPath));
-    if (!isConfigValueEqual(intended, stored)) {
+    if (!storesWrite(plan.storedAfter, storedActual, fieldPath)) {
       flag(fieldPath, 'notStored');
       continue;
     }
-    if (!effective) continue;
+    if (!effective || (!isConfigRecord(value) && isSecretPath(fieldPath))) continue;
     const collection = getKeyedCollection(fieldPath);
     if (collection && Array.isArray(value)) {
       if (collection.merge === 'byKey') {
@@ -893,7 +1336,7 @@ export function verifyWrite(
     if (lacksEffect(fieldPath, value, snapshot, effective)) flag(fieldPath, 'notApplied');
   }
   for (const path of plan.resets) {
-    if (getValueAtPath(storedActual, path) !== undefined) flag(path, 'notStored');
+    if (holdsAt(storedActual, path)) flag(path, 'notStored');
   }
   for (const { fieldPath, reason } of mergedBackChanges(plan.warnings, snapshot)) {
     flag(fieldPath, reason);

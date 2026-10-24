@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+  isSecretPath,
+  holdsSecretAt,
+  isSecretPreviewPath,
   toSecretPreviewKey,
   getSecretPreviewValue,
   secretPathForPreviewPath,
@@ -10,6 +13,48 @@ import {
   MASKED_SECRET,
 } from './secrets';
 import { createField } from '@/test/fixtures';
+
+describe('isSecretPath', () => {
+  it('marks secret keys, and the key of a secret holder', () => {
+    expect(isSecretPath('endpoints.custom.0.apiKey')).toBe(true);
+    expect(isSecretPath('mcpServers.x.apiKey.key')).toBe(true);
+    expect(isSecretPath('mcpServers.x.oauth.client_secret')).toBe(true);
+    expect(isSecretPath('webSearch.tavilyApiKey')).toBe(true);
+    expect(isSecretPath('langfuse.secretKey')).toBe(true);
+    expect(isSecretPath('apiKey')).toBe(true);
+  });
+
+  it('leaves out the settings beside a secret and a key outside a secret holder', () => {
+    expect(isSecretPath('mcpServers.x.apiKey.source')).toBe(false);
+    expect(isSecretPath('mcpServers.x.headers.key')).toBe(false);
+    expect(isSecretPath('mcpServers.x.apiKey.keyPreview')).toBe(false);
+    expect(isSecretPath('key')).toBe(false);
+  });
+});
+
+describe('isSecretPreviewPath', () => {
+  it("marks a secret's masked preview, by the secret it stands beside", () => {
+    expect(isSecretPreviewPath('mcpServers.x.apiKey.keyPreview')).toBe(true);
+    expect(isSecretPreviewPath('mcpServers.x.oauth.client_secretPreview')).toBe(true);
+    expect(isSecretPreviewPath('webSearch.tavilyApiKeyPreview')).toBe(true);
+    expect(isSecretPreviewPath('mcpServers.x.headers.keyPreview')).toBe(false);
+    expect(isSecretPreviewPath('interface.filePreview')).toBe(false);
+  });
+});
+
+describe('holdsSecretAt', () => {
+  it('reads a secret as stored from its value or its masked preview', () => {
+    const stored = {
+      a: { apiKey: { keyPreview: '...3333' } },
+      b: { apiKey: { key: '${ACME_KEY}' } },
+      c: { apiKey: { keyPreview: '' } },
+    };
+    expect(holdsSecretAt(stored, 'a.apiKey.key')).toBe(true);
+    expect(holdsSecretAt(stored, 'b.apiKey.key')).toBe(true);
+    expect(holdsSecretAt(stored, 'c.apiKey.key')).toBe(false);
+    expect(holdsSecretAt(stored, 'd.apiKey.key')).toBe(false);
+  });
+});
 
 describe('toSecretPreviewKey', () => {
   it('capitalizes the key behind a display prefix', () => {

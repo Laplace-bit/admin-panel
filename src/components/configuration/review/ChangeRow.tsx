@@ -3,6 +3,7 @@ import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { diffList, formatReviewValue, isListChange, isShowableSecret } from './format';
+import { describeOverrideNotes } from '../values';
 import { cn, isConfigRecord } from '@/utils';
 import { useLocalize } from '@/hooks';
 
@@ -68,6 +69,10 @@ const WARNING_KEYS: Partial<Record<t.ChangeWarning, string>> = {
   shadowed: 'com_config_review_warning_shadowed',
   shadowedBlock: 'com_config_review_warning_shadowed_block',
   shadowedPair: 'com_config_review_warning_shadowed_pair',
+  secretRebinding: 'com_config_review_warning_secret_rebinding',
+  secretRebindingEnter: 'com_config_review_warning_secret_rebinding_enter',
+  secretRestated: 'com_config_review_warning_secret_restated',
+  secretNotCopied: 'com_config_review_warning_secret_not_copied',
 };
 
 function ActionButton({
@@ -190,12 +195,23 @@ function SecretChange({ item }: { item: t.ChangeSummaryItem }) {
     : localize(
         before == null ? 'com_config_review_secret_set' : 'com_config_review_secret_replaced',
       );
+  /** A stored key replaced by a value the review may show: the stored one reads struck through. */
+  const replacesStored =
+    before != null && !isShowableSecret(before) && isShowableSecret(item.after);
   return (
     <span className="flex flex-wrap items-center gap-1">
       {before != null && isShowableSecret(before) && (
         <>
           <Value muted strike>
             {format(before)}
+          </Value>
+          <Arrow />
+        </>
+      )}
+      {replacesStored && (
+        <>
+          <Value muted strike>
+            {localize('com_config_review_secret_stored')}
           </Value>
           <Arrow />
         </>
@@ -330,6 +346,11 @@ function Warning({ children }: { children: ReactNode }) {
 
 /** Warnings worded for the target: turning on required terms reads differently in a profile. */
 function warningKey(warning: t.ChangeWarning, isScope: boolean): string | undefined {
+  if (warning === 'hideDeletesOwn') {
+    return isScope
+      ? 'com_config_review_warning_hide_deletes_own_scope'
+      : 'com_config_review_warning_hide_deletes_own';
+  }
   if (warning === 'requireTerms') {
     return isScope
       ? 'com_config_terms_acceptance_import_scope'
@@ -345,12 +366,16 @@ function RowWarnings({ item, isScope }: { item: t.ChangeSummaryItem; isScope: bo
   const keys = (item.warnings ?? [])
     .map((warning) => warningKey(warning, isScope))
     .filter((key): key is string => key != null);
+  const profileNotes = describeOverrideNotes(item.overrideNotes ?? [], localize);
   const drift = item.drift;
-  if (keys.length === 0 && !drift) return null;
+  if (keys.length === 0 && profileNotes.length === 0 && !drift) return null;
   return (
     <>
       {keys.map((key) => (
         <Warning key={key}>{localize(key)}</Warning>
+      ))}
+      {profileNotes.map((note) => (
+        <Warning key={note}>{note}</Warning>
       ))}
       {drift && (
         <Warning>
@@ -377,6 +402,24 @@ function RowIssues({ issues }: { issues?: t.ReviewIssue[] }) {
       ))}
     </ul>
   );
+}
+
+/** A detail under a row: a leaf of an added entry, or a part the change deletes with it. */
+function DetailValue({ detail }: t.ReviewDetailValueProps) {
+  const localize = useLocalize();
+  const { item } = detail;
+  if (item.kind === 'removed') {
+    if (item.secret) return <>{localize('com_config_review_secret_removed')}</>;
+    return (
+      <span className="line-through decoration-(--cui-color-text-muted)">
+        {formatReviewValue(item.before, localize, detail.valueLabels)}
+      </span>
+    );
+  }
+  if (item.secret && !isShowableSecret(item.after)) {
+    return <>{localize('com_config_review_secret_set')}</>;
+  }
+  return <>{formatReviewValue(item.after, localize, detail.valueLabels)}</>;
 }
 
 /** One change of the review: its label, BEFORE → AFTER, warnings, problems, and Revert / Go to field. */
@@ -446,9 +489,7 @@ export function ChangeRow({
                 <div key={detail.key} className="contents">
                   <dt className="text-(--cui-color-text-muted)">{detail.label}</dt>
                   <dd className="m-0 min-w-0 font-mono wrap-anywhere text-(--cui-color-text-default)">
-                    {detail.item.secret && !isShowableSecret(detail.item.after)
-                      ? localize('com_config_review_secret_set')
-                      : formatReviewValue(detail.item.after, localize, detail.valueLabels)}
+                    <DetailValue detail={detail} />
                   </dd>
                 </div>
               ))}

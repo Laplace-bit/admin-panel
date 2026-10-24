@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createToast } from '@clickhouse/click-ui';
-import { configSchema } from 'librechat-data-provider';
+import { configSchema, PrincipalType } from 'librechat-data-provider';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import type * as t from '@/types';
 import { holdErrorToasts, notifyError } from '@/utils';
@@ -224,5 +224,185 @@ describe('error toasts', () => {
     expect(toast).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Validation failed', description: 'a.b: bad\nc.d: worse' }),
     );
+  });
+});
+
+describe('ChangeReview — what a change deletes with it', () => {
+  it("lists under a hide what it deletes of the profile's own settings, never a stored key", () => {
+    const hidden: t.ChangeSummaryItem = {
+      path: 'mcpServers.salesforce',
+      kind: 'hidden',
+      before: undefined,
+      after: undefined,
+      warnings: ['hideDeletesOwn'],
+      dropped: [
+        {
+          path: 'mcpServers.salesforce.title',
+          kind: 'removed',
+          before: 'SF Users',
+          after: undefined,
+        },
+        {
+          path: 'mcpServers.salesforce.oauth.client_secret',
+          kind: 'removed',
+          before: undefined,
+          after: undefined,
+          secret: true,
+        },
+      ],
+    };
+    const model = buildReviewModel([hidden], { localize, fields: tree, tree: {} });
+    render(<ChangeReview review={{ ...reviewFor([]), model, scope: undefined }} />);
+    const dialog = screen.getByRole('dialog');
+    expect(
+      within(dialog).getByText(
+        "Hiding it also deletes what Base sets for it, listed below. Unhiding it later won't bring that back.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('SF Users')).toHaveClass('line-through');
+    expect(within(dialog).getByText('OAuth › Client secret')).toBeInTheDocument();
+    expect(within(dialog).getByText('Stored key removed')).toBeInTheDocument();
+  });
+
+  it('reads a stored key replaced by a shown reference as the stored key struck through', () => {
+    const replaced: t.ChangeSummaryItem = {
+      path: 'endpoints.custom.0.apiKey',
+      kind: 'changed',
+      before: '********',
+      after: '${KIMI}',
+      secret: true,
+      collectionPath: 'endpoints.custom',
+      entryPath: 'endpoints.custom.0',
+      entryIdentity: 'Moonshot',
+    };
+    const model = buildReviewModel([replaced], { localize, fields: tree, tree: {} });
+    render(<ChangeReview review={{ ...reviewFor([]), model, scope: undefined }} />);
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Stored key')).toHaveClass('line-through');
+    expect(within(dialog).getByText('${KIMI}')).toBeInTheDocument();
+    expect(within(dialog).queryByText('********')).toBeNull();
+  });
+  it('warns on a rename and a removal in Base about the profile overrides they leave behind', () => {
+    const user: t.EntryOverride = {
+      scope: {
+        principalType: PrincipalType.ROLE,
+        principalId: 'USER',
+        name: 'USER',
+        priority: 10,
+        isActive: true,
+      },
+      overrides: true,
+      secrets: ['apiKey.key'],
+      settings: [],
+      hidden: false,
+    };
+    const renamed: t.ChangeSummaryItem = {
+      path: 'mcpServers.acme-2',
+      kind: 'renamed',
+      before: undefined,
+      after: { type: 'streamable-http', url: 'https://mcp.acme.dev/mcp' },
+      collectionPath: 'mcpServers',
+      entryPath: 'mcpServers.acme-2',
+      entryIdentity: 'acme-2',
+      previousIdentity: 'acme-kb',
+      overrideNotes: [
+        {
+          change: { kind: 'renamed', name: 'acme-kb', next: 'acme-2', taken: false },
+          overrides: [user],
+        },
+      ],
+    };
+    const removed: t.ChangeSummaryItem = {
+      path: 'mcpServers.oauthy',
+      kind: 'removed',
+      before: { type: 'streamable-http', url: 'https://mcp.oauthy.dev/mcp' },
+      after: undefined,
+      collectionPath: 'mcpServers',
+      entryPath: 'mcpServers.oauthy',
+      entryIdentity: 'oauthy',
+      overrideNotes: [
+        { change: { kind: 'removed', name: 'oauthy' }, overrides: [{ ...user, secrets: [] }] },
+      ],
+    };
+    const model = buildReviewModel([renamed, removed], { localize, fields: tree, tree: {} });
+    render(<ChangeReview review={{ ...reviewFor([]), model, scope: undefined }} />);
+    const dialog = screen.getByRole('dialog');
+    const rows = [...dialog.querySelectorAll<HTMLElement>('[data-review-path]')];
+    const renamedRow = rows.find((row) => row.dataset.reviewPath === 'mcpServers.acme-2');
+    const removedRow = rows.find((row) => row.dataset.reviewPath === 'mcpServers.oauthy');
+    if (!renamedRow || !removedRow) throw new Error('missing rows');
+    expect(
+      within(renamedRow).getByText(
+        'Role: USER overrides "acme-kb". The override stays under that name, so its members get "acme-2" without it, plus a leftover "acme-kb" until it is removed there.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(renamedRow).getByText(
+        'Role: USER stores its own key for "acme-kb". The key stays under that name too, so its members get "acme-2" with Base\'s credentials instead.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(removedRow).getByText(
+        'Role: USER overrides "oauthy". The override stays, so its members get a leftover "oauthy" until it is removed there.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(removedRow).queryByText(/stores its own key/)).toBeNull();
+  });
+
+  it("warns on a moved setting's row about the profile keys it stops, and on a rename about the override it takes", () => {
+    const user: t.EntryOverride = {
+      scope: {
+        principalType: PrincipalType.ROLE,
+        principalId: 'USER',
+        name: 'USER',
+        priority: 10,
+        isActive: true,
+      },
+      overrides: true,
+      secrets: ['apiKey.key'],
+      settings: [],
+      hidden: false,
+    };
+    const url: t.ChangeSummaryItem = {
+      path: 'mcpServers.acme-kb.url',
+      kind: 'changed',
+      before: 'https://mcp.acme.dev/mcp',
+      after: 'https://mcp2.acme.dev/mcp',
+      collectionPath: 'mcpServers',
+      entryPath: 'mcpServers.acme-kb',
+      entryIdentity: 'acme-kb',
+      overrideNotes: [{ change: { kind: 'moved', name: 'acme-kb' }, overrides: [user] }],
+    };
+    const renamed: t.ChangeSummaryItem = {
+      path: 'mcpServers.ghost',
+      kind: 'renamed',
+      before: undefined,
+      after: { type: 'streamable-http', url: 'https://mcp.oauthy.dev/mcp' },
+      collectionPath: 'mcpServers',
+      entryPath: 'mcpServers.ghost',
+      entryIdentity: 'ghost',
+      previousIdentity: 'oauthy',
+      overrideNotes: [
+        { change: { kind: 'took', name: 'ghost', sendsKeys: false }, overrides: [user] },
+      ],
+    };
+    const model = buildReviewModel([url, renamed], { localize, fields: tree, tree: {} });
+    render(<ChangeReview review={{ ...reviewFor([]), model, scope: undefined }} />);
+    const rows = [
+      ...screen.getByRole('dialog').querySelectorAll<HTMLElement>('[data-review-path]'),
+    ];
+    const urlRow = rows.find((row) => row.dataset.reviewPath === 'mcpServers.acme-kb.url');
+    const renamedRow = rows.find((row) => row.dataset.reviewPath === 'mcpServers.ghost');
+    if (!urlRow || !renamedRow) throw new Error('missing rows');
+    expect(
+      within(urlRow).getByText(
+        'Role: USER stores its own key for "acme-kb", which LibreChat sends only where it was entered. This save changes where "acme-kb" sends it, so its members get "acme-kb" without that key until it is entered again there.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(renamedRow).getByText(
+        'Role: USER still overrides "ghost". The override applies to this one once it is saved under that name, until it is removed there.',
+      ),
+    ).toBeInTheDocument();
   });
 });

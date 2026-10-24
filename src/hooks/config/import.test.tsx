@@ -289,6 +289,82 @@ describe('useImportPreview', () => {
     expect(result.current.skipped.map((row) => row.path)).toEqual(['endpoints.custom.0.apiKey']);
   });
 
+  it('never writes back a key LibreChat reads back as the mask (yamlSecretPreview), naming each', () => {
+    const vault = {
+      type: 'streamable-http',
+      url: 'https://mcp.vault.dev/mcp',
+      apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '********' },
+    };
+    const masked: t.ConfigRecord = {
+      ocr: { baseURL: 'https://ocr.example.com', apiKeyPreview: '********' },
+      mcpServers: { vault },
+      endpoints: { custom: [moonshot, foundry, { ...local, apiKeyPreview: '********' }] },
+    };
+    const baseData: t.BaseConfigData = { ...base, config: masked, yamlConfig: masked };
+    const { result } = renderPreview(
+      {
+        ocr: { apiKey: 'sk-ocr-literal' },
+        mcpServers: { vault: { apiKey: { key: 'sk-vault-literal' } } },
+        endpoints: { custom: [{ ...local, apiKey: 'ollama' }] },
+      },
+      { type: 'base' },
+      { features: { yamlSecretPreview: true }, baseData },
+    );
+    const all = new Set(['ocr.apiKey', 'mcpServers.vault.apiKey.key', 'endpoints.custom']);
+    expect(result.current.entriesFor(all)).toEqual([]);
+    expect(result.current.skipped.map((row) => [row.path, row.reason])).toEqual([
+      [
+        'ocr.apiKey',
+        'LibreChat hides the librechat.yaml key here, so the import cannot tell whether this one differs; replace it on the page instead',
+      ],
+      [
+        'mcpServers.vault.apiKey.key',
+        'LibreChat hides the librechat.yaml key here, so the import cannot tell whether this one differs; replace it on the page instead',
+      ],
+      [
+        'endpoints.custom.0.apiKey',
+        'LibreChat hides the librechat.yaml key here, so the import cannot tell whether this one differs; replace it on the page instead',
+      ],
+    ]);
+    expect(
+      result.current.groups.flatMap((group) => group.rows.map((row) => row.fieldPath)),
+    ).toEqual(['endpoints.custom']);
+  });
+
+  it('never writes the mask itself as a key, and imports a real one over a stored key', () => {
+    const stored: t.ConfigRecord = {
+      ...base.config,
+      ocr: { baseURL: 'https://ocr.example.com', apiKeyPreview: '...1234' },
+    };
+    const baseData: t.BaseConfigData = { ...base, config: stored };
+    const masked = renderPreview({ ocr: { apiKey: '********' } }, { type: 'base' }, { baseData });
+    expect(masked.result.current.entriesFor(new Set(['ocr.apiKey']))).toEqual([]);
+    expect(masked.result.current.skipped.map((row) => row.reason)).toEqual([
+      'is the mask LibreChat shows for a hidden key, not a key; enter the key itself on the page',
+    ]);
+    const real = renderPreview({ ocr: { apiKey: 'sk-ocr-new' } }, { type: 'base' }, { baseData });
+    expect(real.result.current.entriesFor(new Set(['ocr.apiKey']))).toEqual([
+      { fieldPath: 'ocr.apiKey', value: 'sk-ocr-new' },
+    ]);
+  });
+
+  it('imports a ${VAR} reference over a key librechat.yaml hides: it is never that key', () => {
+    const masked: t.ConfigRecord = {
+      ...base.config,
+      ocr: { baseURL: 'https://ocr.example.com', apiKeyPreview: '********' },
+    };
+    const baseData: t.BaseConfigData = { ...base, config: masked };
+    const { result } = renderPreview(
+      { ocr: { apiKey: '${OCR_KEY}' } },
+      { type: 'base' },
+      { features: { yamlSecretPreview: true }, baseData },
+    );
+    expect(result.current.entriesFor(new Set(['ocr.apiKey']))).toEqual([
+      { fieldPath: 'ocr.apiKey', value: '${OCR_KEY}' },
+    ]);
+    expect(result.current.skipped).toEqual([]);
+  });
+
   it('labels a value librechat.yaml sets by librechat.yaml, not as a default', () => {
     const { result } = renderPreview({ interface: { presets: false } });
     const [row] = result.current.groups[0].rows;

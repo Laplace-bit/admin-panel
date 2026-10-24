@@ -1,9 +1,9 @@
 import { useId } from 'react';
 import type * as t from '@/types';
+import { isEncryptedCredential, SECRET_PREVIEW_MASK } from '@/constants';
 import { SecretField, SecretInput } from '../../fields/SecretField';
 import { FieldControl } from '../../renderer/FieldControl';
 import { useLocalize, useConfigFeatures } from '@/hooks';
-import { isEncryptedCredential } from '@/constants';
 import { DecorativeIcon } from '@/components/shared';
 import { TextField } from '../../fields/TextField';
 import { credentialState } from './state';
@@ -54,7 +54,15 @@ function statusLine(
             text: localize('com_config_features_cred_plaintext', { ref: envRef(credential) }),
           };
     case 'stored':
-      return { tone: 'ok', icon: 'lock', text: localize('com_config_features_cred_stored') };
+      return {
+        tone: 'ok',
+        icon: 'lock',
+        text: localize(
+          state.preview === SECRET_PREVIEW_MASK
+            ? 'com_config_features_cred_hidden'
+            : 'com_config_features_cred_stored',
+        ),
+      };
     case 'env':
       return {
         tone: 'ok',
@@ -126,6 +134,7 @@ export function CredentialControl({
           id={props.id}
           value={text}
           maskedValue={props.secretPreview}
+          maskLabel={props.secretMaskLabel}
           onChange={props.onChange}
           onCancel={props.onCancelSecret}
           onRemove={props.fieldDefault.hasOwnValue ? props.onClear : undefined}

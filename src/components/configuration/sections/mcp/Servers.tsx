@@ -2,24 +2,37 @@ import { Button } from '@clickhouse/click-ui';
 import { isProcessMCPServerConfig } from 'librechat-data-provider';
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type * as t from '@/types';
-import { getValueAtPath, isConfigRecord, isRowVisible, asConfigRecord } from '@/utils';
+import {
+  isRowVisible,
+  getSecretCarry,
+  asConfigRecord,
+  getValueAtPath,
+  isConfigRecord,
+  setValueAtPath,
+  removeValueAtPath,
+  isCarriableRename,
+  findMovedServerCredentials,
+} from '@/utils';
+import { useLocalize, useValuesScope, useConfigFeatures, useEntryOverrideNotes } from '@/hooks';
 import { previewedSecret, storedSecrets, usesSecret } from './validation';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
-import { useLocalize, useValuesScope, useConfigFeatures } from '@/hooks';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
 import { McpDeletedRow, McpHiddenRow, McpServerCard } from './Card';
+import { describeOverrideNotes, sourceLabel } from '../../values';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
+import { RestatesContext } from '@/contexts/RestatesContext';
 import { INSPECTOR_DERIVED, transportOf } from './transport';
+import { RenamesContext } from '@/contexts/RenamesContext';
 import { copyName, serverNameProblem } from './names';
 import { buildServerList, leafEntries } from './list';
 import { CreateMcpServerDialog } from './Create';
-import { sourceLabel } from '../../values';
 import { McpServerEditor } from './Editor';
 import { labelForPath } from '../../meta';
 import { McpNote } from './Note';
 
 const EMPTY_RECORD: t.ConfigRecord = Object.freeze({}) as t.ConfigRecord;
 const EMPTY_KEYS: ReadonlySet<string> = new Set();
+const NO_MOVED_CREDENTIALS: ReadonlyMap<string, ReadonlyMap<string, t.MovedCredential>> = new Map();
 
 /** A server's source badge, by edit target and whether the layer beneath defines it. */
 const SOURCES: Readonly<
@@ -49,14 +62,33 @@ function countLeaves(value: t.ConfigValue): number {
   return isConfigRecord(value) ? leafEntries(value).length : 0;
 }
 
-/** `record` without the servers that no longer have pending edits (the same object when none went). */
-function pendingOnly<T>(
-  record: Readonly<Record<string, T>>,
+/**
+ * The servers a record of renamed or duplicated entries (`mcpServers.b` →
+ * `mcpServers.a`) says each pending server comes from, by key, where
+ * `isSource` accepts the server it names.
+ */
+function sourcesByServer(
+  record: Readonly<Record<string, string>>,
+  prefix: string,
   pending: ReadonlySet<string>,
-): Readonly<Record<string, T>> {
-  const entries = Object.entries(record);
-  if (entries.every(([key]) => pending.has(key))) return record;
-  return Object.fromEntries(entries.filter(([key]) => pending.has(key)));
+  isSource: (key: string) => boolean,
+): Readonly<Record<string, string>> {
+  const sources: Record<string, string> = {};
+  for (const [to, from] of Object.entries(record)) {
+    if (!to.startsWith(prefix) || !from.startsWith(prefix)) continue;
+    const key = to.slice(prefix.length);
+    const source = from.slice(prefix.length);
+    if (pending.has(key) && isSource(source)) sources[key] = source;
+  }
+  return sources;
+}
+
+/** The note of a renamed server: saved as a new one, or with the stored secrets the target (Base or the profile) moves. */
+function renamedNoteKey(carried: boolean, inScope: boolean): string {
+  if (!carried) return 'com_config_mcp_renamed_from';
+  return inScope
+    ? 'com_config_mcp_renamed_from_carried_scope'
+    : 'com_config_mcp_renamed_from_carried';
 }
 
 /** Keys of the servers a set of tombstone paths hides (`mcpServers.github` → `github`). */
@@ -97,10 +129,15 @@ export function McpServersRenderer({
   editSessionId,
 }: t.FieldRendererProps) {
   const localize = useLocalize();
-  const { dottedKeys } = useConfigFeatures();
+  const features = useConfigFeatures();
+  const { dottedKeys, yamlMcpHide } = features;
+  const carry = getSecretCarry(features);
   const scope = useValuesScope();
+  const overrideNotes = useEntryOverrideNotes(path);
   const rowFilter = useContext(RowFilterContext);
   const valuesData = useContext(ConfigValuesContext);
+  const { restates } = useContext(RestatesContext);
+  const { renames, copies } = useContext(RenamesContext);
   const layers = valuesData?.layers ?? null;
   const inScope = Boolean(isEditingScope) && layers?.scope != null;
   const prefix = `${path}.`;
@@ -133,11 +170,8 @@ export function McpServersRenderer({
   const [createOpen, setCreateOpen] = useState(false);
   const [justAdded, setJustAdded] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
-  const [renamedFrom, setRenamedFrom] = useState<Readonly<Record<string, string>>>({});
   const [unlocked, setUnlocked] = useState<ReadonlySet<string>>(EMPTY_KEYS);
   const [lastDeleted, setLastDeleted] = useState<string | null>(null);
-  /** Duplicates and renamed servers whose source stored secrets the copy left out: they must be entered again. */
-  const [reenter, setReenter] = useState<Readonly<Record<string, readonly string[]>>>({});
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [focusHiddenKey, setFocusHiddenKey] = useState<string | null>(null);
   const stash = useRef(new Map<string, Array<[string, t.ConfigValue]>>());
@@ -178,10 +212,8 @@ export function McpServersRenderer({
   /** A new edit session (Save, Discard) starts clean: no Undo of an earlier session's deletion survives. */
   useEffect(() => {
     setRenaming(null);
-    setRenamedFrom({});
     setUnlocked(EMPTY_KEYS);
     setJustAdded(null);
-    setReenter({});
     setLastDeleted(null);
     stash.current.clear();
     renameStash.current.clear();
@@ -203,16 +235,45 @@ export function McpServersRenderer({
     return keys;
   }, [edits, prefix]);
 
+  /** The saved server each renamed server is, from the pending renames (so Discard → Undo keeps it). */
+  const renamedFrom = useMemo(
+    () => sourcesByServer(renames, prefix, pendingByServer, (key) => Object.hasOwn(saved, key)),
+    [renames, prefix, pendingByServer, saved],
+  );
+  /** The server each duplicate copies, from the pending copies (so Discard → Undo keeps it). */
+  const copiedFrom = useMemo(
+    () => sourcesByServer(copies, prefix, pendingByServer, () => true),
+    [copies, prefix, pendingByServer],
+  );
+
   /**
    * A renamed or duplicated server whose edits went from outside the card (a
-   * change review Revert) is gone: so is what it was renamed from and which
-   * secrets it had to re-enter, so a server created later under its name
-   * isn't taken for it.
+   * change review Revert) is gone: so is the record of what it comes from,
+   * so a server created later under its name isn't taken for it.
    */
   useEffect(() => {
-    setRenamedFrom((prev) => pendingOnly(prev, pendingByServer));
-    setReenter((prev) => pendingOnly(prev, pendingByServer));
-  }, [pendingByServer]);
+    for (const to of [...Object.keys(renames), ...Object.keys(copies)]) {
+      if (to.startsWith(prefix) && !pendingByServer.has(to.slice(prefix.length))) {
+        onRenameEntry?.(to, null);
+      }
+    }
+  }, [pendingByServer, renames, copies, prefix, onRenameEntry]);
+
+  /**
+   * Inherited secrets LibreChat no longer sends for the target
+   * (`secretRebinding`): its overrides, pending edits included, move them
+   * somewhere new without entering them. By server, then secret.
+   */
+  const movedByServer = useMemo(() => {
+    if (!features.secretRebinding) return NO_MOVED_CREDENTIALS;
+    let own: t.ConfigRecord = stored;
+    for (const [editPath, value] of Object.entries(edits)) {
+      if (!editPath.startsWith(prefix)) continue;
+      const rest = editPath.slice(prefix.length);
+      own = value === undefined ? removeValueAtPath(own, rest) : setValueAtPath(own, rest, value);
+    }
+    return findMovedServerCredentials(own, lower, restates);
+  }, [features.secretRebinding, stored, edits, prefix, lower, restates]);
 
   const visibility = valuesData?.visibilityEdits ?? EMPTY_RECORD;
   /** Servers the profile hides (true while the hide is unsaved), and hidden ones it is about to show again. */
@@ -249,9 +310,28 @@ export function McpServersRenderer({
     if (getValueAtPath(saved[key], leaf) !== undefined) onChange(fullPath, undefined);
   };
 
+  /**
+   * Drops the pending removal of a setting the saved server stores, so it is
+   * kept as saved, stored secrets included. False when nothing was removed.
+   */
+  const restoreSaved = (key: string, leaf: string): boolean => {
+    const fullPath = `${prefix}${key}.${leaf}`;
+    if (!Object.hasOwn(edits, fullPath) || edits[fullPath] !== undefined) return false;
+    if (getValueAtPath(saved[key], leaf) === undefined) return false;
+    pendingUnder(fullPath).forEach(discard);
+    return true;
+  };
+
+  /**
+   * Applies a transport or authentication switch. Switching back to a
+   * method whose settings the saved server stores (an API key or OAuth after
+   * None) drops their pending removal, so they are kept as saved.
+   */
   const applyPlan = (key: string, plan: t.McpSwitchPlan) => {
     plan.prune.forEach((leaf) => removeLeafKey(key, leaf));
+    const restored = new Set((plan.restore ?? []).filter((leaf) => restoreSaved(key, leaf)));
     for (const [leaf, value] of plan.set) {
+      if (restored.has(leaf)) continue;
       if (isConfigRecord(value)) {
         for (const [segments, child] of leafEntries(value)) {
           onChange(`${prefix}${key}.${leaf}.${segments.join('.')}`, child);
@@ -300,11 +380,11 @@ export function McpServersRenderer({
       renameStash.current.set(original, key);
       pendingUnder(`${prefix}${key}`).forEach(discard);
       onRenameEntry?.(`${prefix}${key}`, null);
-      setRenamedFrom(({ [key]: _renamed, ...rest }) => rest);
       setLastDeleted(original);
       return;
     }
     if (!Object.hasOwn(saved, key)) setFocusKey(neighbourOf(key) ?? '');
+    if (copiedFrom[key] !== undefined) onRenameEntry?.(`${prefix}${key}`, null);
     removeServer(key, true);
     setLastDeleted(key);
   };
@@ -315,10 +395,7 @@ export function McpServersRenderer({
     stash.current.delete(key);
     const renamed = renameStash.current.get(key);
     renameStash.current.delete(key);
-    if (renamed !== undefined) {
-      onRenameEntry?.(`${prefix}${key}`, `${prefix}${renamed}`);
-      setRenamedFrom((prev) => ({ ...prev, [renamed]: key }));
-    }
+    if (renamed !== undefined) onRenameEntry?.(`${prefix}${key}`, `${prefix}${renamed}`);
     setLastDeleted(null);
     setFocusKey(renamed ?? key);
   };
@@ -328,43 +405,131 @@ export function McpServersRenderer({
     onChange(`${prefix}${key}`, undefined);
   };
 
+  /**
+   * The highest location of `segments` that `value` leaves empty
+   * (`apiKey` for `apiKey.source` once API key authentication is gone).
+   */
+  const removedAt = (value: t.ConfigRecord, segments: string[]): string | undefined => {
+    for (let depth = 1; depth <= segments.length; depth++) {
+      const location = segments.slice(0, depth).join('.');
+      if (getValueAtPath(value, location) === undefined) return location;
+    }
+    return undefined;
+  };
+
+  /**
+   * A server renamed back to the saved name it started from is that saved
+   * server again: its pending removal goes, and only what changed since
+   * stays an edit (nothing, after a rename and back), so it keeps its stored
+   * secrets where they are.
+   */
+  const restoreRenamed = (key: string, original: string, value: t.ConfigRecord) => {
+    removeServer(key, false);
+    pendingUnder(`${prefix}${original}`).forEach(discard);
+    for (const [segments, leaf] of copyableLeaves(value)) {
+      onChange(`${prefix}${original}.${segments.join('.')}`, leaf);
+    }
+    const removed = new Set(
+      copyableLeaves(asConfigRecord(saved[original])).flatMap(([segments]) => {
+        const location = removedAt(value, segments);
+        return location === undefined ? [] : [location];
+      }),
+    );
+    removed.forEach((location) => onChange(`${prefix}${original}.${location}`, undefined));
+    onRenameEntry?.(`${prefix}${key}`, `${prefix}${original}`);
+  };
+
   const handleRename = (key: string, next: string): string | null => {
     const others = [...allKeys].filter((name) => name !== key);
     const problem = serverNameProblem(next, others);
     if (problem) return localize(problem);
     const value = asConfigRecord(list.record[key]);
-    /** The saved server this one is (a rename of): its stored secrets stay behind with its name. */
+    /** The saved server this one is (a rename of). */
     const original = renamedFrom[key] ?? (Object.hasOwn(saved, key) ? key : undefined);
-    const secrets = [...new Set([...(reenter[key] ?? []), ...storedSecrets(value)])];
+    if (original === next && next !== key) {
+      restoreRenamed(key, original, value);
+      setRenaming(null);
+      setFocusKey(next);
+      return null;
+    }
     removeServer(key, false);
     writeLeaves(next, value);
     onRenameEntry?.(`${prefix}${key}`, `${prefix}${next}`);
-    setReenter(({ [key]: _moved, ...rest }) =>
-      secrets.length > 0 ? { ...rest, [next]: secrets } : rest,
-    );
-    if (original !== undefined) {
-      setRenamedFrom(({ [key]: _renamed, ...rest }) => ({ ...rest, [next]: original }));
-    }
     setRenaming(null);
     setJustAdded(next);
     setFocusKey(next);
     return null;
   };
 
+  /**
+   * The stored secrets of saved server `source` its rename or copy `next`
+   * must enter again: none where the server carries them there
+   * (`isCarriableRename`: a swap or a chain onto a name the target stores
+   * can't carry), else every one it stores.
+   */
+  const carriedSecrets = (source: string, next: string, allowed: boolean): string[] =>
+    allowed && isCarriableRename(stored, lower, source, next)
+      ? []
+      : storedSecrets(asConfigRecord(saved[source]));
+
+  /**
+   * The stored secrets server `key` must enter again, derived from the
+   * pending renames and copies: a renamed one, those its rename can't carry;
+   * a duplicate, those its copy can't carry.
+   */
+  const reenterOf = (key: string): readonly string[] => {
+    const original = renamedFrom[key];
+    if (original !== undefined) return carriedSecrets(original, key, carry.mcpRename);
+    const copied = copiedFrom[key];
+    return copied === undefined ? [] : carriedSecrets(copied, key, carry.mcpCopy);
+  };
+
+  /** The saved server whose stored secrets server `key` takes along on save (a carried rename or copy). */
+  const carriedSourceOf = (key: string): string | undefined => {
+    const renamed = renamedFrom[key];
+    if (renamed !== undefined) {
+      return carry.mcpRename && isCarriableRename(stored, lower, renamed, key)
+        ? renamed
+        : undefined;
+    }
+    const copied = copiedFrom[key];
+    if (copied === undefined) return undefined;
+    return carry.mcpCopy && isCarriableRename(stored, lower, copied, key) ? copied : undefined;
+  };
+
+  /**
+   * The stored secrets server `key` has: those it reads back as previews,
+   * those of the saved server it takes along on save (a carried rename or
+   * copy shows none of its own), and those it still needs entered.
+   */
+  const secretsOf = (key: string, value: t.ConfigRecord): string[] => {
+    const carriedSource = carriedSourceOf(key);
+    const carried =
+      carriedSource === undefined ? [] : storedSecrets(asConfigRecord(saved[carriedSource]));
+    return [...new Set([...reenterOf(key), ...storedSecrets(value), ...carried])];
+  };
+
+  /**
+   * Duplicates a server under a free name. A copy of a server with stored
+   * secrets is recorded (`copies`): they come along only where the server
+   * copies them (`mcpCopy`) from a server the target stores itself, and
+   * otherwise must be entered again (`reenterOf`).
+   */
   const handleDuplicate = (key: string) => {
     const value = asConfigRecord(list.record[key]);
     const name = copyName(key, allKeys);
     const title = typeof value.title === 'string' ? `${value.title} copy` : undefined;
     writeLeaves(name, title ? { ...value, title } : value);
-    const secrets = storedSecrets(value);
-    if (secrets.length > 0) setReenter((prev) => ({ ...prev, [name]: secrets }));
+    if (secretsOf(key, value).length > 0) {
+      onRenameEntry?.(`${prefix}${key}`, `${prefix}${name}`, true);
+    }
     setJustAdded(name);
     setFocusKey(name);
   };
 
   /** The secrets a duplicate still needs entered (none once each one has a value, or its authentication is gone). */
   const missingSecretsOf = (key: string, value: t.ConfigRecord): string[] =>
-    (reenter[key] ?? []).filter((secret) => {
+    reenterOf(key).filter((secret) => {
       const current = getValueAtPath(value, secret);
       return usesSecret(value, secret) && (typeof current !== 'string' || current === '');
     });
@@ -394,6 +559,28 @@ export function McpServersRenderer({
   const scopeName = sourceLabel('scope', localize, scope);
   const renamedAway = useMemo(() => new Set(Object.values(renamedFrom)), [renamedFrom]);
 
+  /**
+   * What a server's pending change in Base does to the profiles that override
+   * servers by name (`useEntryOverrideNotes`): a rename leaves their
+   * overrides under the saved name, a rename or new server onto a name they
+   * still override takes theirs, and a moved destination stops the keys of
+   * their own they store for it.
+   */
+  const profileNotesOf = (
+    key: string,
+    value: t.ConfigRecord,
+    original?: string,
+  ): t.EntryOverrideNote[] => {
+    const isSaved = Object.hasOwn(saved, key);
+    if (original !== undefined) {
+      const taken = Object.hasOwn(list.record, original);
+      const left = overrideNotes.left(original, { next: key, taken });
+      return isSaved ? left : [...left, ...overrideNotes.took(key)];
+    }
+    if (!isSaved) return overrideNotes.took(key);
+    return overrideNotes.moved(key, { lower: lower[key], before: saved[key], after: value });
+  };
+
   const actionsFor = (key: string, value: t.ConfigRecord, overrides: number) => {
     const actions: t.McpServerAction[] = [];
     if (disabled || key.includes('.')) return actions;
@@ -401,8 +588,12 @@ export function McpServersRenderer({
     const isYaml = yamlKeys.has(key);
     const ownerReason = (() => {
       if (!inScope) return localize('com_config_mcp_locked_yaml');
+      if (!isYaml) return localize('com_config_mcp_defined_in_base');
+      /** With `yamlMcpHide`, a profile can hide a librechat.yaml server too. */
       return localize(
-        isYaml ? 'com_config_mcp_defined_in_base_yaml' : 'com_config_mcp_defined_in_base',
+        yamlMcpHide
+          ? 'com_config_mcp_defined_in_base_yaml_hide'
+          : 'com_config_mcp_defined_in_base_yaml',
       );
     })();
     const isStdio = transportOf(value) === 'stdio';
@@ -443,6 +634,8 @@ export function McpServersRenderer({
       });
     }
     if (inScope && isLower) {
+      /** Before `yamlMcpHide`, LibreChat still lists and connects a librechat.yaml server a profile hides. */
+      const yamlLocked = isYaml && !yamlMcpHide;
       actions.push({
         id: 'hide',
         label: localize('com_config_mcp_action_hide', { scope: scopeName }),
@@ -450,8 +643,8 @@ export function McpServersRenderer({
           onHideField?.(`${prefix}${key}`);
           setFocusHiddenKey(key);
         },
-        disabled: isYaml || !onHideField,
-        reason: isYaml ? localize('com_config_mcp_hide_yaml_unsupported') : undefined,
+        disabled: yamlLocked || !onHideField,
+        reason: yamlLocked ? localize('com_config_mcp_hide_yaml_unsupported') : undefined,
       });
     }
     actions.push({
@@ -668,6 +861,7 @@ export function McpServersRenderer({
                 serverKey={row.key}
                 focusUndo={lastDeleted === row.key}
                 onUndo={() => handleUndoDelete(row.key)}
+                notes={describeOverrideNotes(overrideNotes.left(row.key), localize)}
               />
             );
           }
@@ -678,6 +872,7 @@ export function McpServersRenderer({
                 key={`hidden-${row.key}`}
                 serverKey={row.key}
                 pending={row.pending}
+                blocksUse={yamlMcpHide}
                 onUnhide={disabled ? undefined : unhideFor(row.key, hidePath, row.pending)}
               />
             );
@@ -687,6 +882,12 @@ export function McpServersRenderer({
           const reason = readOnlyReason(key, value, badges.overrides);
           const readOnly = Boolean(disabled) || reason != null;
           const missingSecrets = missingSecretsOf(key, value);
+          const carriedFrom = carriedSourceOf(key);
+          const original = renamedFrom[key];
+          const profileNotes = describeOverrideNotes(
+            profileNotesOf(key, value, original),
+            localize,
+          );
           return (
             <McpServerCard
               key={key}
@@ -702,9 +903,26 @@ export function McpServersRenderer({
               onRenameCancel={() => setRenaming(null)}
               defaultExpanded={justAdded === key}
             >
-              {renamedFrom[key] && (
+              {original !== undefined && (
                 <McpNote tone="info">
-                  {localize('com_config_mcp_renamed_from', { name: renamedFrom[key] })}
+                  {localize(renamedNoteKey(carriedFrom !== undefined, inScope), {
+                    name: original,
+                    scope: scopeName,
+                  })}
+                </McpNote>
+              )}
+              {profileNotes.length > 0 && (
+                <McpNote tone="warning">
+                  <span className="flex flex-col gap-1">
+                    {profileNotes.map((note) => (
+                      <span key={note}>{note}</span>
+                    ))}
+                  </span>
+                </McpNote>
+              )}
+              {copiedFrom[key] && carriedFrom !== undefined && (
+                <McpNote tone="info">
+                  {localize('com_config_mcp_copied_secrets', { name: copiedFrom[key] })}
                 </McpNote>
               )}
               {!readOnly && missingSecrets.length > 0 && (
@@ -732,6 +950,10 @@ export function McpServersRenderer({
                   quiet={badges.isNew}
                   owned={!lowerKeys.has(key)}
                   ownKeys={inScope ? ownKeysOf(key) : undefined}
+                  movedCredentials={movedByServer.get(key)}
+                  carriedFrom={
+                    carriedFrom === undefined ? undefined : asConfigRecord(saved[carriedFrom])
+                  }
                   isPendingWhole={(leaf) => edits[`${prefix}${key}.${leaf}`] !== undefined}
                   editSessionId={editSessionId}
                 />

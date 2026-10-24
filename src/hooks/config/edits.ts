@@ -7,7 +7,7 @@ import {
   trackCollectionEdit,
 } from '@/components/configuration/edits';
 import { findSchemaField } from '@/components/configuration/controls';
-import { getValueAtPath } from '@/utils';
+import { credentialKey, getValueAtPath } from '@/utils';
 
 const NO_EDITS: t.PendingEdits = {
   values: {},
@@ -15,7 +15,22 @@ const NO_EDITS: t.PendingEdits = {
   baselines: {},
   visibility: {},
   renames: {},
+  copies: {},
+  restates: {},
 };
+
+/** `restored` put back over `current`: its values win, and its baselines are the first ones recorded. */
+function mergePending(current: t.PendingEdits, restored: t.PendingEdits): t.PendingEdits {
+  return {
+    values: { ...current.values, ...restored.values },
+    collections: { ...current.collections, ...restored.collections },
+    baselines: { ...current.baselines, ...restored.baselines },
+    visibility: { ...current.visibility, ...restored.visibility },
+    renames: { ...current.renames, ...restored.renames },
+    copies: { ...current.copies, ...restored.copies },
+    restates: { ...current.restates, ...restored.restates },
+  };
+}
 
 function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   if (!(key in record)) return record;
@@ -159,8 +174,9 @@ export function useConfigEdits({
   const isDirty = useMemo(
     () =>
       Object.keys(pending.visibility).length > 0 ||
+      Object.keys(pending.restates).length > 0 ||
       hasEffectiveEdits(editedValues, structuredBaseline),
-    [pending.visibility, editedValues, structuredBaseline],
+    [pending.visibility, pending.restates, editedValues, structuredBaseline],
   );
 
   const pendingResets = useMemo(() => {
@@ -212,12 +228,30 @@ export function useConfigEdits({
     [setVisibility],
   );
 
-  /** A rename of a renamed entry still points at the saved entry it started from; `to: null` drops the record. */
-  const handleRenameEntry = useCallback((from: string, to: string | null) => {
+  /**
+   * A rename of a renamed (or duplicated) entry still points at the saved
+   * entry it started from, and a duplicate at the saved entry its source is;
+   * `to: null` drops the record of `from`, and so does a rename back onto
+   * the saved entry it started from (no rename is left).
+   */
+  const handleRenameEntry = useCallback((from: string, to: string | null, copy = false) => {
     setPending((prev) => {
-      const { [from]: original, ...rest } = prev.renames;
-      if (to === null) return { ...prev, renames: rest };
-      return { ...prev, renames: { ...rest, [to]: original ?? from } };
+      const source = prev.renames[from] ?? prev.copies[from] ?? from;
+      if (copy && to !== null) return { ...prev, copies: { ...prev.copies, [to]: source } };
+      const renames = withoutKey(prev.renames, from);
+      const copies = withoutKey(prev.copies, from);
+      if (to === null || to === source) return { ...prev, renames, copies };
+      if (from in prev.copies) return { ...prev, renames, copies: { ...copies, [to]: source } };
+      return { ...prev, renames: { ...renames, [to]: source }, copies };
+    });
+  }, []);
+
+  /** Restates an inherited credential the target's overrides move (a `restate` change), or takes that back. */
+  const handleRestateCredential = useCallback((ref: t.CredentialRef, restated: boolean) => {
+    const key = credentialKey(ref);
+    setPending((prev) => {
+      if (!restated) return { ...prev, restates: withoutKey(prev.restates, key) };
+      return { ...prev, restates: { ...prev.restates, [key]: ref } };
     });
   }, []);
 
@@ -239,6 +273,22 @@ export function useConfigEdits({
     setSaveError(null);
   }, [resetEdits]);
 
+  const snapshot = useMemo<t.EditsSnapshot>(
+    () => ({ pending, touched: touchedPaths }),
+    [pending, touchedPaths],
+  );
+
+  /**
+   * Puts a snapshot's edits back in one update, as they were: replaying them
+   * one by one would lose what renamed and duplicated entries carry, and
+   * would mix a deferred removal with immediate writes.
+   */
+  const handleRestoreEdits = useCallback((restored: t.EditsSnapshot) => {
+    setSaveError(null);
+    setPending((prev) => mergePending(prev, restored.pending));
+    setTouchedPaths((prev) => new Set([...prev, ...restored.touched]));
+  }, []);
+
   return {
     editedValues,
     touchedPaths,
@@ -251,15 +301,20 @@ export function useConfigEdits({
     editBaselines: pending.baselines,
     visibilityEdits: pending.visibility,
     renameEdits: pending.renames,
+    copyEdits: pending.copies,
+    restateEdits: pending.restates,
     handleFieldChange,
     handleResetField,
     handleHideField,
     handleUnhideField,
     handleRenameEntry,
+    handleRestateCredential,
     handleDiscardField,
     discardEdits,
     startNewSession,
     resetEdits,
     handleDiscard,
+    snapshot,
+    handleRestoreEdits,
   };
 }

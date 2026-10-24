@@ -12,6 +12,10 @@ import {
 import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { CustomEndpointsRenderer } from '../CustomEndpointsRenderer';
+import { ConfigContractContext } from '@/contexts/ContractContext';
+import { RestatesContext } from '@/contexts/RestatesContext';
+import { createServerContract } from '@/test/fixtures';
+import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
 import { extractSchemaTree } from '@/server/config';
 import { isConfigRecord } from '@/utils';
 
@@ -70,12 +74,14 @@ function Harness({
   onChange,
   collectionEdits = {},
   showConfiguredOnly,
+  contract = BUNDLED_CONFIG_CONTRACT,
 }: {
   layers: t.ValueLayers;
   initial?: t.ConfigValue[];
   onChange?: (path: string, value: t.ConfigValue) => void;
   collectionEdits?: t.CollectionEdits;
   showConfiguredOnly?: boolean;
+  contract?: t.ConfigContract;
 }) {
   const [items, setItems] = useState<t.ConfigValue[]>(initial ?? savedList(layers));
   const handleChange = (path: string, value: t.ConfigValue) => {
@@ -85,18 +91,20 @@ function Harness({
     if (match) setItems((prev) => prev.map((item, i) => (i === Number(match[1]) ? value : item)));
   };
   return (
-    <ConfigValuesProvider value={valuesDataFixture(layers)}>
-      <CollectionEditsContext.Provider value={collectionEdits}>
-        <CustomEndpointsRenderer
-          fields={fields}
-          parentPath="endpoints"
-          parentValue={{ custom: items }}
-          getValue={(path, fallback) => (path === 'endpoints.custom' ? items : fallback)}
-          onChange={handleChange}
-          showConfiguredOnly={showConfiguredOnly}
-        />
-      </CollectionEditsContext.Provider>
-    </ConfigValuesProvider>
+    <ConfigContractContext.Provider value={contract}>
+      <ConfigValuesProvider value={valuesDataFixture(layers)}>
+        <CollectionEditsContext.Provider value={collectionEdits}>
+          <CustomEndpointsRenderer
+            fields={fields}
+            parentPath="endpoints"
+            parentValue={{ custom: items }}
+            getValue={(path, fallback) => (path === 'endpoints.custom' ? items : fallback)}
+            onChange={handleChange}
+            showConfiguredOnly={showConfiguredOnly}
+          />
+        </CollectionEditsContext.Provider>
+      </ConfigValuesProvider>
+    </ConfigContractContext.Provider>
   );
 }
 
@@ -145,6 +153,85 @@ describe('CustomEndpointsRenderer', () => {
     expect(
       within(drawer).queryByRole('button', { name: 'com_config_ce_action_delete' }),
     ).toBeNull();
+  });
+
+  it('reads a hidden librechat.yaml key as set where the server sends the mask (yamlSecretPreview)', () => {
+    const { unmount } = render(<Harness layers={baseLayers()} />);
+    openRow('Claude');
+    expect(screen.getByText('com_config_ce_key_hidden')).toBeInTheDocument();
+    unmount();
+    const masked = (list: t.ConfigValue): t.ConfigValue =>
+      Array.isArray(list)
+        ? list.map((entry) =>
+            isConfigRecord(entry) && entry.name === 'Claude'
+              ? { ...entry, apiKeyPreview: '********' }
+              : entry,
+          )
+        : list;
+    const data = baseConfigFixture();
+    const withMask = (root: t.ConfigRecord | undefined): t.ConfigRecord => {
+      const endpoints = isConfigRecord(root?.endpoints) ? root.endpoints : {};
+      return { ...root, endpoints: { ...endpoints, custom: masked(endpoints.custom) } };
+    };
+    const layers = baseLayersFixture({
+      ...data,
+      config: withMask(data.config),
+      yamlConfig: withMask(data.yamlConfig),
+    });
+    render(
+      <Harness layers={layers} contract={createServerContract({ yamlSecretPreview: true })} />,
+    );
+    openRow('Claude');
+    expect(screen.queryByText('com_config_ce_key_hidden')).toBeNull();
+    expect(screen.getByDisplayValue('com_config_secret_hidden_yaml')).toBeInTheDocument();
+  });
+
+  it('offers to send an inherited ${VAR} key to the base URL an edit moves it to (secretRebinding)', () => {
+    const withGpt = (root: t.ConfigRecord, gpt: t.ConfigRecord): t.ConfigRecord => {
+      const endpoints = isConfigRecord(root.endpoints) ? root.endpoints : {};
+      const list = Array.isArray(endpoints.custom) ? endpoints.custom : [];
+      const custom = list.map((entry) =>
+        isConfigRecord(entry) && entry.name === 'GPT' ? { ...entry, ...gpt } : entry,
+      );
+      return { ...root, endpoints: { ...endpoints, custom } };
+    };
+    const yamlConfig = withGpt(baseConfigFixture().yamlConfig ?? {}, { apiKey: '${GPT_KEY}' });
+    const contract = createServerContract({ secretRebinding: true });
+    const ref = { path: 'endpoints.custom', entry: 'GPT', secret: 'apiKey' };
+    const onRestate = vi.fn();
+    const layers = baseLayersFixture(baseConfigFixture({ yamlConfig, config: yamlConfig }));
+    const moved = savedList(layers).map((entry) =>
+      isConfigRecord(entry) && entry.name === 'GPT'
+        ? { ...entry, baseURL: 'https://proxy.example.com' }
+        : entry,
+    );
+    const { unmount } = render(
+      <RestatesContext.Provider value={{ restates: {}, onRestate }}>
+        <Harness layers={layers} initial={moved} contract={contract} />
+      </RestatesContext.Provider>,
+    );
+    const drawer = openRow('GPT');
+    expect(within(drawer).getByText('com_config_secret_not_sent_restatable')).toBeInTheDocument();
+    fireEvent.click(within(drawer).getByRole('button', { name: 'com_config_secret_restate' }));
+    expect(onRestate).toHaveBeenCalledWith(ref, true);
+    unmount();
+
+    const own = { name: 'GPT', baseURL: 'https://proxy.example.com', apiKey: '${GPT_KEY}' };
+    const restated = baseLayersFixture(
+      baseConfigFixture({
+        yamlConfig,
+        dbOverrides: { endpoints: { custom: [own] } },
+        config: withGpt(yamlConfig, own),
+      }),
+    );
+    render(
+      <RestatesContext.Provider value={{ restates: {}, onRestate }}>
+        <Harness layers={restated} contract={contract} />
+      </RestatesContext.Provider>,
+    );
+    const saved = openRow('GPT');
+    expect(within(saved).queryByText('com_config_secret_not_sent_restatable')).toBeNull();
+    expect(within(saved).queryByRole('button', { name: 'com_config_secret_restate' })).toBeNull();
   });
 
   it('lets an endpoint added in the panel be renamed and deleted', () => {

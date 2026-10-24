@@ -1,7 +1,6 @@
 import { useContext } from 'react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
-import { entryFieldDefault, layerValueBeneath, lowerLayerValue } from '../../renderer/defaults';
 import {
   isRowVisible,
   isConfigRecord,
@@ -9,6 +8,7 @@ import {
   isConfigValueEqual,
   getSecretPreviewValue,
 } from '@/utils';
+import { entryFieldDefault, layerValueBeneath, lowerLayerValue } from '../../renderer/defaults';
 import { useFieldState, useLocalize, useValuesScope, useHasValueLayers } from '@/hooks';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
 import { fieldMetaFor, resolveControl } from '../../renderer/kinds';
@@ -16,6 +16,7 @@ import { fieldDescription, toFieldId } from '../../renderer/paths';
 import { FieldProvenance, getRevertLabels } from '../../values';
 import { DecorativeIcon, StateChip } from '@/components/shared';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
+import { maskedSecretLabel } from '../../fields/SecretField';
 import { FieldControl } from '../../renderer/FieldControl';
 import { getFieldMeta, labelForPath } from '../../meta';
 import { inferControlWidth } from '../../width';
@@ -187,6 +188,7 @@ function McpFieldRow({
       disabled={readOnly}
       required={required}
       secretPreview={storedPreview ?? null}
+      secretMaskLabel={maskedSecretLabel(state, localize)}
       hasPendingEdit={state.isEdited}
       onCancelSecret={() => onDiscard?.(dataPath)}
     />

@@ -204,7 +204,9 @@ export type SkipReason =
   | 'inheritedValue'
   | 'inheritedMerged'
   | 'processServer'
-  | 'secretRebinding';
+  | 'secretRebinding'
+  /** An edit under a value the same save hides: the hide removes it, so it is not sent. */
+  | 'hiddenBySave';
 
 /** A record key the admin API cannot store, and the dot-path of the object holding it. */
 export interface UnsafeConfigKey {

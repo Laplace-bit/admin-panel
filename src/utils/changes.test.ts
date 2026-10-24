@@ -9,6 +9,7 @@ import {
 } from './changes';
 import { validateEntry, validateSection, validateField } from './validation';
 import { BUNDLED_CONFIG_FEATURES } from '@/constants';
+import { getValueAtPath } from './format';
 
 const yaml: t.ConfigRecord = {
   balance: { enabled: true, startBalance: 1000000, refillAmount: 1000000 },
@@ -771,7 +772,7 @@ describe('toBatchOps', () => {
     ]);
   });
 
-  it('leaves out an edit inside an entry the same batch hides, which would show it again', () => {
+  it('leaves out an edit inside an entry the same batch hides, and reports it as not sent', () => {
     const plan = planConfigChanges(
       [
         { op: 'set', path: 'mcpServers.github.url', value: 'https://example.org/mcp' },
@@ -781,7 +782,11 @@ describe('toBatchOps', () => {
       snapshot({ mcpServers: { github: { url: 'https://stored.example.org/mcp' } } }),
       features,
     );
-    expect(plan).toMatchObject({ issues: [], skipped: [], effective: 2 });
+    expect(plan).toMatchObject({
+      issues: [],
+      skipped: [{ fieldPath: 'mcpServers.github.url', reason: 'hiddenBySave' }],
+      effective: 2,
+    });
     expect(plan.sets).toEqual([{ fieldPath: 'balance.startBalance', value: 5 }]);
     expect(toBatchOps(plan)).toEqual([
       { op: 'tombstone', fieldPath: 'mcpServers.github' },
@@ -797,6 +802,8 @@ describe('toBatchOps — one change per path', () => {
       resets: ['mcpServers.github'],
       tombstones: ['mcpServers.github'],
       untombstones: [],
+      renames: [],
+      renameHints: [],
       skipped: [],
       issues: [],
       warnings: [],
@@ -867,6 +874,116 @@ describe('verifyWrite', () => {
     const storedActual = { webSearch: { tavilyApiKeyPreview: 'tvly-s...cret' } };
     expect(verifyWrite(plan, snapshot(), storedActual, { webSearch: {} })).toEqual([]);
   });
+
+  describe('an MCP key a server with `recordSecrets` reads back as its preview', () => {
+    const recordSecrets = { ...BUNDLED_CONFIG_FEATURES, recordSecrets: true };
+    const server = (apiKey: t.ConfigRecord): t.ConfigRecord => ({
+      mcpServers: {
+        'acme-kb': {
+          type: 'streamable-http',
+          url: 'https://mcp.acme.dev/mcp',
+          apiKey: { source: 'admin', authorization_type: 'bearer', ...apiKey },
+        },
+      },
+    });
+    const saved = snapshot(server({ keyPreview: '...1234' }), {});
+    const effective = server({ keyPreview: '...3333' });
+
+    it('reads a replaced key as stored from the preview the reply returns', () => {
+      const plan = planConfigChanges(
+        [{ op: 'set', path: 'mcpServers.acme-kb.apiKey.key', value: 'sk-replaced-3333' }],
+        saved,
+        recordSecrets,
+      );
+      const stored = server({ keyPreview: '...3333' });
+      expect(verifyWrite(plan, saved, stored, effective)).toEqual([]);
+    });
+
+    it('reads a key entered with the server as stored, and the rest of the server compared', () => {
+      const plan = planConfigChanges(
+        [
+          {
+            op: 'set',
+            path: 'mcpServers.acme-kb',
+            value: {
+              type: 'streamable-http',
+              url: 'https://mcp.acme.dev/mcp',
+              apiKey: { source: 'admin', authorization_type: 'bearer', key: 'sk-new-3333' },
+            },
+          },
+        ],
+        snapshot({}, {}),
+        recordSecrets,
+      );
+      expect(verifyWrite(plan, snapshot({}, {}), server({ keyPreview: '...3333' }))).toEqual([]);
+      const custom = server({ authorization_type: 'custom', keyPreview: '...3333' });
+      expect(verifyWrite(plan, snapshot({}, {}), custom)).toEqual([
+        { fieldPath: 'mcpServers.acme-kb', reason: 'notStored' },
+      ]);
+    });
+
+    it('flags a key the reply holds neither as a value nor as a preview', () => {
+      const plan = planConfigChanges(
+        [{ op: 'set', path: 'mcpServers.acme-kb.apiKey.key', value: 'sk-replaced-3333' }],
+        saved,
+        recordSecrets,
+      );
+      expect(verifyWrite(plan, saved, server({}))).toEqual([
+        { fieldPath: 'mcpServers.acme-kb.apiKey.key', reason: 'notStored' },
+      ]);
+    });
+
+    it("leaves out a key LibreChat keeps for a list entry the write doesn't touch", () => {
+      const entry = (name: string, preview?: string): t.ConfigRecord => ({
+        name,
+        baseURL: `https://api.${name.toLowerCase()}.dev/v1`,
+        models: { default: ['m'] },
+        ...(preview && { apiKeyPreview: preview }),
+      });
+      const list = (...entries: t.ConfigRecord[]) => ({ endpoints: { custom: entries } });
+      const listed = snapshot(list(entry('Acme', '...7890'), entry('Beta', '...4567')), {});
+      const acme = entry('Acme', '...7890');
+      const plan = planConfigChanges(
+        [
+          {
+            op: 'upsertEntry',
+            path: 'endpoints.custom',
+            key: 'Acme',
+            identity: 'Acme',
+            baseline: acme,
+            value: { ...acme, baseURL: 'https://api2.acme.dev/v1', apiKey: 'sk-new-8888' },
+          },
+        ],
+        listed,
+        recordSecrets,
+      );
+      const moved = (preview?: string) => ({
+        ...entry('Acme', preview),
+        baseURL: 'https://api2.acme.dev/v1',
+      });
+      const beta = entry('Beta', '...4567');
+      expect(verifyWrite(plan, listed, list(moved('...8888'), beta))).toEqual([]);
+      expect(verifyWrite(plan, listed, list(moved(), beta))).toEqual([
+        { fieldPath: 'endpoints.custom', reason: 'notStored' },
+      ]);
+    });
+
+    it('removes the preview with a reset key, and flags one the reply still shows', () => {
+      const plan = planConfigChanges(
+        [{ op: 'reset', path: 'mcpServers.acme-kb.apiKey.key' }],
+        saved,
+        recordSecrets,
+      );
+      expect(getValueAtPath(plan.storedAfter, 'mcpServers.acme-kb.apiKey')).toEqual({
+        source: 'admin',
+        authorization_type: 'bearer',
+      });
+      expect(verifyWrite(plan, saved, server({}))).toEqual([]);
+      expect(verifyWrite(plan, saved, server({ keyPreview: '...1234' }))).toEqual([
+        { fieldPath: 'mcpServers.acme-kb.apiKey.key', reason: 'notStored' },
+      ]);
+    });
+  });
 });
 
 describe('mergedBackChanges', () => {
@@ -906,5 +1023,205 @@ describe('mergedBackChanges', () => {
         entryPath: 'customParams.paramDefinitions',
       },
     ]);
+  });
+});
+
+describe('planConfigChanges — secrets of renamed and duplicated entries', () => {
+  const batch = {
+    ...BUNDLED_CONFIG_FEATURES,
+    changesBatch: true,
+    expectedRevision: true,
+    recordSecrets: true,
+  };
+  const patchOnly = { ...BUNDLED_CONFIG_FEATURES, recordSecrets: true };
+  const vault: t.ConfigRecord = {
+    type: 'streamable-http',
+    url: 'https://mcp.vault.dev/mcp',
+    title: 'Vault',
+    apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '...4321' },
+  };
+  const stored: t.ConfigRecord = { mcpServers: { vault } };
+  const renameOps: t.ConfigChange[] = [
+    { op: 'set', path: 'mcpServers.vault-kb.type', value: 'streamable-http' },
+    { op: 'set', path: 'mcpServers.vault-kb.url', value: 'https://mcp.vault.dev/mcp' },
+    { op: 'set', path: 'mcpServers.vault-kb.apiKey.source', value: 'admin' },
+    { op: 'set', path: 'mcpServers.vault-kb.apiKey.authorization_type', value: 'bearer' },
+    { op: 'reset', path: 'mcpServers.vault' },
+    { op: 'carry', path: 'mcpServers', from: 'vault', to: 'vault-kb' },
+  ];
+
+  it('renames a stored MCP server in a batch, then sets it whole without the field removed since', () => {
+    const plan = planConfigChanges(renameOps, snapshot(stored), batch);
+    expect(plan.issues).toEqual([]);
+    expect(plan.renames).toEqual([{ path: 'mcpServers', from: 'vault', to: 'vault-kb' }]);
+    expect(plan.resets).toEqual([]);
+    expect(toBatchOps(plan)).toEqual([
+      { op: 'rename', fieldPath: 'mcpServers', from: 'vault', to: 'vault-kb' },
+      {
+        op: 'set',
+        fieldPath: 'mcpServers.vault-kb',
+        value: {
+          type: 'streamable-http',
+          url: 'https://mcp.vault.dev/mcp',
+          apiKey: { source: 'admin', authorization_type: 'bearer' },
+        },
+      },
+    ]);
+    expect(plan.storedAfter).toEqual({
+      mcpServers: {
+        'vault-kb': {
+          type: 'streamable-http',
+          url: 'https://mcp.vault.dev/mcp',
+          apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '...4321' },
+        },
+      },
+    });
+  });
+
+  it('carries the secrets through a PATCH hint before change batches, and still removes the old name', () => {
+    const plan = planConfigChanges(renameOps, snapshot(stored), patchOnly);
+    expect(plan.renames).toEqual([]);
+    expect(plan.renameHints).toEqual([
+      { path: 'mcpServers', previousName: 'vault', name: 'vault-kb' },
+    ]);
+    expect(plan.resets).toEqual(['mcpServers.vault']);
+  });
+
+  it('copies the secrets of a duplicate only through a PATCH hint', () => {
+    const copyOps: t.ConfigChange[] = [
+      { op: 'set', path: 'mcpServers.vault-copy.url', value: 'https://mcp.vault.dev/mcp' },
+      { op: 'carry', path: 'mcpServers', from: 'vault', to: 'vault-copy', copy: true },
+    ];
+    expect(planConfigChanges(copyOps, snapshot(stored), patchOnly).renameHints).toEqual([
+      { path: 'mcpServers', previousName: 'vault', name: 'vault-copy' },
+    ]);
+    const inBatch = planConfigChanges(copyOps, snapshot(stored), batch);
+    expect(inBatch.renameHints).toEqual([]);
+    expect(inBatch.renames).toEqual([]);
+  });
+
+  it('warns that a duplicate goes without the stored key of the server it copies, where nothing carries it', () => {
+    const copyOps: t.ConfigChange[] = [
+      { op: 'set', path: 'mcpServers.vault-copy.type', value: 'streamable-http' },
+      { op: 'set', path: 'mcpServers.vault-copy.url', value: 'https://mcp.vault.dev/mcp' },
+      { op: 'set', path: 'mcpServers.vault-copy.apiKey.source', value: 'admin' },
+      { op: 'carry', path: 'mcpServers', from: 'vault', to: 'vault-copy', copy: true },
+    ];
+    const uncopied = {
+      path: 'mcpServers',
+      entryIdentity: 'vault-copy',
+      warning: 'secretNotCopied',
+      keys: ['apiKey.key'],
+    };
+    expect(planConfigChanges(copyOps, snapshot(stored), batch).warnings).toEqual([uncopied]);
+    expect(planConfigChanges(copyOps, snapshot(stored)).warnings).toEqual([uncopied]);
+    expect(planConfigChanges(copyOps, snapshot(stored), patchOnly).warnings).toEqual([]);
+    const entered: t.ConfigChange = {
+      op: 'set',
+      path: 'mcpServers.vault-copy.apiKey.key',
+      value: 'sk-new',
+    };
+    expect(planConfigChanges([...copyOps, entered], snapshot(stored), batch).warnings).toEqual([]);
+    const userKey: t.ConfigChange = {
+      op: 'set',
+      path: 'mcpServers.vault-copy.apiKey.source',
+      value: 'user',
+    };
+    expect(planConfigChanges([...copyOps, userKey], snapshot(stored), batch).warnings).toEqual([]);
+  });
+
+  it('checks a rename or copy carried by a PATCH hint against the server it comes from', () => {
+    const moved = (ops: t.ConfigChange[]) =>
+      ops.map((op) =>
+        op.op === 'set' && op.path.endsWith('.url') ? { ...op, value: 'https://evil.dev/mcp' } : op,
+      );
+    const renamed = planConfigChanges(renameOps, snapshot(stored), patchOnly);
+    expect(renamed.issues).toEqual([]);
+    expect(renamed.storedAfter).toEqual({
+      mcpServers: {
+        'vault-kb': {
+          type: 'streamable-http',
+          url: 'https://mcp.vault.dev/mcp',
+          apiKey: { source: 'admin', authorization_type: 'bearer', keyPreview: '...4321' },
+        },
+      },
+    });
+    for (const features of [patchOnly, batch]) {
+      expect(planConfigChanges(moved(renameOps), snapshot(stored), features).issues).toEqual([
+        expect.objectContaining({ path: 'mcpServers.vault-kb.apiKey.key' }),
+      ]);
+    }
+    const copyOps: t.ConfigChange[] = [
+      { op: 'set', path: 'mcpServers.vault-copy.type', value: 'streamable-http' },
+      { op: 'set', path: 'mcpServers.vault-copy.url', value: 'https://mcp.vault.dev/mcp' },
+      { op: 'set', path: 'mcpServers.vault-copy.apiKey.source', value: 'admin' },
+      { op: 'set', path: 'mcpServers.vault-copy.apiKey.authorization_type', value: 'bearer' },
+      { op: 'carry', path: 'mcpServers', from: 'vault', to: 'vault-copy', copy: true },
+    ];
+    expect(planConfigChanges(copyOps, snapshot(stored), patchOnly).issues).toEqual([]);
+    expect(planConfigChanges(moved(copyOps), snapshot(stored), patchOnly).issues).toEqual([
+      expect.objectContaining({ path: 'mcpServers.vault-copy.apiKey.key' }),
+    ]);
+    const entered: t.ConfigChange = {
+      op: 'set',
+      path: 'mcpServers.vault-copy.apiKey.key',
+      value: 'sk-new',
+    };
+    expect(
+      planConfigChanges([...moved(copyOps), entered], snapshot(stored), patchOnly).issues,
+    ).toEqual([]);
+  });
+
+  it('carries nothing without recordSecrets, from a server the target does not store, or onto an unwritten name', () => {
+    expect(planConfigChanges(renameOps, snapshot(stored)).renames).toEqual([]);
+    expect(planConfigChanges(renameOps, snapshot(stored)).renameHints).toEqual([]);
+    const fromYaml: t.ConfigChange[] = [
+      { op: 'set', path: 'mcpServers.gh.url', value: 'https://x.dev/mcp' },
+      { op: 'carry', path: 'mcpServers', from: 'github', to: 'gh' },
+    ];
+    const lowerStored = { mcpServers: { github: { timeout: 1 } } };
+    expect(planConfigChanges(fromYaml, snapshot(lowerStored), batch).renames).toEqual([]);
+    const unwritten = planConfigChanges(
+      [{ op: 'carry', path: 'mcpServers', from: 'vault', to: 'vault-kb' }],
+      snapshot(stored),
+      batch,
+    );
+    expect(unwritten.renames).toEqual([]);
+  });
+
+  it('renames a custom endpoint with a stored key in a batch, before the list is set', () => {
+    const endpoints: t.ConfigRecord = {
+      endpoints: {
+        custom: [
+          {
+            name: 'Secret EP',
+            baseURL: 'https://s',
+            models: { default: ['m1'] },
+            apiKeyPreview: 'sk-abc...1234',
+          },
+        ],
+      },
+    };
+    const ops: t.ConfigChange[] = [
+      {
+        op: 'upsertEntry',
+        path: 'endpoints.custom',
+        key: 'Renamed EP',
+        identity: 'Secret EP',
+        value: { name: 'Renamed EP', baseURL: 'https://s', models: { default: ['m1'] } },
+      },
+    ];
+    const plan = planConfigChanges(ops, snapshot(endpoints), batch);
+    expect(plan.issues).toEqual([]);
+    expect(toBatchOps(plan)).toEqual([
+      { op: 'rename', fieldPath: 'endpoints.custom', from: 'Secret EP', to: 'Renamed EP' },
+      {
+        op: 'set',
+        fieldPath: 'endpoints.custom',
+        value: [{ name: 'Renamed EP', baseURL: 'https://s', models: { default: ['m1'] } }],
+      },
+    ]);
+    const older = planConfigChanges(ops, snapshot(endpoints));
+    expect(older.issues.map((issue) => issue.code)).toEqual(['SECRET_REQUIRED_FOR_RENAME']);
   });
 });

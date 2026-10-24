@@ -1,4 +1,5 @@
 export * from './addresses';
+export * from './binding';
 export * from './capabilities';
 export * from './changes';
 export * from './cn';
@@ -16,6 +17,7 @@ export * from './leaves';
 export * from './mime';
 export * from './navigation';
 export * from './paths';
+export * from './removals';
 export * from './schema';
 export * from './scopes';
 export * from './secrets';

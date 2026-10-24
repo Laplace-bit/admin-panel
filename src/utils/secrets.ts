@@ -9,9 +9,57 @@ const SECRET_LIKE_KEY_RE = /(api_?key|secret_?key|secret)$/i;
 export function isSecretKey(key: string): boolean {
   return SECRET_CONFIG_KEYS.has(key) || SECRET_LIKE_KEY_RE.test(key);
 }
+
+/** Whether `key` (inside `parent`) is a secret: a secret key (`apiKey`), or the `key` of one (`apiKey.key`). */
+export function isStoredSecretKey(parent: string | undefined, key: string): boolean {
+  return isSecretKey(key) || (key === 'key' && parent !== undefined && isSecretKey(parent));
+}
+
+/**
+ * Whether the value at `path` is a secret, never shown and read back only as
+ * its masked preview: a secret key (`webSearch.tavilyApiKey`,
+ * `mcpServers.a.oauth.client_secret`) or the `key` of one
+ * (`mcpServers.a.apiKey.key`). The one rule the review, the save payload,
+ * the planner and the check of what a write stored all use.
+ */
+export function isSecretPath(path: string): boolean {
+  const segments = path.split('.');
+  return isStoredSecretKey(segments.at(-2), segments.at(-1) ?? '');
+}
+
+/** Whether `key` (inside `parent`) is the masked preview of a secret beside it (`apiKeyPreview`, `keyPreview` in `apiKey`). */
+export function isSecretPreviewKey(parent: string | undefined, key: string): boolean {
+  const secret = secretKeyForPreviewKey(key);
+  return secret !== null && isStoredSecretKey(parent, secret);
+}
+
+/** Whether `path` is the masked preview of a secret beside it (`oauth.client_secretPreview`, `apiKey.keyPreview`). */
+export function isSecretPreviewPath(path: string): boolean {
+  const segments = path.split('.');
+  return isSecretPreviewKey(segments.at(-2), segments.at(-1) ?? '');
+}
+
+/** Where the masked preview of the secret at `path` is kept (`a.apiKey.key` → `a.apiKey.keyPreview`). */
+export function secretPreviewPath(path: string): string {
+  const dot = path.lastIndexOf('.');
+  return `${path.slice(0, dot + 1)}${toSecretPreviewKey(path.slice(dot + 1))}`;
+}
+
+/**
+ * Whether a secret is stored at `path` in `root`: a value there, or the
+ * masked preview a redacted read keeps beside it (all a server with
+ * `recordSecrets` returns of an MCP key).
+ */
+export function holdsSecretAt(root: t.ConfigValue, path: string): boolean {
+  return [path, secretPreviewPath(path)].some((location) => {
+    const value = getValueAtPath(root, location);
+    return typeof value === 'string' && value !== '';
+  });
+}
 const ARRAY_INDEX_SEGMENT_RE = /\.\d+(?=\.|$)/g;
 
-function secretKeyForPreviewKey(key: string): string | null {
+/** The secret key a masked-preview companion key shows (`apiKeyPreview` → `apiKey`), else null. */
+export function secretKeyForPreviewKey(key: string): string | null {
   const match = PREVIEW_KEY_RE.exec(key);
   if (!match) return null;
   return match[1];

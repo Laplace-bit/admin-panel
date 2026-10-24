@@ -3,10 +3,10 @@ import * as Dialog from '@radix-ui/react-dialog';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { formatConfigValue, settingRows } from '../../values';
+import { useLocalize, useConfigFeatures } from '@/hooks';
 import { CloseButton } from '@/components/shared';
 import { toFieldId } from '../../renderer';
 import { maskCredential } from './azure';
-import { useLocalize } from '@/hooks';
 import { cn } from '@/utils';
 
 /** A setting of the group; `path` is its data path, the id a search or test finds it by. */
@@ -28,13 +28,16 @@ function OtherItems({ rows }: { rows: t.SettingRow[] }) {
   ));
 }
 
-function Credential({ value }: { value: string | undefined }) {
+function Credential({ value, preview }: t.AzureCredentialProps) {
   const localize = useLocalize();
-  const credential = maskCredential(value);
+  const credential = maskCredential(value, preview);
   if (credential.kind === 'env') {
     return <>{localize('com_config_providers_azure_env', { name: credential.name })}</>;
   }
   if (credential.kind === 'masked') return <>{localize('com_config_providers_azure_masked')}</>;
+  if (credential.kind === 'stored') {
+    return <>{localize('com_config_providers_azure_stored', { preview: credential.preview })}</>;
+  }
   return <span className="azure-muted">{localize('com_config_providers_azure_none')}</span>;
 }
 
@@ -51,6 +54,7 @@ export function AzureGroupDrawer({
   returnFocus,
 }: t.AzureGroupDrawerProps) {
   const localize = useLocalize();
+  const { azureGroupSecrets } = useConfigFeatures();
   /** The last group shown, kept while the drawer animates closed. */
   const [group, setGroup] = useState(openGroup);
   if (openGroup && openGroup !== group) setGroup(openGroup);
@@ -99,7 +103,11 @@ export function AzureGroupDrawer({
                     {group.group}
                   </Dialog.Title>
                   <Dialog.Description className="m-0 text-xs text-(--cui-color-text-muted)">
-                    {localize('com_config_providers_azure_drawer_desc')}
+                    {localize(
+                      azureGroupSecrets
+                        ? 'com_config_providers_azure_drawer_desc_applied'
+                        : 'com_config_providers_azure_drawer_desc',
+                    )}
                   </Dialog.Description>
                 </div>
                 <CloseButton
@@ -118,7 +126,7 @@ export function AzureGroupDrawer({
                     label={localize('com_config_providers_azure_field_apiKey')}
                     path={at('apiKey')}
                   >
-                    <Credential value={group.apiKey} />
+                    <Credential value={group.apiKey} preview={group.apiKeyPreview} />
                   </Item>
                   <Item
                     label={localize('com_config_providers_azure_field_serverless')}

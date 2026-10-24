@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type * as t from '@/types';
-import { DecorativeIcon, KebabMenu } from '@/components/shared';
+import { DecorativeIcon, KebabMenu, WarningList } from '@/components/shared';
 import { useLocalize, useValuesScope } from '@/hooks';
 import { sourceLabel } from '../../values';
 import { describeIssue } from './issues';
@@ -164,18 +164,10 @@ export function isDeletable(row: Pick<t.EndpointRow, 'origin'>): boolean {
 }
 
 /** A saved endpoint a pending edit removes: struck through, with Undo (D9). */
-function RemovalRow({
-  removal,
-  disabled,
-  onUndo,
-}: {
-  removal: t.EndpointRemoval;
-  disabled?: boolean;
-  onUndo: (removal: t.EndpointRemoval) => void;
-}) {
+function RemovalRow({ removal, disabled, onUndo, notes }: t.EndpointRemovalRowProps) {
   const localize = useLocalize();
   return (
-    <li className="flex items-center gap-3 rounded-lg border border-dashed border-(--cui-color-stroke-default) px-3 py-2">
+    <li className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-(--cui-color-stroke-default) px-3 py-2">
       <Monogram title={removal.title} muted />
       <span className="flex min-w-0 flex-1 flex-col">
         <span
@@ -200,6 +192,7 @@ function RemovalRow({
           {localize('com_config_ctl_entry_undo')}
         </button>
       )}
+      {notes && <WarningList notes={notes} />}
     </li>
   );
 }
@@ -337,6 +330,7 @@ export function EndpointList({
   onRevert,
   override,
   onUndoRemoval,
+  removalNotes,
   idPrefix,
 }: t.EndpointListProps) {
   const localize = useLocalize();
@@ -359,6 +353,7 @@ export function EndpointList({
             removal={item.removal}
             disabled={disabled}
             onUndo={onUndoRemoval}
+            notes={removalNotes?.(item.removal)}
           />
         ) : (
           <EndpointListRow
