@@ -115,7 +115,7 @@ export function toEnvStatusMap(body: t.ConfigValue): t.EnvStatusMap {
  * call that needs no browser User-Agent.
  */
 export const getConfigCatalogFn = createServerFn({ method: 'GET' })
-  .inputValidator(
+  .validator(
     z.object({ principalType: z.nativeEnum(PrincipalType), principalId: z.string().min(1) }),
   )
   .handler(async ({ data }: { data: t.ConfigPrincipal }): Promise<t.ConfigCatalog> => {

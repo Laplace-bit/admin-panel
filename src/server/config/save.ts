@@ -1004,7 +1004,7 @@ const configChangeSchema = z.discriminatedUnion('op', [
  * unless the target changed since `expectedRevision` (see `applyConfigChanges`).
  */
 export const applyConfigChangesFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       target: writeTargetSchema,
       ops: z.array(configChangeSchema).min(1).max(2000),

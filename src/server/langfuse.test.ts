@@ -18,7 +18,7 @@ vi.mock('./capabilities', () => ({
 vi.mock('@tanstack/react-start', () => ({
   createServerFn: () => ({
     handler: (fn: (...args: never[]) => unknown) => fn,
-    inputValidator: () => ({
+    validator: () => ({
       handler: (fn: (...args: never[]) => unknown) => fn,
     }),
   }),

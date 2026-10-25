@@ -50,7 +50,7 @@ const ALL_ROLES_LIMIT = 200;
 // ── Server functions ─────────────────────────────────────────────────
 
 export const getRolesFn = createServerFn({ method: 'GET' })
-  .inputValidator(
+  .validator(
     z.object({
       limit: z.number().optional(),
       offset: z.number().optional(),
@@ -101,7 +101,7 @@ export const allRolesQueryOptions = queryOptions<t.Role[]>({
 });
 
 export const getRoleFn = createServerFn({ method: 'GET' })
-  .inputValidator(z.object({ name: z.string() }))
+  .validator(z.object({ name: z.string() }))
   .handler(async ({ data }: { data: { name: string } }): Promise<{ role: t.Role }> => {
     const response = await apiFetch(`/api/admin/roles/${encodeURIComponent(data.name)}`);
     if (!response.ok) {
@@ -129,7 +129,7 @@ export const roleAssignmentsQueryOptions = queryOptions({
 });
 
 export const createRoleFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       name: z.string().min(1),
       description: z.string().optional(),
@@ -148,7 +148,7 @@ export const createRoleFn = createServerFn({ method: 'POST' })
   });
 
 export const updateRoleFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       id: z.string(),
       name: z.string().min(1).optional(),
@@ -168,7 +168,7 @@ export const updateRoleFn = createServerFn({ method: 'POST' })
   });
 
 export const updateRolePermissionsFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       id: z.string(),
       permissions: z.record(z.string(), z.record(z.string(), z.boolean())),
@@ -196,7 +196,7 @@ export const updateRolePermissionsFn = createServerFn({ method: 'POST' })
   );
 
 export const deleteRoleFn = createServerFn({ method: 'POST' })
-  .inputValidator(z.object({ id: z.string() }))
+  .validator(z.object({ id: z.string() }))
   .handler(async ({ data }: { data: { id: string } }) => {
     const response = await apiFetch(`/api/admin/roles/${encodeURIComponent(data.id)}`, {
       method: 'DELETE',
@@ -208,7 +208,7 @@ export const deleteRoleFn = createServerFn({ method: 'POST' })
   });
 
 export const getRoleMembersFn = createServerFn({ method: 'GET' })
-  .inputValidator(
+  .validator(
     z.object({
       roleId: z.string(),
       limit: z.number().optional(),
@@ -250,7 +250,7 @@ export const roleMembersQueryOptions = (roleId: string, page = 1) =>
   });
 
 export const addRoleMemberFn = createServerFn({ method: 'POST' })
-  .inputValidator(z.object({ roleId: z.string(), userId: z.string() }))
+  .validator(z.object({ roleId: z.string(), userId: z.string() }))
   .handler(async ({ data }: { data: { roleId: string; userId: string } }) => {
     const response = await apiFetch(`/api/admin/roles/${encodeURIComponent(data.roleId)}/members`, {
       method: 'POST',
@@ -263,7 +263,7 @@ export const addRoleMemberFn = createServerFn({ method: 'POST' })
   });
 
 export const removeRoleMemberFn = createServerFn({ method: 'POST' })
-  .inputValidator(z.object({ roleId: z.string(), userId: z.string() }))
+  .validator(z.object({ roleId: z.string(), userId: z.string() }))
   .handler(async ({ data }: { data: { roleId: string; userId: string } }) => {
     const response = await apiFetch(
       `/api/admin/roles/${encodeURIComponent(data.roleId)}/members/${encodeURIComponent(data.userId)}`,

@@ -34,7 +34,7 @@ export const usersQueryOptions = queryOptions({
 });
 
 export const createUserFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       name: z.string().min(1),
       email: z.string().email(),
@@ -56,7 +56,7 @@ const USER_NOT_FOUND_ERROR = 'User not found';
  * user was deleted.
  */
 export const deleteUserFn = createServerFn({ method: 'POST' })
-  .inputValidator(z.object({ id: z.string() }))
+  .validator(z.object({ id: z.string() }))
   .handler(async ({ data }): Promise<void> => {
     const response = await apiFetch(`/api/admin/users/${encodeURIComponent(data.id)}`, {
       method: 'DELETE',
@@ -71,7 +71,7 @@ export const deleteUserFn = createServerFn({ method: 'POST' })
   });
 
 export const searchUsersFn = createServerFn({ method: 'GET' })
-  .inputValidator(z.object({ query: z.string() }))
+  .validator(z.object({ query: z.string() }))
   .handler(async ({ data }): Promise<{ users: AdminUserSearchResult[] }> => {
     const response = await apiFetch(`/api/admin/users/search?q=${encodeURIComponent(data.query)}`);
     if (!response.ok) {
