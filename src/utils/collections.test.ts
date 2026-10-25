@@ -117,6 +117,16 @@ describe('mergeConfigLayers', () => {
     expect(endpoints[0]).toMatchObject({ baseURL: 'https://x', apiKey: '${MOONSHOT_API_KEY}' });
     expect(merged.list).toEqual([3]);
   });
+
+  it("drops the lower entry's key where the upper one holds its own, as the two travel together", () => {
+    const merged = mergeConfigLayers(
+      yamlEndpoints,
+      [{ name: 'Moonshot', apiKeyPreview: '...1234' }],
+      'endpoints.custom',
+    ) as t.ConfigRecord[];
+    const { apiKey: _yamlKey, ...rest } = yamlEndpoints[0] as t.ConfigRecord;
+    expect(merged[0]).toStrictEqual({ ...rest, apiKeyPreview: '...1234' });
+  });
 });
 
 describe('diffOverride', () => {

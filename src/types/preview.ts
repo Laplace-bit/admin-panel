@@ -19,6 +19,7 @@ export type PreviewIgnoreReason =
   | 'interface_permission'
   | 'runtime_stop'
   | 'azure_groups_unresolved'
+  | 'endpoint_rederive_off'
   | 'azure_unserved'
   | 'secret_rebinding'
   | 'destination_restored'

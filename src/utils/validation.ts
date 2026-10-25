@@ -1,8 +1,9 @@
 import { configSchema } from 'librechat-data-provider';
 import type * as t from '@/types';
+import { AZURE_GROUPS_PATH, RUNTIME_NUMBER_LIMITS } from '@/constants';
 import { getValueAtPath, isConfigRecord } from './format';
-import { RUNTIME_NUMBER_LIMITS } from '@/constants';
 import { resolveSubSchema } from './schema';
+import { getEntryKey } from './collections';
 
 const MAX_UNION_DEPTH = 10;
 
@@ -153,6 +154,20 @@ const ISSUE_MESSAGES: Readonly<Record<string, string>> = {
     "must be entered again: the one stored for {{from}} can't move to a new name",
   TOO_MANY_CHANGES:
     'has {{count}} changes, more than the {{limit}} LibreChat takes in one save: save some of them first, then the rest',
+  azure_base_url_required: 'is required for a serverless group',
+  azure_instance_required: 'is required unless the group is serverless',
+  azure_model_unresolved:
+    "include {{model}}, which has no deployment name or API version of its own or the group's",
+  azure_model_duplicate: 'include {{model}}, which group {{group}} serves already',
+  invalid_azure_groups:
+    "don't resolve: a model is served twice or lacks a deployment name or API version, a group lacks its instance or base URL, or a key references a variable that isn't set",
+  invalid_vertex_config:
+    "isn't a Vertex AI setup LibreChat can load: a variable isn't set, a project ID, region or deployment name isn't one URL path segment, or librechat.yaml configures no Vertex AI",
+  invalid_param_definitions:
+    "aren't parameter definitions LibreChat can load: each key must be a parameter of the chosen parameter set",
+  unknown_spec_endpoint: "isn't a built-in endpoint or a configured custom endpoint",
+  spec_endpoint_hidden:
+    "is {{endpoint}}, which this profile hides: LibreChat refuses a spec for it until it's shown again",
 };
 
 /**
@@ -397,6 +412,86 @@ export function validateLoadableEndpoint(
     ...(hasText(entry.baseURL) ? [] : [issue('baseURL', 'required')]),
     ...(hasModels ? [] : [issue('models.default', 'models_required')]),
   ];
+}
+
+function azureIssue(
+  base: string,
+  entryPath: string,
+  code: string,
+  identity: string | undefined,
+  params: Record<string, string> = {},
+): t.ConfigIssue {
+  return {
+    path: `${base}.${entryPath}`,
+    code,
+    params,
+    message: describeIssueCode(code, params, code),
+    entryIdentity: identity,
+    entryPath,
+  };
+}
+
+/** Why one model of a non-serverless group can't be mapped: no deployment name or API version, its own or the group's. */
+function isUnresolvedModel(model: t.ConfigValue, group: t.ConfigRecord): boolean {
+  const groupDeployment = hasText(group.deploymentName);
+  const groupVersion = hasText(group.version);
+  if (typeof model === 'boolean') return !groupDeployment || !groupVersion;
+  const config = isConfigRecord(model) ? model : {};
+  return (
+    (!hasText(config.deploymentName) && !groupDeployment) ||
+    (!hasText(config.version) && !groupVersion)
+  );
+}
+
+/** Each model the merged Azure groups serve, with the groups that serve it. */
+export function modelsByGroup(groups: t.ConfigValue): Map<string, string[]> {
+  const served = new Map<string, string[]>();
+  for (const group of Array.isArray(groups) ? groups : []) {
+    const name = getEntryKey(group, 'group');
+    const models = isConfigRecord(group) ? group.models : undefined;
+    if (name === undefined || !isConfigRecord(models)) continue;
+    for (const model of Object.keys(models)) {
+      served.set(model, [...(served.get(model) ?? []), name]);
+    }
+  }
+  return served;
+}
+
+/**
+ * What an Azure group needs for LibreChat to resolve it (`validateAzureGroups`;
+ * the server refuses a write whose groups don't, `invalid_azure_groups`): a
+ * serverless group a base URL, any other an instance name and, for each
+ * model, a deployment name and an API version (its own or the group's); and
+ * no model another group also serves (`servedBy`: each model's groups).
+ */
+export function validateResolvableGroup(
+  entry: t.ConfigValue,
+  index: number,
+  identity: string | undefined,
+  servedBy: ReadonlyMap<string, readonly string[]>,
+): t.ConfigIssue[] {
+  if (!isConfigRecord(entry)) return [];
+  const base = `${AZURE_GROUPS_PATH}.${index}`;
+  const models = isConfigRecord(entry.models) ? entry.models : {};
+  const issues: t.ConfigIssue[] = [];
+  const serverless = entry.serverless === true;
+  if (serverless && !hasText(entry.baseURL)) {
+    issues.push(azureIssue(base, 'baseURL', 'azure_base_url_required', identity));
+  }
+  if (!serverless && !hasText(entry.instanceName)) {
+    issues.push(azureIssue(base, 'instanceName', 'azure_instance_required', identity));
+  }
+  for (const [model, config] of Object.entries(models)) {
+    const owner = servedBy.get(model)?.find((group) => group !== identity);
+    if (owner !== undefined) {
+      issues.push(
+        azureIssue(base, 'models', 'azure_model_duplicate', identity, { model, group: owner }),
+      );
+    } else if (!serverless && isUnresolvedModel(config, entry)) {
+      issues.push(azureIssue(base, 'models', 'azure_model_unresolved', identity, { model }));
+    }
+  }
+  return issues;
 }
 
 /**

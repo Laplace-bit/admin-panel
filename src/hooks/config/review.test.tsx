@@ -1036,4 +1036,25 @@ describe('"Revert all to librechat.yaml" with removals by key (keyedTombstones)'
     expect(result.current.count).toBe(0);
     expect(reviewRows(result.current)).toEqual([]);
   });
+
+  it('counts Azure groups per group only where the server derives them, beside a removal by key', () => {
+    const own = {
+      endpoints: {
+        azureOpenAI: {
+          groups: [
+            { group: 'eastus', version: '2025-01-01' },
+            { group: 'westus', instanceName: 'west', models: { 'gpt-4o': true } },
+          ],
+        },
+      },
+    };
+    const derived = createServerContract({
+      keyedTombstones: true,
+      endpointRederive: true,
+      azureGroupMergeKey: true,
+      azureGroupSecrets: true,
+    });
+    expect(renderOverrides(own, [removal], derived).result.current.count).toBe(3);
+    expect(renderOverrides(own, [removal], keyed).result.current.count).toBe(2);
+  });
 });

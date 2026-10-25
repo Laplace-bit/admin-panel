@@ -62,12 +62,15 @@ function renderSpecs(
     collectionEdits = {},
     showConfiguredOnly,
     contract = BUNDLED_CONFIG_CONTRACT,
+    outside = {},
   }: {
     onChange?: t.FieldRendererProps['onChange'];
     data?: t.ConfigValuesData;
     collectionEdits?: t.CollectionEdits;
     showConfiguredOnly?: boolean;
     contract?: t.ConfigContract;
+    /** Values outside `modelSpecs` the settings read (`interface.modelSelect`). */
+    outside?: t.FlatConfigMap;
   } = {},
 ) {
   const values = data ?? valuesDataFixture(baseLayersFixture());
@@ -88,6 +91,7 @@ function renderSpecs(
       parentPath="modelSpecs"
       parentValue={modelSpecs}
       getValue={(path, fallback) => {
+        if (path in outside) return outside[path];
         const key = path.slice('modelSpecs.'.length);
         return key in modelSpecs ? modelSpecs[key] : fallback;
       }}
@@ -621,6 +625,40 @@ describe('ModelSpecsRenderer', () => {
     expect(document.getElementById('modelSpecs-list-1-preset-topK')).not.toBeNull();
     expect(document.getElementById('modelSpecs-list-1-preset-top_p')).toBeNull();
     expect(document.getElementById('modelSpecs-list-1-preset-frequency_penalty')).toBeNull();
+  });
+});
+
+describe('the endpoint menu with no layer setting it', () => {
+  /** librechat.yaml has one spec and no `modelSelect`: LibreChat turned the menu off at startup. */
+  const yamlEffective: t.ConfigRecord = {
+    interface: { modelSelect: false },
+    modelSpecs: { list: [SPECS[0]] },
+  };
+  const data = valuesDataFixture(
+    baseLayersFixture(
+      baseConfigFixture({
+        config: yamlEffective,
+        yamlConfig: yamlEffective,
+        yamlPaths: ['modelSpecs.list'],
+        dbOverrides: {},
+      }),
+    ),
+  );
+  const outside = { 'interface.modelSelect': false };
+
+  it('keeps the value LibreChat derived at startup before it derives it again', () => {
+    renderSpecs({ list: [] }, { data, outside });
+    expect(screen.getByText('com_config_specs_empty_menu_off')).toBeTruthy();
+  });
+
+  it('follows the specs shown where LibreChat derives it again (specInterfaceRederive)', () => {
+    const contract = createServerContract({ specInterfaceRederive: true });
+    const { unmount } = renderSpecs({ list: [] }, { data, outside, contract });
+    expect(screen.queryByText('com_config_specs_empty_menu_off')).toBeNull();
+    expect(screen.getByText('com_config_specs_preview_none')).toBeTruthy();
+    unmount();
+    renderSpecs({ list: SPECS, addedEndpoints: ['openAI'] }, { data, outside, contract });
+    expect(screen.queryByText(/com_config_specs_added_menu_off/)).toBeNull();
   });
 });
 

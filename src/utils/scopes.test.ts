@@ -20,7 +20,7 @@ import {
   listScopeOverrideItems,
   countDocumentOverrides,
 } from './scopes';
-import { resolveWriteRules } from '@/constants';
+import { resolveWriteRules, BUNDLED_CONFIG_FEATURES } from '@/constants';
 
 function scope(overrides: Partial<t.ConfigScope> & Pick<t.ConfigScope, 'principalId'>) {
   return {
@@ -102,6 +102,18 @@ describe('scopeOverrideEntries', () => {
         modelSpecs: { list: [{ name: 'spec-a', label: 'A' }] },
       }).overrideEntries,
     ).toEqual({ 'endpoints.custom': ['Claude'] });
+  });
+
+  it('names Azure groups one by one only where the panel edits them by name', () => {
+    const overrides = {
+      endpoints: { azureOpenAI: { groups: [{ group: 'eastus', models: { mini: true } }] } },
+    };
+    const inert = { ...BUNDLED_CONFIG_FEATURES, azureGroupMergeKey: true, azureGroupSecrets: true };
+    expect(scopeOverrideEntries(overrides).overrideEntries).toEqual({});
+    expect(scopeOverrideEntries(overrides, inert).overrideEntries).toEqual({});
+    expect(
+      scopeOverrideEntries(overrides, { ...inert, endpointRederive: true }).overrideEntryPaths,
+    ).toEqual({ 'endpoints.azureOpenAI.groups': { eastus: ['models.mini'] } });
   });
 
   it('lists the settings each entry sets, its name left out', () => {
@@ -390,8 +402,9 @@ describe('scopeGateSkipReason', () => {
         baseOnlySections: ['filters', 'turnstile'],
         baseOnlyPaths: [],
         deploymentOnlyPaths: { includedTools: 'operator' },
+        derivedPaths: [],
       },
-      true,
+      { ...BUNDLED_CONFIG_FEATURES, preAuthBaseOverrides: true },
     );
     expect(scopeGateSkipReason('includedTools', rules)).toBe('yamlOnly');
     expect(scopeGateSkipReason('rateLimits.fileUploads.ipMax', rules)).toBeUndefined();

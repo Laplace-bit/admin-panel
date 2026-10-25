@@ -246,3 +246,6 @@ export interface SpecPresetFieldProps extends SpecFieldProps {
 export interface SpecIconFieldProps extends Omit<SpecFieldProps, 'index'> {
   keyName?: 'iconURL' | 'groupIcon';
 }
+
+/** An interface control model specs decide (`SPEC_CONTROL_KEYS`). */
+export type SpecControlKey = 'modelSelect' | 'parameters' | 'presets';

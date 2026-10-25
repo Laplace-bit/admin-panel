@@ -266,6 +266,12 @@ export interface EntryFieldChipsProps {
   onChange: (value: ConfigValue) => void;
   /** Goes back to the value of the layer beneath (default: writes that value). */
   onRevert?: () => boolean | void;
+  /**
+   * False where going back restores nothing: a secret the target stores over
+   * one the layer beneath holds hidden, which only the entry's own revert
+   * takes back.
+   */
+  revertable?: boolean;
   disabled?: boolean;
 }
 
@@ -364,6 +370,18 @@ export interface EndpointCreatorProps {
   returnFocus?: () => HTMLElement | null;
 }
 
+/** Props of an endpoint's "Parameters from" row: the built-in parameter set its users get. */
+export interface ParamSetRowProps {
+  path: string;
+  field: SchemaField;
+  value: ConfigValue;
+  chips?: ReactNode;
+  disabled?: boolean;
+  onChange: (value: ConfigValue) => void;
+  /** Unset, LibreChat uses OpenRouter's parameter set for this endpoint (`customParamsExpansion`). */
+  openRouter?: boolean;
+}
+
 /** Props of an endpoint's parameter definitions (WS10 CE-6). */
 export interface ParamDefinitionsRowProps {
   /** Data path of the list (`endpoints.custom.3.customParams.paramDefinitions`). */
@@ -374,6 +392,14 @@ export interface ParamDefinitionsRowProps {
   lowerKeys: ReadonlySet<string>;
   /** The parameter set whose built-in parameters can be overridden (`custom`, `anthropic`, …). */
   paramSet?: string;
+  /**
+   * LibreChat completes each definition from the parameter set
+   * (`customParamsExpansion`), an override's too: a built-in parameter is
+   * added as `{ key, default }`, as librechat.yaml writes it.
+   */
+  compact?: boolean;
+  /** LibreChat adds OpenRouter's parameters to this endpoint (`customParamsExpansion`). */
+  openRouterDefaults?: boolean;
   onChange: (value: ConfigValue) => void;
   disabled?: boolean;
   editSessionId?: number;

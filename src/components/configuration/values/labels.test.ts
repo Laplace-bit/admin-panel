@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
 import { describeEntryOverrides } from './labels';
+import { AZURE_GROUPS_PATH } from '@/constants';
 import i18n from '@/locales/i18n';
 
 const localize: t.LocalizeFn = (key, options) => i18n.t(key, options ?? {});
@@ -119,5 +120,42 @@ describe('describeEntryOverrides', () => {
         localize,
       )[1],
     ).toBe('Role: USER stores its own key for "acme-kb" too, which LibreChat sends to this one.');
+  });
+
+  it("says a removed or renamed Azure group leaves a profile's override as a group that can't resolve, so LibreChat ignores its group overrides", () => {
+    const partial = override(user, { settings: ['version'], secrets: ['apiKey'] });
+    const standalone = override(eng, { settings: ['instanceName', 'version'] });
+    expect(
+      describeEntryOverrides(
+        [partial, standalone],
+        { kind: 'removed', name: 'rv-west' },
+        localize,
+        AZURE_GROUPS_PATH,
+      ),
+    ).toEqual([
+      'Role: USER overrides "rv-west". The override stays, as a group of its own without an instance or base URL, so LibreChat ignores every Azure group override Role: USER stores until it is removed there.',
+      'Group: Engineering overrides "rv-west". The override stays, so its members get a leftover "rv-west" until it is removed there.',
+      'Role: USER stores its own key for "rv-west", which stays with its override.',
+    ]);
+    expect(
+      describeEntryOverrides(
+        [partial],
+        { kind: 'renamed', name: 'rv-west', next: 'rv-north', taken: false },
+        localize,
+        AZURE_GROUPS_PATH,
+      )[0],
+    ).toBe(
+      'Role: USER overrides "rv-west". The override stays under that name, as a group of its own without an instance or base URL, so its members get "rv-north" without it, and LibreChat ignores every other Azure group override Role: USER stores until it is removed there.',
+    );
+    expect(
+      describeEntryOverrides(
+        [partial],
+        { kind: 'removed', name: 'rv-west' },
+        localize,
+        'endpoints.custom',
+      )[0],
+    ).toBe(
+      'Role: USER overrides "rv-west". The override stays, so its members get a leftover "rv-west" until it is removed there.',
+    );
   });
 });

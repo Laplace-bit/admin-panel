@@ -23,6 +23,7 @@ import {
 } from '@/test/coverage';
 import { renderTab, PAGE_TREE, RAW_TREE } from '@/test/page';
 import { getValueAtPath, setValueAtPath } from '@/utils';
+import { createServerContract } from '@/test/fixtures';
 import { YAML_MANAGED_FIELDS } from '@/constants';
 import { AzureGroupsTable } from '../AzureGroups';
 
@@ -178,5 +179,68 @@ describe('AI providers tab: keys the schema does not know', () => {
     const data = setValueAtPath(SAMPLE_DATA, `${AZURE_GROUPS}.0.${UNKNOWN_KEY}`, 'kept as is');
     renderAzureDetails(findSchemaField(RAW_TREE, AZURE_GROUPS), getValueAtPath(data, AZURE_GROUPS));
     expect(controlAt(`${AZURE_GROUPS}.0.${UNKNOWN_KEY}`)).toHaveTextContent('kept as is');
+  });
+});
+
+/** A server that derives Azure groups and Vertex AI from overrides again: both are edited in the panel. */
+const REDERIVE = createServerContract({
+  endpointRederive: true,
+  azureGroupMergeKey: true,
+  azureGroupSecrets: true,
+});
+
+/** The providers tab on such a server, with the editor of the first Azure group open. */
+function renderGroupEditor(tree: t.SchemaField[], yaml: t.ConfigRecord) {
+  const view = renderTab({
+    tab: 'providers',
+    expandAll: true,
+    tree: withProviders(tree, (key) => key === 'azureOpenAI'),
+    yaml,
+    contract: REDERIVE,
+  });
+  fireEvent.click(screen.getAllByRole('button', { name: /^Edit Azure group/ })[0]);
+  return view;
+}
+
+describe('AI providers tab, LibreChat deriving groups again (endpointRederive)', () => {
+  it('renders every setting of an Azure group in its editor', () => {
+    renderGroupEditor(PAGE_TREE, SAMPLE_DATA);
+    const groups = findSchemaField(RAW_TREE, AZURE_GROUPS)!;
+    const shown = renderedLeaves(groups, SAMPLE_DATA);
+    expect(missingLeaves(groups, shown, HIDDEN)).toEqual([]);
+  });
+
+  it.each([AZURE_GROUPS, `${AZURE_GROUPS}.[].models`])(
+    'under %s: a newer schema setting gets a control, and an edit is saved with its group',
+    (parent) => {
+      const tree = withSyntheticFields(PAGE_TREE, parent);
+      const field = findSchemaField(tree, parent)!;
+      const view = renderGroupEditor(tree, SAMPLE_DATA);
+      expect(editSynthetic(objectDataPath(field, SAMPLE_DATA), view.plan)).toEqual([]);
+    },
+  );
+
+  it('lists keys the schema does not know in the group editor', () => {
+    const data = setValueAtPath(SAMPLE_DATA, `${AZURE_GROUPS}.0.${UNKNOWN_KEY}`, 'kept as is');
+    renderGroupEditor(PAGE_TREE, data);
+    const list = unknownSettingsAt(`${AZURE_GROUPS}.0`);
+    expect(list).toHaveTextContent(UNKNOWN_KEY);
+    expect(list).toHaveTextContent('kept as is');
+  });
+
+  it('edits Vertex AI settings a newer schema adds, saved at their path', () => {
+    const vertex = OBJECTS.find((field) => field.path === 'endpoints.anthropic.vertex')!;
+    const yaml = sampleOf(vertex);
+    const view = renderTab({
+      tab: 'providers',
+      expandAll: true,
+      tree: withProviders(
+        withSyntheticFields(PAGE_TREE, vertex.path),
+        (key) => key === 'anthropic',
+      ),
+      yaml,
+      contract: REDERIVE,
+    });
+    expect(editSynthetic(objectDataPath(vertex, yaml), view.plan)).toEqual([]);
   });
 });

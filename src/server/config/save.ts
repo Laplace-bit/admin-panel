@@ -46,10 +46,10 @@ import {
   requireAnyCapability,
   requireAllSectionCapabilities,
 } from '../capabilities';
+import { readsAsWritten, readConfiguredValues, normalizeAppServiceKeys } from './normalize';
 import { apiErrorMessage, apiFetch } from '../utils/api';
 import { BASE_CONFIG_PRINCIPAL_ID } from '../constants';
 import { MISSING_SCOPE_MESSAGE } from '../scopes/read';
-import { normalizeAppServiceKeys } from './normalize';
 import { safeFieldPath } from '../utils/validation';
 import { getApiBaseUrl } from '../utils/url';
 import { readConfigContract } from './meta';
@@ -108,17 +108,29 @@ async function readStoredLayer(
   };
 }
 
-/** The target's stored overrides (see `readStoredLayer`). */
-async function readStoredOverrides(target: t.WriteTargetRef): Promise<t.ConfigRecord> {
-  return (await readStoredLayer(target)).stored;
-}
-
-/** The base config: merged with the base overrides, or librechat.yaml alone (`baseOnly`). */
-async function readBaseConfig(baseOnly: boolean): Promise<t.ConfigRecord> {
+/**
+ * The base config: merged with the base overrides, or librechat.yaml alone
+ * (`baseOnly`). Where the server derives values the panel edits as written
+ * (`readConfiguredValues`), those are read as written: librechat.yaml's, and
+ * for the merged config with the base document (`base`, else read) over them.
+ */
+async function readBaseConfig(
+  baseOnly: boolean,
+  contract: t.ConfigContract,
+  base?: Pick<t.WriteSnapshot, 'stored' | 'tombstones'>,
+): Promise<t.ConfigRecord> {
   const response = await apiFetch(`/api/admin/config/base${baseOnly ? '?baseOnly=true' : ''}`);
   if (!response.ok) throw new Error(`Failed to read the base config: ${response.status}`);
   const { config } = await readJson<{ config: t.ConfigRecord }>(response);
-  return normalizeAppServiceKeys(config ?? {});
+  const appConfig = config ?? {};
+  if (baseOnly || !readsAsWritten(contract.features)) {
+    return normalizeAppServiceKeys(appConfig, readConfiguredValues(contract, appConfig.config));
+  }
+  const document = base ?? (await readStoredLayer({ type: 'base' }));
+  return normalizeAppServiceKeys(
+    appConfig,
+    readConfiguredValues(contract, appConfig.config, document),
+  );
 }
 
 /**
@@ -126,9 +138,15 @@ async function readBaseConfig(baseOnly: boolean): Promise<t.ConfigRecord> {
  * overrides and tombstones and the layer beneath it (librechat.yaml for base,
  * the merged base config for a profile).
  */
-async function readWriteSnapshot(target: t.WriteTargetRef): Promise<t.WriteSnapshot> {
+async function readWriteSnapshot(
+  target: t.WriteTargetRef,
+  contract: t.ConfigContract,
+): Promise<t.WriteSnapshot> {
   const isBase = target.type === 'base';
-  const [own, lower] = await Promise.all([readStoredLayer(target), readBaseConfig(isBase)]);
+  const [own, lower] = await Promise.all([
+    readStoredLayer(target),
+    readBaseConfig(isBase, contract),
+  ]);
   return { ...own, lower, lowerKind: isBase ? 'yaml' : 'inherited' };
 }
 
@@ -606,14 +624,16 @@ async function verifyTarget(
   target: t.WriteTargetRef,
   plan: t.WritePlan,
   snapshot: t.WriteSnapshot,
+  contract: t.ConfigContract,
 ): Promise<t.SkippedChange[]> {
   try {
-    const stored = await readStoredOverrides(target);
+    const layer = await readStoredLayer(target);
+    const { stored } = layer;
     if (target.type !== 'base') return verifyWrite(plan, snapshot, stored);
-    const first = verifyWrite(plan, snapshot, stored, await readBaseConfig(false));
+    const first = verifyWrite(plan, snapshot, stored, await readBaseConfig(false, contract, layer));
     if (!first.some((item) => item.reason === 'notApplied')) return first;
     await delay(VERIFY_RETRY_MS);
-    return verifyWrite(plan, snapshot, stored, await readBaseConfig(false));
+    return verifyWrite(plan, snapshot, stored, await readBaseConfig(false, contract));
   } catch {
     return [];
   }
@@ -683,7 +703,7 @@ async function applyFieldWrites(
     [...outcome.dropped, ...outcome.reported].map((item) => item.fieldPath),
   );
   /** What the server reported is worded by its reasons; a read-back finding at the same path is the same change. */
-  const verified = (await verifyTarget(target, plan, snapshot)).filter(
+  const verified = (await verifyTarget(target, plan, snapshot, contract)).filter(
     (item) => !reportedPaths.has(item.fieldPath),
   );
   return writtenResult(plan, outcome, verified);
@@ -826,13 +846,15 @@ async function verifyBatch(
   plan: t.WritePlan,
   snapshot: t.WriteSnapshot,
   outcome: BatchOutcome,
-  features: t.ConfigFeatures,
+  contract: t.ConfigContract,
 ): Promise<t.SkippedChange[]> {
   const reported = createPathIndex(
     [...outcome.dropped, ...outcome.reported].map((item) => item.fieldPath),
   );
-  const readsEffective = target.type === 'base' && features.awaitedInvalidation;
-  const effective = readsEffective ? await readBaseConfig(false).catch(() => undefined) : undefined;
+  const readsEffective = target.type === 'base' && contract.features.awaitedInvalidation;
+  const effective = readsEffective
+    ? await readBaseConfig(false, contract).catch(() => undefined)
+    : undefined;
   return verifyWrite(plan, snapshot, outcome.stored ?? plan.storedAfter, effective).filter(
     (item) => !pathIndexOverlaps(reported, item.fieldPath),
   );
@@ -873,7 +895,7 @@ async function applyBatch(
 ): Promise<t.ApplyConfigChangesResult> {
   const changes = sanitizeOps(ops);
   for (let attempt = 0; ; attempt++) {
-    const snapshot = await readWriteSnapshot(target);
+    const snapshot = await readWriteSnapshot(target, contract);
     const revision = toRevisionPrecondition(snapshot.revision);
     const comparable = revision !== undefined && expectedRevision !== undefined;
     if (comparable && revision !== expectedRevision) {
@@ -893,7 +915,7 @@ async function applyBatch(
         ...(outcome.partial && { partiallyWritten: true }),
       };
     }
-    const verified = await verifyBatch(target, plan, snapshot, outcome, contract.features);
+    const verified = await verifyBatch(target, plan, snapshot, outcome, contract);
     return writtenResult(plan, outcome, verified);
   }
 }
@@ -920,7 +942,7 @@ export async function applyConfigChanges(
   if (usesChangeBatch(contract.features)) {
     return applyBatch(target, ops, contract, rules, expectedRevision);
   }
-  const snapshot = await readWriteSnapshot(target);
+  const snapshot = await readWriteSnapshot(target, contract);
   const plan = planConfigChanges(
     sanitizeOps(ops),
     snapshot,

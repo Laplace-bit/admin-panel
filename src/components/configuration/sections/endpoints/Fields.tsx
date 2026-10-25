@@ -328,21 +328,16 @@ export function EndpointRefRow({
 }
 
 /** "Parameters from": which built-in parameter panel the endpoint's users get. */
-export function ParamSetRow(props: {
-  path: string;
-  field: t.SchemaField;
-  value: t.ConfigValue;
-  chips?: ReactNode;
-  disabled?: boolean;
-  onChange: (value: t.ConfigValue) => void;
-}) {
+export function ParamSetRow({ openRouter = false, ...props }: t.ParamSetRowProps) {
   const localize = useLocalize();
   const options = paramSetOptions(localize).filter((option) => option.value !== DEFAULT_PARAM_SET);
   return (
     <ReferenceRow
       {...props}
       options={options}
-      defaultLabel={localize('com_config_ce_params_default')}
+      defaultLabel={localize(
+        openRouter ? 'com_config_ce_params_default_openrouter' : 'com_config_ce_params_default',
+      )}
     />
   );
 }

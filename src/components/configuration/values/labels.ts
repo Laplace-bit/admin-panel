@@ -1,6 +1,7 @@
 import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
 import { MASKED_SECRET, isEnvReference } from '@/utils';
+import { AZURE_GROUPS_PATH } from '@/constants';
 import { getFieldMeta } from '../meta';
 
 const MAX_TEXT_LENGTH = 40;
@@ -136,19 +137,42 @@ function entryNoteKeys(change: t.EntryOverrideChange): [string?, string?, string
   }
 }
 
+/** The settings that say where an Azure group is served; a group needs one of its own to resolve. */
+const AZURE_DESTINATION_KEYS: ReadonlySet<string> = new Set(['instanceName', 'baseURL']);
+
+/**
+ * The locale key of a profile's override of an Azure group that a removal or
+ * rename leaves as a group of its own (`leavesUnresolvedGroup`): LibreChat
+ * resolves a profile's groups together, so one that doesn't resolve makes it
+ * ignore them all. None for other changes, or other collections.
+ */
+function orphanedGroupKey(change: t.EntryOverrideChange, collection?: string): string | undefined {
+  if (collection !== AZURE_GROUPS_PATH) return undefined;
+  if (change.kind === 'removed') return 'com_config_entry_profiles_group_removed';
+  if (change.kind === 'renamed' && !change.taken) return 'com_config_entry_profiles_group_renamed';
+  return undefined;
+}
+
+/** Whether a profile's override of an Azure group sets no instance or base URL, so left alone the group can't resolve. */
+function leavesUnresolvedGroup(override: t.EntryOverride): boolean {
+  return !override.settings.some((setting) => AZURE_DESTINATION_KEYS.has(setting));
+}
+
 /**
  * What a change in Base does to the profiles that override the entry by
  * name (`EntryOverrideChange`), one sentence each: their overrides, the keys
  * of their own they store there, and their hides. A rename or removal leaves
  * them under the old name, a moved destination stops their keys (the
  * profiles given are those `findUnboundOverrides` finds), and a rename or a
- * new entry onto a name they override takes them. Empty when no profile is
- * affected.
+ * new entry onto a name they override takes them. An Azure group's
+ * (`collection`) left without an instance or base URL makes LibreChat ignore
+ * every group override of the profile. Empty when no profile is affected.
  */
 export function describeEntryOverrides(
   overrides: readonly t.EntryOverride[],
   change: t.EntryOverrideChange,
   localize: t.LocalizeFn,
+  collection?: string,
 ): string[] {
   const next = change.kind === 'renamed' ? change.next : '';
   const sentence = (key: string | undefined, matching: t.EntryOverride[]): string[] =>
@@ -163,10 +187,14 @@ export function describeEntryOverrides(
           }),
         ];
   const [overridesKey, keysKey, hidesKey] = entryNoteKeys(change);
+  const own = overrides.filter((override) => override.overrides);
+  const orphanKey = orphanedGroupKey(change, collection);
+  const orphaned = orphanKey ? own.filter(leavesUnresolvedGroup) : [];
   return [
+    ...sentence(orphanKey, orphaned),
     ...sentence(
       overridesKey,
-      overrides.filter((override) => override.overrides),
+      own.filter((override) => !orphaned.includes(override)),
     ),
     ...sentence(
       keysKey,
@@ -184,8 +212,8 @@ export function describeOverrideNotes(
   notes: readonly t.EntryOverrideNote[],
   localize: t.LocalizeFn,
 ): string[] {
-  return notes.flatMap(({ overrides, change }) =>
-    describeEntryOverrides(overrides, change, localize),
+  return notes.flatMap(({ overrides, change, collection }) =>
+    describeEntryOverrides(overrides, change, localize, collection),
   );
 }
 

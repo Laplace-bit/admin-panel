@@ -95,15 +95,28 @@ function displayValue(value: t.ConfigValue): string {
 }
 
 /**
- * A built-in parameter as a stored definition. LibreChat expands
- * librechat.yaml's definitions over the built-in ones (`parseCustomParams`)
- * but serves an override's as stored, and its client replaces the built-in
- * definition with it whole, so a bare `{ key, default }` would lose its type,
- * component and label: store the full definition, as LibreChat expands it.
+ * A built-in parameter as a stored definition. Before
+ * `customParamsExpansion`, LibreChat expands librechat.yaml's definitions
+ * over the built-in ones (`parseCustomParams`) but serves an override's as
+ * stored, and its client replaces the built-in definition with it whole, so a
+ * bare `{ key, default }` would lose its type, component and label: store the
+ * full definition, as LibreChat expands it.
  */
 export function builtInDefinition(builtIn: SettingDefinition): t.ConfigRecord {
   const definition: t.ConfigValue = JSON.parse(JSON.stringify(builtIn));
   return { ...asConfigRecord(definition), optionType: 'custom' };
+}
+
+/**
+ * A built-in parameter as librechat.yaml writes it, `{ key, default }`, which
+ * LibreChat completes from the parameter set (`customParamsExpansion`) for
+ * an override as for librechat.yaml.
+ */
+function compactDefinition(builtIn: SettingDefinition): t.ConfigRecord {
+  const definition = asConfigRecord(JSON.parse(JSON.stringify(builtIn)) as t.ConfigValue);
+  return definition.default === undefined
+    ? { key: builtIn.key }
+    : { key: builtIn.key, default: definition.default };
 }
 
 /** Whether a definition is the built-in one with at most its default changed (or only `{ key, default }`). */
@@ -605,6 +618,8 @@ export function ParamDefinitionsRow({
   value,
   lowerKeys,
   paramSet,
+  compact = false,
+  openRouterDefaults = false,
   onChange,
   disabled,
   editSessionId,
@@ -643,6 +658,15 @@ export function ParamDefinitionsRow({
             {labelForPath(path, localize)}
           </span>
           <p className="settings-help m-0">{localize('com_config_ce_params_desc')}</p>
+          {compact && (
+            <p className="settings-help m-0">
+              {localize(
+                openRouterDefaults
+                  ? 'com_config_ce_params_expanded_openrouter'
+                  : 'com_config_ce_params_expanded',
+              )}
+            </p>
+          )}
         </div>
         {chips && <span className="flex flex-wrap items-center gap-1.5">{chips}</span>}
       </div>
@@ -674,7 +698,8 @@ export function ParamDefinitionsRow({
                 placeholder={localize('com_config_ce_param_add_builtin')}
                 onChange={(key) => {
                   const builtIn = builtIns.get(key);
-                  add(builtIn ? builtInDefinition(builtIn) : { key });
+                  if (!builtIn) add({ key });
+                  else add(compact ? compactDefinition(builtIn) : builtInDefinition(builtIn));
                 }}
                 aria-label={localize('com_config_ce_param_add_builtin')}
               />

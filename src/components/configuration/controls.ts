@@ -37,22 +37,23 @@ function isCollectionField(field: t.SchemaField): boolean {
   return !!field.isArray || field.type === 'record';
 }
 
+/** The schema node one key below `field`: an array element or record value, else its setting `key`. */
+export function childSchemaField(field: t.SchemaField, key: string): t.SchemaField | null {
+  if (isCollectionField(field)) return elementField(field, key);
+  return field.children?.find((child) => child.key === key) ?? null;
+}
+
 /**
  * Finds the schema node for a dot-path, stepping into array elements and record
  * values by index or key (`endpoints.custom.3.headers` → the custom endpoint
  * `headers` record). Returns null when the path leaves the schema.
  */
 export function findSchemaField(tree: t.SchemaField[], path: string): t.SchemaField | null {
-  let fields: t.SchemaField[] | undefined = tree;
-  let current: t.SchemaField | null = null;
-  for (const segment of path.split('.')) {
-    if (current && isCollectionField(current)) {
-      current = elementField(current, segment);
-    } else {
-      current = fields?.find((f) => f.key === segment) ?? null;
-    }
+  const [first, ...rest] = path.split('.');
+  let current = tree.find((field) => field.key === first) ?? null;
+  for (const segment of rest) {
     if (!current) return null;
-    fields = current.children;
+    current = childSchemaField(current, segment);
   }
   return current;
 }

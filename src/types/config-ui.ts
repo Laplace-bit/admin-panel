@@ -586,11 +586,19 @@ export interface ConfigWriteResult {
   skipped: SkippedChange[];
 }
 
-/** Why a field is managed only in librechat.yaml: read once at startup, or not re-processed after overrides. */
-export type ManagedNoticeKind = 'startup' | 'yaml';
+/**
+ * Why a field is managed only in librechat.yaml: read once at startup, kept
+ * from librechat.yaml whatever an override stores (the server's base-only
+ * paths), or not re-processed after overrides.
+ */
+export type ManagedNoticeKind = 'startup' | 'baseOnly' | 'yaml';
 
 export interface ManagedNoticeProps {
-  /** `startup`: LibreChat reads the field only at startup (`STARTUP_ONLY_FIELDS`); `yaml` by default. */
+  /**
+   * `startup`: LibreChat reads the field only at startup (`STARTUP_ONLY_FIELDS`);
+   * `baseOnly`: the server keeps librechat.yaml's value (`rules.baseOnlyPaths`);
+   * `yaml` by default.
+   */
   kind?: ManagedNoticeKind;
   /** How many settings the notice covers (consecutive startup-only fields share one). */
   count?: number;

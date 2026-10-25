@@ -168,7 +168,7 @@ export function useEntryOverrideNotes(collection: string): t.EntryOverrideNotes 
         ? findEntryOverrides(scopes, collection, change.name, keyedTombstones)
         : [];
       const overrides = found.length > 0 ? affected(found) : found;
-      return overrides.length > 0 ? [{ change, overrides }] : [];
+      return overrides.length > 0 ? [{ change, overrides, collection }] : [];
     };
     return {
       left: (name, rename) =>

@@ -24,7 +24,7 @@ const IDENTITY_KEYS: Readonly<Record<string, string>> = {
 /** Keys tried, in order, to identify the entries of other lists of objects. */
 const IDENTITY_CANDIDATES = ['name', 'group', 'id', 'key', 'label', 'title'];
 
-/** Lists LibreChat merges with librechat.yaml by name; saving one never takes over the whole list. */
+/** Lists LibreChat merges with librechat.yaml by name, unless the input says which (`mergedLists`). */
 const MERGED_COLLECTIONS: ReadonlySet<string> = new Set(['endpoints.custom']);
 
 /** List fields where an empty list allows nothing (no file types; no private addresses). */
@@ -196,7 +196,8 @@ function resetWarning(
  * saved list replaces the inherited one users currently get.
  */
 function ownershipWarning(path: string, after: t.ConfigValue, ctx: DiffContext): t.ChangeWarning[] {
-  if (!Array.isArray(after) || MERGED_COLLECTIONS.has(stripIndices(path))) return [];
+  const merged = ctx.input.mergedLists ?? MERGED_COLLECTIONS;
+  if (!Array.isArray(after) || merged.has(stripIndices(path))) return [];
   if (ctx.input.isOwned(path)) return [];
   const lower = ctx.input.lowerAt(path)?.value;
   if (!Array.isArray(lower) || lower.length === 0) return [];

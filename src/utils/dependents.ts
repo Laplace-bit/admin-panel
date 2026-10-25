@@ -104,7 +104,9 @@ const IMPORTED_NAME_NOTES: Readonly<
  * a target that hides the custom endpoints `hidden` names
  * (`keyedTombstones`), as notes: the imported model specs that select one,
  * and the hidden names of an imported allow-list, or that it allows none.
- * `target` names the target ("Role: USER").
+ * `target` names the target ("Role: USER"). A server that refuses such
+ * specs (`refusesSpecs`: `specInterfaceRederive`) gets no note on them: the
+ * import's pre-flight names them as issues instead.
  */
 export function describeImportedHiddenUses(
   path: string,
@@ -112,11 +114,12 @@ export function describeImportedHiddenUses(
   hidden: ReadonlySet<string>,
   target: string,
   localize: t.LocalizeFn,
+  refusesSpecs = false,
 ): string[] {
   if (hidden.size === 0) return [];
   const uses = findHiddenEndpointUses(setValueAtPath({}, path, value), hidden);
   const specs =
-    uses.specs.length > 0
+    uses.specs.length > 0 && !refusesSpecs
       ? [
           localize('com_config_specs_hidden_endpoint', {
             name: target,

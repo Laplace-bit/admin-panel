@@ -90,6 +90,8 @@ export interface EntryOverrideNotes {
 export interface EntryOverrideNote {
   change: EntryOverrideChange;
   overrides: EntryOverride[];
+  /** The collection of the entry (`endpoints.azureOpenAI.groups`), which words some changes its own way. */
+  collection?: string;
 }
 
 export type ScopeSelection = { type: 'BASE' } | { type: 'SCOPE'; scope: ConfigScope };

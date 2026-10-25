@@ -1,9 +1,14 @@
 import { PrincipalType } from 'librechat-data-provider';
 import type { AdminGroup, AdminUserSearchResult } from '@librechat/data-schemas';
 import type * as t from '@/types';
-import { BASE_PRINCIPAL, KEYED_COLLECTIONS, getScopeGateReason } from '@/constants';
+import {
+  BASE_PRINCIPAL,
+  KEYED_COLLECTIONS,
+  getScopeGateReason,
+  BUNDLED_CONFIG_FEATURES,
+} from '@/constants';
+import { getEntryKey, mergesByKey, getKeyedCollection } from './collections';
 import { flattenObject, getValueAtPath, isConfigRecord } from './format';
-import { getEntryKey, getKeyedCollection } from './collections';
 import { isSecretPath, isSecretPreviewPath } from './secrets';
 import { entryIdentityOf, parseKeyedPath } from './keyed';
 
@@ -141,11 +146,12 @@ export function formatScopeName(scope: Pick<t.ConfigScope, 'name' | 'email'>): s
  */
 export function scopeOverrideEntries(
   overrides: t.ConfigRecord,
+  features: t.ConfigFeatures = BUNDLED_CONFIG_FEATURES,
 ): Required<Pick<t.ConfigScope, 'overrideEntries' | 'overrideEntryPaths'>> {
   const overrideEntries: Record<string, string[]> = {};
   const overrideEntryPaths: Record<string, Record<string, string[]>> = {};
   for (const collection of KEYED_COLLECTIONS.values()) {
-    if (collection.merge !== 'byKey') continue;
+    if (!mergesByKey(collection, features)) continue;
     const list = getValueAtPath(overrides, collection.path);
     if (!Array.isArray(list)) continue;
     const keys: string[] = [];
@@ -211,13 +217,19 @@ export function countScopeOverrides(scope: t.ConfigScope): number {
  * profile's are, its tombstones apart. A secret's masked preview stands in
  * for the secret a read withholds, and is not counted beside one it keeps.
  */
-export function countDocumentOverrides(overrides: t.ConfigRecord): number {
+export function countDocumentOverrides(
+  overrides: t.ConfigRecord,
+  features: t.ConfigFeatures = BUNDLED_CONFIG_FEATURES,
+): number {
   const paths = collectOverridePaths(overrides);
   const present = new Set(paths);
   const overridePaths = paths.filter(
     (path) => !isSecretPreviewPath(path) || !present.has(path.slice(0, -PREVIEW_SUFFIX.length)),
   );
-  return listScopeOverrideItems({ overridePaths, ...scopeOverrideEntries(overrides) }).length;
+  return listScopeOverrideItems({
+    overridePaths,
+    ...scopeOverrideEntries(overrides, features),
+  }).length;
 }
 
 /** Every path a profile overrides or hides. */

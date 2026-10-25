@@ -223,6 +223,94 @@ describe('PreviewDrawer on a server that resolves configs (resolvedApi)', () => 
     expect(screen.queryByText(/Their role and groups/)).not.toBeInTheDocument();
   });
 
+  describe('Azure groups and Vertex AI before and after LibreChat derives them', () => {
+    const groups = ['endpoints', 'azureOpenAI', 'groups'];
+    const userLayer = (ignored: t.PreviewIgnored[]): t.PreviewLayer => ({
+      principalType: PrincipalType.ROLE,
+      principalId: 'USER',
+      priority: 10,
+      isActive: true,
+      overrides: {
+        endpoints: {
+          azureOpenAI: { groups: [{ group: 'eastus', version: 'v2' }] },
+          anthropic: { vertex: { enabled: false } },
+        },
+      },
+      tombstones: ['endpoints.azureOpenAI.groups["sweden"].instanceName'],
+      ignored,
+    });
+    const clientWith = (layer: t.PreviewLayer): QueryClient => {
+      const client = seededClient();
+      client.setQueryData(['configPreview', 'role', 'USER'], {
+        ok: true,
+        preview: { ...JANE_PREVIEW, principals: undefined, layers: [layer] },
+      });
+      return client;
+    };
+    const roleTarget: t.PreviewTarget = {
+      type: 'PRINCIPAL',
+      principal: { principalType: PrincipalType.ROLE, principalId: 'USER', name: 'USER' },
+    };
+    const unapplied =
+      "Azure groups and Vertex AI read here as the admin overrides merge them, but LibreChat applies neither until its operator sets CONFIG_REDERIVE_ENDPOINTS: members get librechat.yaml's.";
+
+    it('says the groups a profile stores apply once the operator sets CONFIG_REDERIVE_ENDPOINTS', () => {
+      const layer = userLayer([
+        { segments: groups, reason: 'endpoint_rederive_off', tombstone: false },
+        {
+          segments: [...groups, 'sweden', 'instanceName'],
+          reason: 'endpoint_rederive_off',
+          tombstone: true,
+        },
+      ]);
+      renderDrawer(
+        roleTarget,
+        createServerContract({ resolvedApi: true, azureGroupMergeKey: true }),
+        clientWith(layer),
+      );
+      const layers = screen.getByRole('region', { name: 'Applied in this order' });
+      const reasons = layers.querySelectorAll('[data-ignored-reason="endpoint_rederive_off"]');
+      expect(reasons).toHaveLength(2);
+      expect(reasons[0]).toHaveTextContent(
+        "Stored, but LibreChat doesn't apply Azure group overrides until its operator sets CONFIG_REDERIVE_ENDPOINTS: the Azure clients read librechat.yaml's groups.",
+      );
+      expect(screen.getByText(unapplied)).toBeInTheDocument();
+    });
+
+    it('says a hide inside a group drops that group alone, with no note once LibreChat derives them', () => {
+      const layer = userLayer([
+        {
+          segments: [...groups, 'sweden', 'instanceName'],
+          reason: 'azure_groups_unresolved',
+          tombstone: true,
+        },
+        { segments: groups, reason: 'azure_groups_unresolved', tombstone: false },
+      ]);
+      renderDrawer(
+        roleTarget,
+        createServerContract({
+          resolvedApi: true,
+          azureGroupMergeKey: true,
+          endpointRederive: true,
+        }),
+        clientWith(layer),
+      );
+      const reasons = screen
+        .getByRole('region', { name: 'Applied in this order' })
+        .querySelectorAll('[data-ignored-reason="azure_groups_unresolved"]');
+      expect(reasons[0]).toHaveTextContent(
+        'Hiding this leaves the Azure group without what it needs to resolve, so LibreChat serves no such group. The other groups are served.',
+      );
+      expect(reasons[1]).toHaveTextContent(/These Azure groups don't resolve/);
+      expect(screen.queryByText(unapplied)).not.toBeInTheDocument();
+    });
+
+    it('adds no note on a server that leaves the merge key out', () => {
+      renderDrawer(roleTarget, RESOLVED_API, clientWith(userLayer([])));
+      expect(screen.queryByText(unapplied)).not.toBeInTheDocument();
+    });
+  });
+
   it('says why the server refused a preview', () => {
     renderDrawer({
       type: 'PRINCIPAL',

@@ -45,12 +45,18 @@ function readEntryKey(literal: string): string | null {
   }
 }
 
-/** A keyed path (`formatKeyedPath`) of a collection merged by key, read; null for any other path. */
-export function parseKeyedPath(path: string): t.KeyedPath | null {
+/**
+ * A keyed path (`formatKeyedPath`) of a collection merged by key, read; null
+ * for any other path. A list edited entry by entry only on some servers (Azure groups)
+ * has no keyed paths the panel edits: no flag says the server addresses its
+ * entries by key. With `gated`, its keyed paths are read too, to name what
+ * another client stored.
+ */
+export function parseKeyedPath(path: string, gated = false): t.KeyedPath | null {
   const open = path.indexOf(KEY_STEP_OPEN);
   if (open <= 0) return null;
   const collection = KEYED_COLLECTIONS.get(path.slice(0, open));
-  if (collection?.merge !== 'byKey') return null;
+  if (collection?.merge !== 'byKey' || (collection.gate !== undefined && !gated)) return null;
   const close = findStringEnd(path, open + 1);
   if (close === -1 || path[close + 1] !== ']') return null;
   const key = readEntryKey(path.slice(open + 1, close + 1));

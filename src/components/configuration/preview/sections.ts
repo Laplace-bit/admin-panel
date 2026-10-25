@@ -1,7 +1,44 @@
 import yaml from 'js-yaml';
 import type * as t from '@/types';
+import { isConfigValueEqual, maskStoredSecrets, getValueAtPath } from '@/utils';
 import { SECTION_META, fallbackSectionTitle } from '../configMeta';
-import { isConfigValueEqual, maskStoredSecrets } from '@/utils';
+import { AZURE_GROUPS_PATH } from '@/constants';
+
+/** Settings LibreChat reads from librechat.yaml alone until its operator sets CONFIG_REDERIVE_ENDPOINTS. */
+const REDERIVED_SETTINGS: readonly string[] = [AZURE_GROUPS_PATH, 'endpoints.anthropic.vertex'];
+
+/** Whether a tombstone at `path` hides `setting`, part of it, or a section holding it. */
+function hidesPartOf(path: string, setting: string): boolean {
+  return (
+    path === setting ||
+    path.startsWith(`${setting}.`) ||
+    path.startsWith(`${setting}[`) ||
+    setting.startsWith(`${path}.`)
+  );
+}
+
+/**
+ * Whether an applied document of `preview` sets or hides Azure groups or
+ * Vertex AI where the server stores them but applies neither until its
+ * operator turns re-derivation on (`azureGroupMergeKey` without
+ * `endpointRederive`): the result shows them merged, while members get
+ * librechat.yaml's.
+ */
+export function mergesUnappliedSettings(
+  preview: t.ConfigPreview,
+  features: t.ConfigFeatures,
+): boolean {
+  if (!features.azureGroupMergeKey || features.endpointRederive) return false;
+  return preview.layers.some(
+    (layer) =>
+      layer.isActive &&
+      REDERIVED_SETTINGS.some(
+        (setting) =>
+          getValueAtPath(layer.overrides, setting) !== undefined ||
+          layer.tombstones.some((path) => hidesPartOf(path, setting)),
+      ),
+  );
+}
 
 function sectionLabel(key: string, localize: t.LocalizeFn): string {
   const meta = SECTION_META[key];

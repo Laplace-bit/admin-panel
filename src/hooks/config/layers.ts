@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { queryOptions, useQuery } from '@tanstack/react-query';
 import type * as t from '@/types';
 import {
+  mergesByKey,
   flattenObject,
   getValueAtPath,
   withScopeLayer,
@@ -76,7 +77,8 @@ export function useConfigLayers({
   const fieldPaths = useMemo(() => collectFieldPaths(schemaTree), [schemaTree]);
   const schemaPathSet = useMemo(() => new Set(fieldPaths), [fieldPaths]);
 
-  const { keyedTombstones } = useConfigFeatures();
+  const features = useConfigFeatures();
+  const { keyedTombstones, specInterfaceRederive } = features;
 
   /** Base-mode layers: librechat.yaml (raw paths and processed), base overrides and tombstones, effective base. */
   const baseLayers = useMemo(
@@ -125,6 +127,7 @@ export function useConfigLayers({
       schemaPathSet,
       writeRules,
       keyedTombstones,
+      specInterfaceRederive,
     );
   }, [
     baseLayers,
@@ -134,6 +137,7 @@ export function useConfigLayers({
     schemaPathSet,
     writeRules,
     keyedTombstones,
+    specInterfaceRederive,
   ]);
 
   /**
@@ -148,6 +152,7 @@ export function useConfigLayers({
     const lower = scopeLayer ? (valueLayers?.base ?? null) : (baseConfigData?.yamlConfig ?? null);
     const counts = new Map<string, number>();
     for (const collection of KEYED_COLLECTIONS.values()) {
+      if (collection.merge === 'byKey' && !mergesByKey(collection, features)) continue;
       const storedList = getValueAtPath(stored, collection.path);
       if (scopeLayer && collection.merge === 'replace') {
         counts.set(collection.path, Array.isArray(storedList) ? 1 : 0);
@@ -165,7 +170,7 @@ export function useConfigLayers({
       counts.set(collection.path, keys.size);
     }
     return counts;
-  }, [valueLayers, dbOverrides, baseConfigData?.yamlConfig, keyedTombstones]);
+  }, [valueLayers, dbOverrides, baseConfigData?.yamlConfig, keyedTombstones, features]);
 
   const baseActiveConfigValues = isEditingScope ? (valueLayers?.effective ?? null) : configValues;
   const flatBaseline = useMemo(

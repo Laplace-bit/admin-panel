@@ -267,6 +267,41 @@ describe('useImportPreview', () => {
     });
   });
 
+  it('writes imported parameter definitions as written where LibreChat expands them (customParamsExpansion)', () => {
+    /** On such a server, librechat.yaml's definitions are read back as written: compact. */
+    const compactFoundry = {
+      ...foundry,
+      customParams: {
+        defaultParamsEndpoint: 'azureOpenAI',
+        paramDefinitions: [{ key: 'useResponsesApi', default: true }],
+      },
+    };
+    const compactBase: t.BaseConfigData = {
+      ...base,
+      config: { ...base.config, endpoints: { custom: [moonshot, compactFoundry, local] } },
+      yamlConfig: { ...yamlConfig, endpoints: { custom: [moonshot, compactFoundry, local] } },
+    };
+    const { result } = renderPreview(
+      {
+        endpoints: {
+          custom: [
+            {
+              name: 'Foundry',
+              customParams: { paramDefinitions: [{ key: 'useResponsesApi', default: false }] },
+            },
+          ],
+        },
+      },
+      { type: 'base' },
+      { features: { customParamsExpansion: true }, baseData: compactBase },
+    );
+    const [entry] = result.current.entriesFor(new Set(['endpoints.custom']));
+    const written = (entry.value as t.ConfigRecord[]).find((e) => e.name === 'Foundry');
+    expect(written?.customParams).toEqual({
+      paramDefinitions: [{ key: 'useResponsesApi', default: false }],
+    });
+  });
+
   it('lists a snippet identical to librechat.yaml as unchanged and writes nothing for it', () => {
     const { result } = renderPreview({
       endpoints: {
@@ -478,6 +513,19 @@ describe('useImportPreview into a profile with hides and removals by key (keyedT
       expect(result.current.entriesFor(new Set(['modelSpecs.list']))).toHaveLength(1);
     });
 
+    it('names the imported specs as issues where LibreChat refuses them (specInterfaceRederive)', () => {
+      const { result } = renderPreview(specs, onProfile, {
+        features: { keyedTombstones: true, specInterfaceRederive: true },
+        scopeData: hidesMoonshot,
+      });
+      expect(notesOf(result.current.groups)).toEqual([['modelSpecs.list', []]]);
+      expect(result.current.issuesFor(new Set(['modelSpecs.list']))).toEqual([
+        expect.stringContaining(
+          "is Moonshot, which this profile hides: LibreChat refuses a spec for it until it's shown again",
+        ),
+      ]);
+    });
+
     it('names the hidden endpoints an imported allow-list loses, or says it then allows none', () => {
       const { result } = renderPreview(
         {
@@ -538,6 +586,63 @@ describe('useImportPreview into a profile with hides and removals by key (keyedT
     const older = renderPreview(imported, onProfile, { baseData, scopeData: removesHeader });
     expect(older.result.current.groups[0].rows[0].unchanged).toBe(true);
     expect(older.result.current.entriesFor(all)).toEqual([]);
+  });
+
+  it('leaves the hidden endpoint out where LibreChat derives groups and parameters, writing the rest as written', () => {
+    const groupsPath = 'endpoints.azureOpenAI.groups';
+    const eastus = {
+      group: 'eastus',
+      apiKey: '${EASTUS_KEY}',
+      instanceName: 'east',
+      version: '2024-10-21',
+      models: { 'gpt-4o': { deploymentName: 'gpt-4o' } },
+    };
+    const withGroups = (config: t.ConfigRecord = {}): t.ConfigRecord =>
+      setValueAtPath(config, groupsPath, [eastus]);
+    const baseData: t.BaseConfigData = {
+      ...base,
+      config: withGroups(base.config ?? {}),
+      yamlConfig: withGroups(yamlConfig),
+    };
+    const { result } = renderPreview(
+      {
+        endpoints: {
+          custom: [
+            { name: 'Moonshot', titleModel: 'kimi-k2.6' },
+            {
+              name: 'Foundry',
+              customParams: { paramDefinitions: [{ key: 'useResponsesApi', default: false }] },
+            },
+          ],
+          azureOpenAI: { groups: [{ group: 'eastus', version: '2025-01-01' }] },
+        },
+      },
+      onProfile,
+      {
+        features: {
+          keyedTombstones: true,
+          customParamsExpansion: true,
+          endpointRederive: true,
+          azureGroupMergeKey: true,
+          azureGroupSecrets: true,
+        },
+        baseData,
+        scopeData: hidesMoonshot,
+      },
+    );
+    expect(result.current.skipped.map((row) => row.path)).toEqual(['endpoints.custom.0']);
+    expect(result.current.entriesFor(new Set(['endpoints.custom', groupsPath]))).toEqual([
+      {
+        fieldPath: 'endpoints.custom',
+        value: [
+          {
+            name: 'Foundry',
+            customParams: { paramDefinitions: [{ key: 'useResponsesApi', default: false }] },
+          },
+        ],
+      },
+      { fieldPath: groupsPath, value: [{ group: 'eastus', version: '2025-01-01' }] },
+    ]);
   });
 });
 

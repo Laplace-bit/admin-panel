@@ -2247,6 +2247,11 @@ body > div:has(+ .modal-frost) {
   .azure-col-wide {
     display: none;
   }
+
+  /* On a phone the group's source is named in its editor, which leaves its row the room for Edit. */
+  .azure-group-source {
+    display: none;
+  }
 }
 
 .azure-models-table {

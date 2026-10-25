@@ -29,6 +29,7 @@ export function FieldChips({
   showOverride,
   onChange,
   onRevert,
+  revertable = true,
   disabled,
 }: t.FieldChipsProps) {
   const localize = useLocalize();
@@ -64,7 +65,7 @@ export function FieldChips({
           scope ? 'com_config_ce_field_override_scope_desc' : 'com_config_ce_field_override_desc',
         )}
       />
-      {revert && (
+      {revert && revertable && (
         <button
           type="button"
           className="settings-row-action"

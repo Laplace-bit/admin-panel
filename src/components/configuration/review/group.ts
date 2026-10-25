@@ -1,15 +1,16 @@
 import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
 import {
+  splitPathIn,
   isSecretPath,
   flattenObject,
   getValueAtPath,
   isConfigRecord,
   findKeyedCollectionEntry,
 } from '@/utils';
-import { CONFIG_TABS, OTHER_TAB, SECTION_META, splitCamelCase } from '../configMeta';
 import { SKIP_REASON_KEYS, BUILT_IN_PROVIDERS, getConfigSection } from '@/constants';
-import { findSchemaField, getFieldOptions } from '../controls';
+import { CONFIG_TABS, OTHER_TAB, SECTION_META, splitCamelCase } from '../configMeta';
+import { findSchemaField, getFieldOptions, childSchemaField } from '../controls';
 import { getFieldMeta, labelForPath } from '../meta';
 import { identityKeyFor, findEntry } from './diff';
 import { fieldVariants } from '../renderer/kinds';
@@ -86,26 +87,31 @@ export function locate(path: string, localize: t.LocalizeFn): t.ChangeLocation {
 /**
  * Breadcrumb of the named segments of `path` below `basePath` ("Terms of
  * service › Modal title"). With the schema, a key of a record (a header, a
- * parameter such as `max_tokens`) is shown as written, not as a field label.
- * A label its parent already reads (an MCP server's `apiKey.key`, "API key")
- * is not repeated.
+ * parameter such as `max_tokens`) is shown as written, not as a field label;
+ * with the values (`tree`), a key holding dots (a model `gpt-4.1`) is one
+ * segment. A label its parent already reads (an MCP server's `apiKey.key`,
+ * "API key") is not repeated.
  */
 export function fieldLabel(
   path: string,
   basePath: string,
   localize: t.LocalizeFn,
   fields?: t.SchemaField[],
+  tree?: t.ConfigValue,
 ): string {
   if (path === basePath || !path.startsWith(`${basePath}.`)) return labelForPath(path, localize);
-  const segments = path.slice(basePath.length + 1).split('.');
+  const inner = path.slice(basePath.length + 1);
+  const segments =
+    tree === undefined ? inner.split('.') : splitPathIn(getValueAtPath(tree, basePath), inner);
   const labels: string[] = [];
   let prefix = basePath;
+  let node = fields != null ? findSchemaField(fields, basePath) : null;
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
-    const parent = prefix;
+    const record = node;
     prefix = `${prefix}.${segment}`;
+    node = node ? childSchemaField(node, segment) : null;
     if (INDEX_SEGMENT_RE.test(segment)) continue;
-    const record = fields != null ? findSchemaField(fields, parent) : null;
     if (record?.type !== 'record') {
       const label = labelForPath(prefix, localize);
       if (labels[labels.length - 1] !== label) labels.push(label);
@@ -175,9 +181,9 @@ export function describePath(path: string, ctx: t.ReviewLabelContext, identity?:
       ),
     );
     if (path !== entry.entryPath)
-      parts.push(fieldLabel(path, entry.entryPath, ctx.localize, ctx.fields));
+      parts.push(fieldLabel(path, entry.entryPath, ctx.localize, ctx.fields, ctx.tree));
   } else if (path !== location.sectionKey) {
-    parts.push(fieldLabel(path, location.sectionKey, ctx.localize, ctx.fields));
+    parts.push(fieldLabel(path, location.sectionKey, ctx.localize, ctx.fields, ctx.tree));
   }
   return parts.join(BREADCRUMB);
 }
@@ -259,7 +265,7 @@ function addedDetails(item: t.ChangeSummaryItem, key: string, ctx: t.ReviewLabel
       const path = `${entryPath}.${leaf}`;
       return {
         key: `${key}:${i}`,
-        label: fieldLabel(path, entryPath, ctx.localize, ctx.fields),
+        label: fieldLabel(path, entryPath, ctx.localize, ctx.fields, ctx.tree),
         item: {
           path,
           kind: 'added',
@@ -284,7 +290,7 @@ function partLabel(
 ) {
   const under = part.path === item.path || part.path.startsWith(`${item.path}.`);
   const base = under ? item.path : (part.entryPath ?? locate(part.path, ctx.localize).sectionKey);
-  const field = fieldLabel(part.path, base, ctx.localize, ctx.fields);
+  const field = fieldLabel(part.path, base, ctx.localize, ctx.fields, ctx.tree);
   const named = part.entryIdentity && part.entryIdentity !== item.entryIdentity;
   return named ? `${part.entryIdentity}${BREADCRUMB}${field}` : field;
 }
@@ -315,6 +321,22 @@ function outerEntryOf(
     entryPath: `${located.collection.path}.${located.index}`,
     collectionPath: located.collection.path,
   };
+}
+
+/**
+ * The label of a row inside an entry: its field below the entry, after the
+ * entry's title where that entry sits in another (a model of an Azure
+ * group); a row of such an entry as a whole reads as its title alone.
+ */
+function entryRowLabel(
+  item: t.ChangeSummaryItem,
+  entryPath: string,
+  isNested: boolean,
+  ctx: t.ReviewLabelContext,
+): string {
+  if (isNested && item.path === entryPath) return entryTitle(item, ctx);
+  const field = fieldLabel(item.path, entryPath, ctx.localize, ctx.fields, ctx.tree);
+  return isNested ? `${entryTitle(item, ctx)}${BREADCRUMB}${field}` : field;
 }
 
 function overlaps(a: string, b: string): boolean {
@@ -406,11 +428,10 @@ export function buildReviewModel(
       return;
     }
     if (item.entryPath) {
-      const field = fieldLabel(item.path, item.entryPath, ctx.localize, ctx.fields);
       const row: t.ReviewRow = {
         key,
         item,
-        label: outer ? `${entryTitle(item, ctx)}${BREADCRUMB}${field}` : field,
+        label: entryRowLabel(item, item.entryPath, outer !== undefined, ctx),
         valueLabels: valueLabelsAt(item.path, ctx),
         details: droppedDetails(item, key, ctx),
       };
@@ -421,7 +442,7 @@ export function buildReviewModel(
     const row: t.ReviewRow = {
       key,
       item,
-      label: fieldLabel(item.path, location.sectionKey, ctx.localize, ctx.fields),
+      label: fieldLabel(item.path, location.sectionKey, ctx.localize, ctx.fields, ctx.tree),
       valueLabels: valueLabelsAt(item.path, ctx),
       details: droppedDetails(item, key, ctx),
     };

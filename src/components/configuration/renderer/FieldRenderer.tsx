@@ -2,17 +2,17 @@ import { Fragment, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { isRowVisible, getSecretPreviewValue, isInterfacePermissionPath } from '@/utils';
+import { isBaseOnlyPath, isStartupOnlyPath, isYamlManagedPath } from '@/constants';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
 import { countConfigured, hasPathOverlap, isPathSet } from '../counts';
-import { isStartupOnlyPath, isYamlManagedPath } from '@/constants';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
+import { useLocalize, useConfigWriteRules } from '@/hooks';
 import { getControlType, orderFields } from '../controls';
 import { UnknownSettings } from '../UnknownSettings';
 import { SingleFieldRenderer } from './SingleField';
 import { ManagedNotice } from '../ManagedNotice';
 import { NestedGroup } from './NestedGroup';
 import { labelForPath } from '../meta';
-import { useLocalize, useConfigWriteRules } from '@/hooks';
 
 const NO_PATHS: ReadonlySet<string> = new Set();
 
@@ -33,13 +33,20 @@ function managedNoticeKind(
   rules: t.ConfigWriteRules,
 ): t.ManagedNoticeKind | null {
   if (!isYamlManagedPath(path, rules) || isYamlManagedPath(parentPath, rules)) return null;
-  return isStartupOnlyPath(path, rules) ? 'startup' : 'yaml';
+  return noticeKindOf(path, rules);
+}
+
+/** Why a managed field is read-only: read only at startup, kept from librechat.yaml, or not re-processed. */
+function noticeKindOf(path: string, rules: t.ConfigWriteRules): t.ManagedNoticeKind {
+  if (isStartupOnlyPath(path, rules)) return 'startup';
+  return isBaseOnlyPath(path, rules) ? 'baseOnly' : 'yaml';
 }
 
 /**
  * Each managed field's notice, by the index of the field it is shown above,
  * with the paths it covers: consecutive startup-only fields share one notice
- * above the first of them. A managed group shows its own notice inside it.
+ * above the first of them, as do consecutive base-only ones. A managed group
+ * shows its own notice inside it.
  */
 function managedNoticeRuns(
   groups: ReadonlyArray<{ type: string; path: string }>,
@@ -51,7 +58,7 @@ function managedNoticeRuns(
   let kind: t.ManagedNoticeKind | null = null;
   groups.forEach((group, index) => {
     const next = group.type === 'nested' ? null : managedNoticeKind(group.path, parentPath, rules);
-    if (next === 'startup' && next === kind) {
+    if (next !== null && next !== 'yaml' && next === kind) {
       runs.get(start)?.push(group.path);
       return;
     }
@@ -145,7 +152,7 @@ export function FieldRenderer({
     const overridden = paths.filter((path) => hasPathOverlap(path, dbOverridePaths ?? NO_PATHS));
     return (
       <ManagedNotice
-        kind={isStartupOnlyPath(paths[0], writeRules) ? 'startup' : 'yaml'}
+        kind={noticeKindOf(paths[0], writeRules)}
         count={settings}
         hasOverride={overridden.length > 0}
         pendingRemoval={

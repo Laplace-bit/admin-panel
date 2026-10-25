@@ -9,6 +9,7 @@ import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import {
   flattenObject,
+  isConfigRecord,
   withScopeLayer,
   mergeScopeLayer,
   collectLeafPaths,
@@ -19,6 +20,7 @@ import { ConfigContractContext } from '@/contexts/ContractContext';
 import { useChangeReview, useBaseOverrides } from './review';
 import { createServerContract } from '@/test/fixtures';
 import { applyConfigChangesFn } from '@/server';
+import { getWriteRules } from '@/constants';
 import { useConfigEdits } from './edits';
 import { useConfigSave } from './save';
 
@@ -123,20 +125,44 @@ const userProfile: t.ResolvedConfigData = {
   tombstones: [],
 };
 
+/** What the server holds: librechat.yaml, Base's overrides and Role USER's profile. */
+interface Stored {
+  yaml: t.ConfigRecord;
+  base: t.ConfigRecord;
+  profile: t.ResolvedConfigData;
+  /** What the server says it merges (the bundled rules by default). */
+  rules?: t.ConfigWriteRules;
+}
+
+const STORED: Stored = { yaml, base: baseOverrides, profile: userProfile };
+
+/** A list's entries with the key redacted where the entry stores its own (its preview stays). */
+function redactedEntries(list: t.ConfigValue): t.ConfigValue {
+  if (!Array.isArray(list)) return list;
+  return list.map((entry) => {
+    if (!isConfigRecord(entry) || entry.apiKeyPreview === undefined) return entry;
+    const { apiKey: _redacted, ...rest } = entry;
+    return rest;
+  });
+}
+
 /**
  * The base config as LibreChat reads it back: librechat.yaml with the base
  * overrides, an entry's key redacted where Base stores its own (its preview
  * stays).
  */
-function baseConfig(): t.ConfigRecord {
-  const merged = mergeScopeLayer(yaml, baseOverrides);
-  const endpoints = merged.endpoints as t.ConfigRecord;
-  const custom = (endpoints.custom as t.ConfigRecord[]).map((entry) => {
-    if (entry.apiKeyPreview === undefined) return entry;
-    const { apiKey: _redacted, ...rest } = entry;
-    return rest;
-  });
-  return { ...merged, endpoints: { ...endpoints, custom } };
+function baseConfig(stored: Stored = STORED): t.ConfigRecord {
+  const merged = mergeScopeLayer(stored.yaml, stored.base, [], stored.rules);
+  const endpoints = isConfigRecord(merged.endpoints) ? merged.endpoints : {};
+  const azure = isConfigRecord(endpoints.azureOpenAI) ? endpoints.azureOpenAI : undefined;
+  return {
+    ...merged,
+    endpoints: {
+      ...endpoints,
+      ...(endpoints.custom !== undefined && { custom: redactedEntries(endpoints.custom) }),
+      ...(azure && { azureOpenAI: { ...azure, groups: redactedEntries(azure.groups) } }),
+    },
+  };
 }
 
 interface TargetProps {
@@ -158,6 +184,7 @@ function renderTargets(
   initialProps: TargetProps = {},
   profiles: t.ConfigScope[] = [],
   read?: () => Promise<string | null>,
+  stored: Stored = STORED,
 ) {
   const client = new QueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -165,13 +192,13 @@ function renderTargets(
       <ConfigContractContext.Provider value={contract}>{children}</ConfigContractContext.Provider>
     </QueryClientProvider>
   );
-  const config = baseConfig();
+  const config = baseConfig(stored);
   const baseLayers = createBaseLayers(
     {
       config,
-      yamlConfig: yaml,
-      yamlPaths: collectLeafPaths(yaml),
-      dbOverrides: baseOverrides,
+      yamlConfig: stored.yaml,
+      yamlPaths: collectLeafPaths(stored.yaml),
+      dbOverrides: stored.base,
       dbTombstones: [],
       schemaDefaults: {},
     },
@@ -186,7 +213,8 @@ function renderTargets(
       });
       const isEditingScope = scope !== undefined;
       const valueLayers = useMemo(
-        () => (scope ? withScopeLayer(baseLayers, scope, userProfile, schemaPathSet) : baseLayers),
+        () =>
+          scope ? withScopeLayer(baseLayers, scope, stored.profile, schemaPathSet) : baseLayers,
         [scope],
       );
       const active = valueLayers.effective ?? {};
@@ -199,12 +227,12 @@ function renderTargets(
         schemaTree: tree,
         schemaPathSet,
       });
-      const own = isEditingScope ? userProfile.overrides : baseOverrides;
+      const own = isEditingScope ? stored.profile.overrides : stored.base;
       const layers = {
         configValues: config,
-        dbOverrides: baseOverrides,
-        yamlConfig: yaml,
-        yamlMcpServers: yaml.mcpServers as t.ConfigRecord,
+        dbOverrides: stored.base,
+        yamlConfig: stored.yaml,
+        yamlMcpServers: isConfigRecord(stored.yaml.mcpServers) ? stored.yaml.mcpServers : {},
         schemaDefaults: {},
         schemaPathSet,
         overridePaths: new Set(Object.keys(flattenObject(own))),
@@ -896,5 +924,93 @@ describe("Discard's Undo stays in its target (c)", () => {
     expect(result.current.review.model.count).toBe(1);
     rerender({ targetRevision: 'base:5' });
     expect(result.current.save.editRevision).toBe('base:4');
+  });
+});
+
+describe('Azure groups Base removes or renames while a profile overrides them (endpointRederive)', () => {
+  const GROUPS = 'endpoints.azureOpenAI.groups';
+  const rederive = createServerContract({
+    endpointRederive: true,
+    azureGroupMergeKey: true,
+    azureGroupSecrets: true,
+    secretRebinding: true,
+    changesBatch: true,
+    expectedRevision: true,
+    dottedKeys: true,
+  });
+  const eastus = {
+    group: 'eastus',
+    apiKey: '${EASTUS_API_KEY}',
+    instanceName: 'librechat-eastus',
+    version: '2024-02-15-preview',
+    models: { 'gpt-4.1': { deploymentName: 'gpt-41' } },
+  };
+  const west = {
+    group: 'rv-west',
+    apiKeyPreview: '...4321',
+    instanceName: 'rv-west',
+    version: 'v1',
+    models: { 'gpt-4.1-dot': { deploymentName: 'dot' } },
+  };
+  const stored: Stored = {
+    yaml: { endpoints: { azureOpenAI: { groups: [eastus] } } },
+    base: { endpoints: { azureOpenAI: { groups: [west] } } },
+    profile: { resolvedConfig: {}, changedPaths: [], overrides: {}, tombstones: [] },
+    rules: getWriteRules(rederive),
+  };
+  /** Role USER as the profile list reads it: it changes rv-west's API version, and nothing else of it. */
+  const versionOnly: t.ConfigScope = {
+    ...userRole,
+    overridePaths: [GROUPS],
+    overrideEntries: { [GROUPS]: ['rv-west'] },
+    overrideEntryPaths: { [GROUPS]: { 'rv-west': ['version'] } },
+  };
+  const groups = () => baseConfig(stored).endpoints as t.ConfigRecord;
+  const listed = () => (groups().azureOpenAI as t.ConfigRecord).groups as t.ConfigRecord[];
+  const notesOfGroup = (result: { current: { review: t.ChangeReviewState } }) =>
+    reviewRows(result.current.review).flatMap((row) =>
+      row.item.collectionPath === GROUPS ? (notesOf(row) ?? []) : [],
+    );
+
+  it('names the profile whose override a removal leaves as a group of its own', () => {
+    const { result } = renderTargets(rederive, {}, [versionOnly], undefined, stored);
+    act(() => {
+      result.current.edits.handleFieldChange(
+        GROUPS,
+        listed().filter((entry) => entry.group !== 'rv-west'),
+      );
+    });
+    expect(notesOfGroup(result)).toEqual([
+      {
+        change: { kind: 'removed', name: 'rv-west' },
+        profiles: [{ profile: 'USER', overrides: true, secret: false, hidden: false }],
+      },
+    ]);
+    const row = reviewRows(result.current.review).find((item) => item.item.kind === 'removed');
+    expect(row?.item.overrideNotes?.[0].collection).toBe(GROUPS);
+  });
+
+  it('names it for a rename too, and for no profile on a server that does not derive groups', () => {
+    const { result } = renderTargets(rederive, {}, [versionOnly], undefined, stored);
+    act(() => {
+      result.current.edits.handleFieldChange(
+        GROUPS,
+        listed().map((entry) =>
+          entry.group === 'rv-west' ? { ...entry, group: 'rv-north' } : entry,
+        ),
+      );
+    });
+    expect(notesOfGroup(result).map(({ change }) => change)).toEqual([
+      { kind: 'renamed', name: 'rv-west', next: 'rv-north', taken: false },
+    ]);
+    const inert = createServerContract({ azureGroupMergeKey: true, azureGroupSecrets: true });
+    const older = renderTargets(inert, {}, [versionOnly], undefined, stored);
+    act(() => {
+      older.result.current.edits.handleFieldChange(
+        GROUPS,
+        listed().filter((entry) => entry.group !== 'rv-west'),
+      );
+    });
+    expect(notesOfGroup(older.result)).toEqual([]);
   });
 });

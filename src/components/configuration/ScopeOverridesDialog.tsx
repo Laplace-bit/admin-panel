@@ -21,6 +21,12 @@ import { useReturnFocus, useLocalize } from '@/hooks';
 import { getConfigSection } from '@/constants';
 import { fieldLabel } from './review/group';
 import { sourceLabel } from './values';
+import { labelForPath } from './meta';
+
+/** `endpoints.azureOpenAI.groups` → `endpoints.azureOpenAI`. */
+function parentPathOf(path: string): string {
+  return path.slice(0, Math.max(path.lastIndexOf('.'), 0));
+}
 
 /**
  * A value as the page shows it: units and option labels from its field,
@@ -177,9 +183,16 @@ export function ScopeOverridesDialog({
     return [...bySection.entries()];
   }, [scope]);
 
+  /**
+   * A list that is a tab of its own (custom endpoints, model specs) is
+   * titled by its tab; one inside a section (Azure groups) by where it is.
+   */
   const sectionTitle = (section: string) => {
     if (getKeyedCollection(section)) {
+      const nested = section.split('.').length > 2;
       const tab = CONFIG_TABS.find((entry) => entry.id === tabForPath(section));
+      if (nested)
+        return `${labelForPath(parentPathOf(section), localize)} › ${labelForPath(section, localize)}`;
       if (tab) return localize(tab.labelKey);
     }
     const meta = SECTION_META[section];

@@ -567,7 +567,7 @@ describe('YAML-managed notice', () => {
     expect(screen.queryByText('com_config_yaml_managed_field')).not.toBeInTheDocument();
   });
 
-  it("marks the fields a server's rules keep to librechat.yaml, and frees the ones they don't", () => {
+  it("marks the fields a server's rules keep to librechat.yaml (a base-only one as kept from it), and frees the rest", () => {
     const contract = createServerContract(
       {},
       {
@@ -600,7 +600,8 @@ describe('YAML-managed notice', () => {
     expect(
       screen.getAllByText(/^com_config_startup_only_field/).map((el) => el.textContent),
     ).toEqual(['com_config_startup_only_field:{"count":1}']);
-    expect(screen.getAllByText('com_config_yaml_managed_field')).toHaveLength(1);
+    expect(screen.getAllByText('com_config_base_only_field:{"count":1}')).toHaveLength(1);
+    expect(screen.queryByText('com_config_yaml_managed_field')).toBeNull();
   });
 
   it('shows one notice above consecutive startup-only settings', () => {

@@ -1,5 +1,11 @@
 import type * as t from '@/types';
-import { useLocalize, useEndpointModels, useEndpointStatus, useCatalogEndpoint } from '@/hooks';
+import {
+  useLocalize,
+  useEndpointModels,
+  useConfigFeatures,
+  useEndpointStatus,
+  useCatalogEndpoint,
+} from '@/hooks';
 import { STATUS_KEYS, providerStatus, statusDescriptionKey } from './status';
 import { EnvStatusNote } from '../../fields/EnvStatus';
 
@@ -11,10 +17,11 @@ import { EnvStatusNote } from '../../fields/EnvStatus';
  */
 export function ProviderStatusBadge({ provider }: t.ProviderStatusBadgeProps) {
   const localize = useLocalize();
+  const features = useConfigFeatures();
   const { data, isLoading, isError } = useEndpointStatus();
   const catalogEntry = useCatalogEndpoint(provider);
   if (isLoading || (!data && !isError)) return null;
-  const status = providerStatus(provider, data);
+  const status = providerStatus(provider, data, features);
   const keys = STATUS_KEYS[status.kind];
   const descKey = statusDescriptionKey(status.kind, catalogEntry);
   const hint = [localize(descKey), status.credentialsKey && localize(status.credentialsKey)]
@@ -40,10 +47,11 @@ export function ProviderStatusBadge({ provider }: t.ProviderStatusBadgeProps) {
  */
 export function ProviderStatusRow({ provider }: t.ProviderStatusRowProps) {
   const localize = useLocalize();
+  const features = useConfigFeatures();
   const { data, isError } = useEndpointStatus();
   const models = useEndpointModels();
   const catalogEntry = useCatalogEndpoint(provider);
-  const status = providerStatus(provider, data);
+  const status = providerStatus(provider, data, features);
   const keys = STATUS_KEYS[status.kind];
   const descKey = statusDescriptionKey(status.kind, catalogEntry);
   const modelCount = models.data?.[provider]?.length;

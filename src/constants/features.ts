@@ -259,3 +259,10 @@ export const MEMORY_AGENT_KEYS: Readonly<Record<t.MemoryAgentMode, readonly stri
   id: ['id'],
   inline: ['provider', 'model', 'instructions', 'model_parameters'],
 };
+
+/** The interface controls model specs decide where no layer sets them (`specInterfaceRederive`). */
+export const SPEC_CONTROL_KEYS: readonly t.SpecControlKey[] = [
+  'modelSelect',
+  'parameters',
+  'presets',
+];

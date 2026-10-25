@@ -33,6 +33,11 @@ export interface ChangeSummaryInput {
   schemaPaths: ReadonlySet<string>;
   /** Record entries renamed in the panel: new entry path → the saved entry path it came from. */
   renames?: Readonly<Record<string, string>>;
+  /**
+   * Lists the server merges entry by entry (`mergedListPaths`): saving one
+   * never takes over the whole list. Defaults to the custom endpoints.
+   */
+  mergedLists?: ReadonlySet<string>;
 }
 
 /** Where a collection entry sits: its collection, data path and identity (WS7). */
@@ -307,6 +312,12 @@ export interface OverrideNoteOptions {
   before: ConfigValue;
   /** Profiles hide custom endpoints, and remove values inside them, by key (`keyedTombstones`). */
   keyedTombstones?: boolean;
+  /**
+   * The lists LibreChat merges entry by entry (`mergedListPaths`), whose
+   * entries profiles override by name like MCP servers. Defaults to the
+   * custom endpoints.
+   */
+  mergedLists?: ReadonlySet<string>;
 }
 
 /** The layers a pending hide or unhide by key (`endpoints.custom["Name"]…`) is described from in the review. */

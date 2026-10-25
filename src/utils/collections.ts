@@ -14,6 +14,25 @@ export function getKeyedCollection(path: string): t.KeyedCollection | undefined 
 }
 
 /**
+ * Whether the server merges a collection entry by entry, so each entry a
+ * target stores is one override: a `byKey` list, a gated one (Azure groups)
+ * only where the panel edits it entry by entry (`gate`).
+ */
+export function mergesByKey(collection: t.KeyedCollection, features: t.ConfigFeatures): boolean {
+  if (collection.merge !== 'byKey') return false;
+  return collection.gate?.(features) ?? true;
+}
+
+/** The lists the server merges entry by entry, by path (`mergesByKey`): saving one never takes over the whole list. */
+export function mergedListPaths(features: t.ConfigFeatures): ReadonlySet<string> {
+  return new Set(
+    [...KEYED_COLLECTIONS.values()]
+      .filter((collection) => mergesByKey(collection, features))
+      .map((collection) => collection.path),
+  );
+}
+
+/**
  * The location of a named entry (`mcpServers.github`, `endpoints.custom.Moonshot`),
  * by the name LibreChat serves a keyed collection's entry under, so two
  * spellings of one entry are one location (`endpoints.custom.ollama` for `Ollama`).
@@ -122,12 +141,31 @@ function indexOfKey(entries: t.ConfigValue[], key: string, value: string): numbe
   return entries.findIndex((entry) => getEntryKey(entry, key) === value);
 }
 
+/**
+ * `lower` without its secret where `upper` holds one of its own: a key, or
+ * the preview a stored key reads back as. A key and its preview travel
+ * together, and LibreChat sends the upper entry's key, so the lower entry's
+ * (a librechat.yaml `${VAR}`) never shows beside it.
+ */
+export function withoutShadowedSecret(
+  lower: t.ConfigRecord,
+  upper: t.ConfigRecord,
+  collection: t.KeyedCollection,
+): t.ConfigRecord {
+  const secret = collection.secret;
+  if (!secret || !(secret.key in lower || secret.preview in lower)) return lower;
+  if (!suppliesSecret(upper, collection) && !hasHiddenSecret(upper, collection)) return lower;
+  const { [secret.key]: _key, [secret.preview]: _preview, ...rest } = lower;
+  return rest;
+}
+
 function mergeEntriesByKey(
   lower: t.ConfigValue[],
   upper: t.ConfigValue[],
-  key: string,
+  collection: t.KeyedCollection,
   path: string,
 ): t.ConfigValue[] {
+  const { key } = collection;
   const upperByKey = new Map<string, t.ConfigValue>();
   for (const item of upper) {
     const id = getEntryKey(item, key);
@@ -139,7 +177,11 @@ function mergeEntriesByKey(
     const override = id === undefined ? undefined : upperByKey.get(id);
     if (id === undefined || override === undefined) return item;
     seen.add(id);
-    return mergeConfigLayers(item, override, path);
+    const below =
+      isConfigRecord(item) && isConfigRecord(override)
+        ? withoutShadowedSecret(item, override, collection)
+        : item;
+    return mergeConfigLayers(below, override, path);
   });
   for (const [id, item] of upperByKey) {
     if (!seen.has(id)) result.push(mergeConfigLayers({}, item, path));
@@ -167,7 +209,7 @@ export function mergeConfigLayers(
   }
   const collection = KEYED_COLLECTIONS.get(path);
   if (collection?.merge === 'byKey' && Array.isArray(lower) && Array.isArray(upper)) {
-    return mergeEntriesByKey(lower, upper, collection.key, path);
+    return mergeEntriesByKey(lower, upper, collection, path);
   }
   return upper;
 }

@@ -7,6 +7,7 @@ import {
   isUsableBaseURL,
   validateEndpoint,
   hasBlockingIssue,
+  addsOpenRouterDefaults,
 } from '../model';
 import { monogram } from '../List';
 
@@ -196,5 +197,25 @@ describe('monogram', () => {
     expect(monogram('open_router')).toBe('OR');
     expect(monogram('Mistral')).toBe('MI');
     expect(monogram('(x)')).toBe('X');
+  });
+});
+
+describe('addsOpenRouterDefaults', () => {
+  it("is an endpoint named for OpenRouter or pointing at it, unless another provider's defaults are chosen", () => {
+    expect(addsOpenRouterDefaults({ name: 'OpenRouter' })).toBe(true);
+    expect(addsOpenRouterDefaults({ name: 'Gateway', baseURL: 'https://x/openrouter' })).toBe(true);
+    expect(
+      addsOpenRouterDefaults({
+        name: 'OpenRouter 2',
+        customParams: { defaultParamsEndpoint: 'anthropic' },
+      }),
+    ).toBe(false);
+    expect(
+      addsOpenRouterDefaults({
+        name: 'OpenRouter',
+        customParams: { defaultParamsEndpoint: 'custom' },
+      }),
+    ).toBe(true);
+    expect(addsOpenRouterDefaults({ name: 'Groq', baseURL: 'https://api.groq.com' })).toBe(false);
   });
 });

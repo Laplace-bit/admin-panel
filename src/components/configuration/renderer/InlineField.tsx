@@ -472,6 +472,17 @@ function InlineFieldBody({
   const secretPreview = getSecretPreviewValue(values, field.key);
   /** What clearing goes back to: the value the layer beneath sets (librechat.yaml, or Base in a profile). */
   const revertTo = layerValueBeneath(state);
+  /**
+   * Whether going back to the layer beneath changes anything: a secret the
+   * target stores can't be removed where that layer holds none it can
+   * restate (one it hides), and a value equal to that layer's (a `${VAR}` a
+   * save restated in place of a stored key) stays until the entry's own
+   * revert, since a save that leaves it out keeps it.
+   */
+  const restorable =
+    secretPreview != null && state.isOverride
+      ? revertTo?.value !== undefined
+      : revertTo === undefined || !isConfigValueEqual(fieldValue, revertTo.value);
 
   /**
    * "Default" in an entry: remove the target's own value, so the entry reads
@@ -504,6 +515,7 @@ function InlineFieldBody({
     value: fieldValue,
     onChange: (next) => onChange(field.key, next),
     onRevert: clearField,
+    revertable: restorable,
     disabled,
   });
 
@@ -677,7 +689,8 @@ function InlineFieldBody({
   }
   const hasPendingSecret = typeof fieldValue === 'string';
   /** A secret the target stores reads back only as its preview: it is the target's own value, so it can be removed. */
-  const ownsStoredSecret = secretPreview != null && stringValue === '' && state.isOverride;
+  const ownsStoredSecret =
+    secretPreview != null && stringValue === '' && state.isOverride && restorable;
 
   return (
     <InlineRow

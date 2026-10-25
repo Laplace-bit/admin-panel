@@ -110,13 +110,30 @@ export const APP_SERVICE_KEY_ALIASES: Readonly<Record<string, string>> = {
 export const SOCIAL_LOGINS_PATH = 'registration.socialLogins';
 
 /**
- * Fields LibreChat only processes from librechat.yaml: overrides are merged
- * after `azureConfigSetup`/`vertexConfigSetup` run, so edits would be silent
- * no-ops. Rendered read-only until the backend re-processes overrides.
+ * Whether the panel edits Azure groups: LibreChat serves a profile's groups
+ * (`endpointRederive`), merged by `group` over the groups beneath
+ * (`azureGroupMergeKey`), with their keys stored encrypted (`azureGroupSecrets`).
  */
-const YAML_PROCESSED_FIELDS: readonly string[] = [
-  'endpoints.azureOpenAI.groups',
-  'endpoints.anthropic.vertex',
+export function editsAzureGroups(features: t.WriteRuleFeatures): boolean {
+  return features.endpointRederive && features.azureGroupMergeKey && features.azureGroupSecrets;
+}
+
+/** Whether LibreChat derives Vertex AI from a profile's `endpoints.anthropic.vertex` (`endpointRederive`). */
+export function editsVertex(features: t.WriteRuleFeatures): boolean {
+  return features.endpointRederive;
+}
+
+/**
+ * Fields LibreChat processes only from librechat.yaml (overrides are merged
+ * after `azureConfigSetup`/`vertexConfigSetup` run, so edits would be silent
+ * no-ops), each with whether the server derives it again from overrides.
+ * Rendered read-only until it does.
+ */
+const YAML_PROCESSED_FIELDS: ReadonlyArray<
+  readonly [string, (features: t.WriteRuleFeatures) => boolean]
+> = [
+  ['endpoints.azureOpenAI.groups', editsAzureGroups],
+  ['endpoints.anthropic.vertex', editsVertex],
 ];
 
 /**
@@ -137,13 +154,17 @@ function deploymentOnlyFields(paths: Readonly<Record<string, t.DeploymentOnlyRea
 /**
  * Where the panel may write on a server with these rules and features:
  * base-only sections, deployment-only sections and fields, base-only fields,
- * the fields LibreChat only processes from librechat.yaml, and, until Base
+ * fields the server derives from others, the fields LibreChat only processes
+ * from librechat.yaml (until it derives them again), and, until Base
  * overrides apply before sign-in (`preAuthBaseOverrides`), the social
  * sign-in buttons.
  */
 export function resolveWriteRules(
-  rules: Pick<t.ConfigRules, 'baseOnlySections' | 'baseOnlyPaths' | 'deploymentOnlyPaths'>,
-  preAuthBaseOverrides: boolean,
+  rules: Pick<
+    t.ConfigRules,
+    'baseOnlySections' | 'baseOnlyPaths' | 'deploymentOnlyPaths' | 'derivedPaths'
+  >,
+  features: t.WriteRuleFeatures,
 ): t.ConfigWriteRules {
   const readOnlySections = new Map<string, t.ReadOnlyReason>();
   for (const section of rules.baseOnlySections) readOnlySections.set(section, 'baseOnly');
@@ -155,12 +176,14 @@ export function resolveWriteRules(
   return {
     readOnlySections,
     yamlManagedFields: new Set([
-      ...YAML_PROCESSED_FIELDS,
-      ...(preAuthBaseOverrides ? [] : [SOCIAL_LOGINS_PATH]),
+      ...YAML_PROCESSED_FIELDS.flatMap(([path, rederived]) => (rederived(features) ? [] : [path])),
+      ...(features.preAuthBaseOverrides ? [] : [SOCIAL_LOGINS_PATH]),
       ...fields,
       ...rules.baseOnlyPaths,
+      ...rules.derivedPaths,
     ]),
     startupOnlyFields: new Set(startup),
+    baseOnlyFields: new Set(rules.baseOnlyPaths),
   };
 }
 
@@ -172,8 +195,14 @@ export const BUNDLED_WRITE_RULES: t.ConfigWriteRules = resolveWriteRules(
       .map(([section]) => section),
     baseOnlyPaths: [],
     deploymentOnlyPaths: BUNDLED_DEPLOYMENT_ONLY_PATHS,
+    derivedPaths: [],
   },
-  false,
+  {
+    preAuthBaseOverrides: false,
+    endpointRederive: false,
+    azureGroupMergeKey: false,
+    azureGroupSecrets: false,
+  },
 );
 
 /** Fields LibreChat reads once at startup, from librechat.yaml alone, as the panel knew them. */
@@ -266,6 +295,14 @@ export function isYamlManagedPath(
   rules: t.ConfigWriteRules = BUNDLED_WRITE_RULES,
 ): boolean {
   return isAtOrUnderAny(path, rules.yamlManagedFields);
+}
+
+/** Whether the server keeps librechat.yaml's value at `path` whatever an override stores (`baseOnlyPaths`). */
+export function isBaseOnlyPath(
+  path: string,
+  rules: t.ConfigWriteRules = BUNDLED_WRITE_RULES,
+): boolean {
+  return isAtOrUnderAny(path, rules.baseOnlyFields);
 }
 
 /** Whether `path` is, or is inside, a setting LibreChat reads only at startup. */
