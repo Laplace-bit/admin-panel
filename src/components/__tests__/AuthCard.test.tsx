@@ -70,8 +70,18 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** Lets real time pass as it does once a file ends, with jsdom's window gone: a timer left behind throws as it fires. */
+/** Turns of the event loop React's scheduler (on `setImmediate`) may still need for work queued before the test ends. */
+const SCHEDULER_TURNS = 3;
+
+/**
+ * Lets real time pass as it does once a file ends, with jsdom's window gone: a timer left behind
+ * throws as it fires. Work React already scheduled runs first, with the window still there, so a
+ * slow runner doesn't fail the test on React's own bookkeeping.
+ */
 async function idleWithoutWindow(ms: number): Promise<void> {
+  for (let turn = 0; turn < SCHEDULER_TURNS; turn++) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
   vi.stubGlobal('window', undefined);
   try {
     await new Promise((resolve) => setTimeout(resolve, ms));
