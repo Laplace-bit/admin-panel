@@ -32,6 +32,12 @@ export type LocalizeFn = (key: string, options?: Record<string, string | number>
 
 export type TranslationKeys = string;
 
+/** The viewer's effective capabilities; `available` is false when LibreChat has no grants API. */
+export interface CapabilitiesData {
+  available: boolean;
+  capabilities: string[];
+}
+
 export interface ReorderVoiceover {
   item: (position: number) => string;
   lifted: (position: number) => string;
