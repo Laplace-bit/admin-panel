@@ -11,6 +11,8 @@ if (ignoredOrigins.length > 0) {
   );
 }
 
-const csrfMiddleware = createCsrfMiddleware(csrfOptions(parseOrigins(trustedOrigins)));
+const csrfMiddleware: ReturnType<typeof createCsrfMiddleware> = createCsrfMiddleware(
+  csrfOptions(parseOrigins(trustedOrigins)),
+);
 
 export const startInstance = createStart(() => ({ requestMiddleware: [csrfMiddleware] }));
