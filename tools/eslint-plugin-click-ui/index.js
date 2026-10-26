@@ -37,7 +37,7 @@ module.exports = {
       plugins: ['click-ui'],
       rules: {
         'click-ui/require-provider': 'error',
-        'click-ui/require-css-import': 'off', // Disabled: Click UI uses styled-components, no CSS import needed
+        'click-ui/require-css-import': 'off', // Disabled: since 0.10 each Click UI component imports its own CSS Modules, no CSS import needed
         'click-ui/button-requires-label': 'error',
         'click-ui/icon-name-format': 'error',
         'click-ui/logo-name-format': 'error',
@@ -68,7 +68,7 @@ module.exports = {
       plugins: ['click-ui'],
       rules: {
         'click-ui/require-provider': 'error',
-        'click-ui/require-css-import': 'off', // Disabled: Click UI uses styled-components, no CSS import needed
+        'click-ui/require-css-import': 'off', // Disabled: since 0.10 each Click UI component imports its own CSS Modules, no CSS import needed
         'click-ui/button-requires-label': 'error',
         'click-ui/icon-name-format': 'error',
         'click-ui/logo-name-format': 'error',

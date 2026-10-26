@@ -251,11 +251,6 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
 
-/* click-ui stacks a menu item's icon above its label on narrow screens; keep them on one line. */
-[role='menuitem'] > [data-testid='container'] {
-  flex-direction: row;
-}
-
 /* An unavailable row action stays focusable (so its reason is read) but looks unavailable. */
 [role='menuitem'][aria-disabled='true'] {
   color: var(--cui-color-text-muted);

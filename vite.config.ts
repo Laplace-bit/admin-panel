@@ -29,7 +29,6 @@ const config = defineConfig({
       'react/jsx-dev-runtime',
       'react-dom/client',
       'react-dom/server',
-      'styled-components',
       'dayjs',
       'dayjs/plugin/advancedFormat.js',
       'dayjs/plugin/duration.js',
