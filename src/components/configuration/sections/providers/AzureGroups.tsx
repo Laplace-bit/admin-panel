@@ -394,9 +394,13 @@ function EditableGroups({
   /** "region-sweden › Instance name": a group a stored hide names, and what inside it. */
   const hideLabel = (hide: t.KeyedPath): string => [hide.key, ...insideLabels(hide)].join(' › ');
 
-  /** The stored hides (`useStoredGroupHides`) of the group as saved. */
+  /**
+   * The stored hides (`useStoredGroupHides`) LibreChat will apply to the group
+   * once saved: those naming the group as it is written now, so a rename
+   * shows the hides of its new name and drops those of its old one.
+   */
   const hidesOf = (entry: t.AzureGroupEntry): t.KeyedPath[] =>
-    hides.filter((hide) => hide.key === (entry.loadedName ?? entry.row.group));
+    hides.filter((hide) => hide.key === (entry.row.group ?? entry.loadedName));
 
   /**
    * Marks a group the target's stored hides name, which LibreChat applies

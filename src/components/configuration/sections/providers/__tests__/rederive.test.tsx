@@ -437,6 +437,40 @@ describe('Azure group hides by name another client stored (keyedTombstones)', ()
     );
   });
 
+  it('marks a renamed group by the hides of the name it will be saved under', () => {
+    const west = {
+      group: 'rv-west',
+      apiKeyPreview: '...4321',
+      instanceName: 'rv-west',
+      version: 'v1',
+      models: { m: { deploymentName: 'm' } },
+    };
+    renderGroups(KEYED, { endpoints: { azureOpenAI: { groups: [west] } } }, [
+      `${GROUPS}["rv-west"]`,
+    ]);
+    expect(within(groupRow('rv-west')).getByText(/^Hidden/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Azure group rv-west' }));
+    typeInto(`${GROUPS}.1.group`, 'rv-north');
+    expect(within(screen.getByRole('dialog')).queryByText(/^Hidden/)).toBeNull();
+  });
+
+  it('marks a group renamed onto a name a stored hide names', () => {
+    const west = {
+      group: 'rv-west',
+      apiKeyPreview: '...4321',
+      instanceName: 'rv-west',
+      version: 'v1',
+      models: { m: { deploymentName: 'm' } },
+    };
+    renderGroups(KEYED, { endpoints: { azureOpenAI: { groups: [west] } } }, [
+      `${GROUPS}["rv-north"]`,
+    ]);
+    expect(within(groupRow('rv-west')).queryByText(/^Hidden/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Azure group rv-west' }));
+    typeInto(`${GROUPS}.1.group`, 'rv-north');
+    expect(within(screen.getByRole('dialog')).getByText(/^Hidden/)).toBeTruthy();
+  });
+
   it('says nothing on a server without keyed tombstones', () => {
     renderGroups(REDERIVE, {}, [`${GROUPS}["eastus"].instanceName`]);
     expect(screen.queryByText(/hides Azure groups, or parts of them/)).toBeNull();
