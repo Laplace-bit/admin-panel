@@ -1,5 +1,5 @@
 import type * as t from '@/types';
-import { SECRET_CONFIG_KEYS } from '@/constants';
+import { AZURE_GROUPS_PATH, SECRET_CONFIG_KEYS } from '@/constants';
 import { getValueAtPath } from './format';
 
 const PREVIEW_KEY_RE = /^(.+)Preview$/;
@@ -180,9 +180,55 @@ export const MASKED_SECRET = '••••••••';
 
 const ENV_REFERENCE_RE = /^\$\{[A-Za-z0-9_]+\}$/;
 
+/** A whole `{{VAR}}` template. */
+const USER_TEMPLATE_RE = /^\{\{[^{}]+\}\}$/;
+
+const USER_PROVIDED = 'user_provided';
+
+/** Stands for any one segment of a location: an entry of a list or record. */
+const ANY_SEGMENT = '*';
+
 /** An environment reference such as `${OPENAI_API_KEY}` is not a secret and may be shown. */
 export function isEnvReference(value: t.ConfigValue): boolean {
   return typeof value === 'string' && ENV_REFERENCE_RE.test(value);
+}
+
+/** `user_provided`: each user enters their own value. */
+export function isUserProvided(value: string): boolean {
+  return value.trim() === USER_PROVIDED;
+}
+
+/** A whole `{{VAR}}` template, which each user fills in for themselves. */
+export function isUserTemplate(value: string): boolean {
+  return USER_TEMPLATE_RE.test(value.trim());
+}
+
+/**
+ * Where LibreChat's reads keep a credential readable that names where it
+ * comes from besides a `${VAR}`, by location (`*` any entry): `user_provided`
+ * as a custom endpoint's or Azure group's key, and a whole `{{VAR}}` template
+ * as an MCP server's key or client secret. Neither is a credential.
+ */
+const READABLE_REFERENCES: ReadonlyArray<readonly [string[], (value: string) => boolean]> = [
+  [['endpoints', 'custom', ANY_SEGMENT, 'apiKey'], isUserProvided],
+  [[...AZURE_GROUPS_PATH.split('.'), ANY_SEGMENT, 'apiKey'], isUserProvided],
+  [['mcpServers', ANY_SEGMENT, 'apiKey', 'key'], isUserTemplate],
+  [['mcpServers', ANY_SEGMENT, 'oauth', 'client_secret'], isUserTemplate],
+];
+
+function matchesLocation(location: readonly string[], pattern: readonly string[]): boolean {
+  return (
+    location.length === pattern.length &&
+    pattern.every((segment, index) => segment === ANY_SEGMENT || segment === location[index])
+  );
+}
+
+/** Whether a secret's `value` at `location` is a reference LibreChat shows as written: a `${VAR}`, or one of `READABLE_REFERENCES`. */
+function isReadableReference(location: readonly string[], value: string): boolean {
+  if (isEnvReference(value)) return true;
+  return READABLE_REFERENCES.some(
+    ([pattern, readable]) => matchesLocation(location, pattern) && readable(value),
+  );
 }
 
 /**
@@ -206,25 +252,29 @@ export function maskSecretValues(value: t.ConfigValue, key?: string): t.ConfigVa
 /**
  * Copy of a config tree with every non-empty string the panel's secret rule
  * names (`isStoredSecretKey`: `apiKey`, `tavilyApiKey`, `client_secret`, an
- * MCP server's `apiKey.key`) replaced by `MASKED_SECRET`, while a `${VAR}`
- * reference, which is not a secret, stays readable. `parent` and `key` are
- * where `value` is stored. For a tree the server already redacted (a
- * preview), so a value it left under a secret key is still never shown.
+ * MCP server's `apiKey.key`) replaced by `MASKED_SECRET`, while a reference
+ * LibreChat's reads keep readable stays as written: a `${VAR}`, a custom
+ * endpoint's or Azure group's `user_provided` key, an MCP server's `{{VAR}}`
+ * credential. `location` is where `value` is stored, from the root (`*` for
+ * a list item). For a tree the server already redacted (a preview), so a
+ * value it left under a secret key is still never shown.
  */
 export function maskStoredSecrets(
   value: t.ConfigValue,
-  parent?: string,
-  key?: string,
+  location: readonly string[] = [],
 ): t.ConfigValue {
   if (typeof value === 'string') {
-    const secret = key != null && value !== '' && isStoredSecretKey(parent, key);
-    return secret && !isEnvReference(value) ? MASKED_SECRET : value;
+    const key = location.at(-1);
+    const secret = key != null && value !== '' && isStoredSecretKey(location.at(-2), key);
+    return secret && !isReadableReference(location, value) ? MASKED_SECRET : value;
   }
-  if (Array.isArray(value)) return value.map((item) => maskStoredSecrets(item));
+  if (Array.isArray(value)) {
+    return value.map((item) => maskStoredSecrets(item, [...location, ANY_SEGMENT]));
+  }
   if (!value || typeof value !== 'object') return value;
   const result: Record<string, t.ConfigValue> = {};
   for (const [childKey, child] of Object.entries(value)) {
-    result[childKey] = maskStoredSecrets(child, key, childKey);
+    result[childKey] = maskStoredSecrets(child, [...location, childKey]);
   }
   return result;
 }

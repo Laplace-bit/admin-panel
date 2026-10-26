@@ -44,6 +44,12 @@ import {
   summarizeChanges,
   withoutSecretPreviews,
 } from '@/components/configuration/review/diff';
+import {
+  KEYED_COLLECTIONS,
+  SECRET_PREVIEW_MASK,
+  getConfigSection,
+  appliesGroupHides,
+} from '@/constants';
 import { locate, scopeTypeLabel, buildReviewModel } from '@/components/configuration/review/group';
 import { revealConfigPath } from '@/components/configuration/review/reveal';
 import { toReviewIssues } from '@/components/configuration/review/issues';
@@ -51,7 +57,6 @@ import { overrideCountUnit } from '@/components/configuration/counts';
 import { planRevert } from '@/components/configuration/review/revert';
 import { findSchemaField } from '@/components/configuration/controls';
 import { normalizeForSave } from '@/components/configuration/edits';
-import { KEYED_COLLECTIONS, SECRET_PREVIEW_MASK, getConfigSection } from '@/constants';
 import { useConfigContract } from './contract';
 import { useLocalize } from '../useLocalize';
 
@@ -187,15 +192,36 @@ function keyedKeyOf(keyed: ReadonlySet<string>, at: string): string | undefined 
 }
 
 /**
+ * The pending edit of the value at a keyed row's key (`rest`, inside the
+ * entry), read from a value row of that entry the keyed row describes:
+ * Revert of the keyed row takes the value there back to what it was.
+ */
+function valueEditAt(item: t.ChangeSummaryItem, rest: string): t.ChangeSummaryItem {
+  return {
+    path: `${item.entryPath}.${rest}`,
+    kind: 'changed',
+    before: undefined,
+    after: undefined,
+    sourcePath: item.sourcePath,
+    collectionPath: item.collectionPath,
+    entryPath: item.entryPath,
+    entryIdentity: item.entryIdentity,
+    previousIdentity: item.previousIdentity,
+  };
+}
+
+/**
  * The value rows and the hides and unhides by key of the same values, as
  * one account of what Save does: a value row whose changed values keyed
- * rows all describe (at their key or under it) is left out. A hide leaves
- * the target's value there out of what the save writes, and an unhide
- * resets it (an own value the row deletes). An unhide the same save writes
- * a value under resets the removal first, so the value is stored and its
- * users get it: the unhide row reads with the value the save leaves at its
- * key (`after`, read from `saved`), and deletes nothing. A value equal to
- * the layer beneath's is not stored, so the row still reads as inherited.
+ * rows all describe (at their key or under it) is left out, and each keyed
+ * row it falls under carries the pending edit of its key (`valueEdit`), so
+ * Revert takes the whole row back. A hide leaves the target's value there
+ * out of what the save writes, and an unhide resets it (an own value the row
+ * deletes). An unhide the same save writes a value under resets the removal
+ * first, so the value is stored and its users get it: the unhide row reads
+ * with the value the save leaves at its key (`after`, read from `saved`),
+ * and deletes nothing. A value equal to the layer beneath's is not stored,
+ * so the row still reads as inherited.
  */
 function withKeyedValueRows(
   rows: t.ChangeSummaryItem[],
@@ -209,10 +235,12 @@ function withKeyedValueRows(
   );
   if (keyed.size === 0) return { rows, visibility };
   const written = new Map<string, t.ConfigValue>();
+  const edits = new Map<string, t.ChangeSummaryItem>();
   const kept = rows.filter((item) => {
     const key = entryValueKey(item);
     if (key === undefined) return true;
     const leaves = changedLeaves(item.before, item.after);
+    const covered = new Map<string, t.ChangeSummaryItem>();
     let described = leaves.size > 0;
     for (const leaf of leaves.keys()) {
       const covering = keyedKeyOf(keyed, leaf ? `${key}.${leaf}` : key);
@@ -223,17 +251,24 @@ function withKeyedValueRows(
       const rest = covering.slice(covering.lastIndexOf('\u0000') + 1);
       const value = getValueAtPath(saved, `${item.entryPath}.${rest}`);
       if (value !== undefined) written.set(covering, value);
+      if (!edits.has(covering)) covered.set(covering, valueEditAt(item, rest));
     }
+    if (described) for (const [covering, edit] of covered) edits.set(covering, edit);
     return !described;
   });
-  if (written.size === 0) return { rows: kept, visibility };
+  if (written.size === 0 && edits.size === 0) return { rows: kept, visibility };
   return {
     rows: kept,
     visibility: visibility.map((item) => {
-      const key = item.kind === 'unhidden' ? entryValueKey(item) : undefined;
-      const value = key === undefined ? undefined : written.get(key);
-      if (value === undefined || isConfigValueEqual(value, item.revertTarget?.value)) return item;
-      return { ...withoutWarning(item, 'deletesOwnValue'), after: value };
+      const key = entryValueKey(item);
+      if (key === undefined) return item;
+      const valueEdit = edits.get(key);
+      const withEdit = valueEdit ? { ...item, valueEdit } : item;
+      const value = item.kind === 'unhidden' ? written.get(key) : undefined;
+      if (value === undefined || isConfigValueEqual(value, item.revertTarget?.value)) {
+        return withEdit;
+      }
+      return { ...withoutWarning(withEdit, 'deletesOwnValue'), after: value };
     }),
   };
 }
@@ -591,6 +626,8 @@ export function useChangeReview({
   const { rules, features } = useConfigContract();
   const { titleResolution } = rules;
   const isScope = editingScope !== undefined;
+  /** Hides of Azure groups by name another client stored, which LibreChat applies: unhiding one reads by group. */
+  const groupHides = appliesGroupHides(features);
   const {
     savePlan,
     fieldErrors,
@@ -680,7 +717,7 @@ export function useChangeReview({
     };
     return Object.entries(edits.visibilityEdits).flatMap(([path, edit]): t.ChangeSummaryItem[] => {
       if (notSent.has(path)) return [];
-      const keyed = parseKeyedPath(path);
+      const keyed = parseKeyedPath(path, groupHides);
       if (keyed) return [keyedVisibilityItem(path, keyed, edit, keyedLayers)];
       const item: t.ChangeSummaryItem = {
         path,
@@ -707,6 +744,7 @@ export function useChangeReview({
     baseline,
     valueLayers,
     features.keyedTombstones,
+    groupHides,
   ]);
 
   /**
@@ -860,30 +898,33 @@ export function useChangeReview({
 
   const revertRow = useCallback((row: t.ReviewRow) => {
     const { edits: current, baseline: tree } = latest.current;
-    if (row.item.restate) {
-      current.handleRestateCredential(row.item.restate, false);
+    const revertEdit = (item: t.ChangeSummaryItem) => {
+      const action = planRevert(item, current.editedValues, tree);
+      if (action.op === 'set') {
+        current.handleFieldChange(action.path, action.value);
+        return;
+      }
+      if (action.op === 'unrename') {
+        for (const path of action.discard) current.handleDiscardField(path);
+        for (const { path, value } of action.writes) current.handleFieldChange(path, value);
+        current.handleRenameEntry(action.entryPath, null);
+        return;
+      }
+      for (const path of action.paths) current.handleDiscardField(path);
+    };
+    const { item } = row;
+    if (item.restate) {
+      current.handleRestateCredential(item.restate, false);
       return;
     }
-    if (row.item.kind === 'hidden') {
-      current.handleUnhideField(row.item.sourcePath ?? row.item.path);
+    if (item.kind !== 'hidden' && item.kind !== 'unhidden') {
+      revertEdit(item);
       return;
     }
-    if (row.item.kind === 'unhidden') {
-      current.handleHideField(row.item.sourcePath ?? row.item.path);
-      return;
-    }
-    const action = planRevert(row.item, current.editedValues, tree);
-    if (action.op === 'set') {
-      current.handleFieldChange(action.path, action.value);
-      return;
-    }
-    if (action.op === 'unrename') {
-      for (const path of action.discard) current.handleDiscardField(path);
-      for (const { path, value } of action.writes) current.handleFieldChange(path, value);
-      current.handleRenameEntry(action.entryPath, null);
-      return;
-    }
-    for (const path of action.paths) current.handleDiscardField(path);
+    const source = item.sourcePath ?? item.path;
+    if (item.kind === 'hidden') current.handleUnhideField(source);
+    else current.handleHideField(source);
+    if (item.valueEdit) revertEdit(item.valueEdit);
   }, []);
 
   const { cancelReview } = save;
@@ -1060,15 +1101,26 @@ function panelOnlyRecordEntry(
 }
 
 /**
- * Base's removals by key (`keyedTombstones`) that "Revert all" takes back,
- * as rows of a value or entry shown again, each in the group of its entry
- * when other rows list that entry. A removal Base sets its own value over
- * is left out: the row of that value already says what the key goes back to.
+ * Base's tombstones "Revert all" takes back, as rows of a value or entry
+ * shown again with what it gets back: each hidden path, and each removal by
+ * key LibreChat applies (`keyedTombstones`; Azure groups' with `gated`,
+ * `appliesGroupHides`), in the group of its entry when other rows list that
+ * entry. A tombstone Base sets its own value at is left out: the row of
+ * that value already says what the setting goes back to.
  */
 function baseRemovalItems(
   items: t.ChangeSummaryItem[],
   layers: t.KeyedVisibilityLayers,
+  gated: boolean,
+  targetAt: (path: string) => t.RevertTarget | undefined,
+  schemaPaths: ReadonlySet<string>,
 ): t.ChangeSummaryItem[] {
+  const stored = new Set(layers.tombstones);
+  /** LibreChat stores a secret's preview beside its tombstone (`tavilyApiKeyPreview`); the secret's row covers it. */
+  const isPreviewCompanion = (path: string): boolean => {
+    const secret = secretPathForPreviewPath(path, schemaPaths);
+    return secret !== null && stored.has(secret);
+  };
   const entryPaths = new Map(
     items.flatMap((item) =>
       item.collectionPath && item.entryPath && item.entryIdentity !== undefined
@@ -1076,8 +1128,22 @@ function baseRemovalItems(
         : [],
     ),
   );
-  return [...layers.tombstones].flatMap((path): t.ChangeSummaryItem[] => {
-    const keyed = parseKeyedPath(path);
+  return [...stored].flatMap((path): t.ChangeSummaryItem[] => {
+    if (!isKeyedPath(path)) {
+      if (getValueAtPath(layers.own, path) !== undefined || isPreviewCompanion(path)) return [];
+      return [
+        {
+          path,
+          kind: 'unhidden',
+          before: undefined,
+          after: undefined,
+          revertTarget: targetAt(path),
+          sourcePath: path,
+          secret: isSecretPath(path) || undefined,
+        },
+      ];
+    }
+    const keyed = layers.keyedTombstones ? parseKeyedPath(path, gated) : null;
     if (!keyed || getKeyedValue(layers.own, keyed) !== undefined) return [];
     const item = keyedVisibilityItem(path, keyed, 'unhide', layers);
     const at = entryPaths.get(`${item.collectionPath}\u0000${item.entryIdentity}`);
@@ -1114,6 +1180,8 @@ export function useBaseOverrides({
       paths.add(entry?.entryPath ?? secretPathForPreviewPath(path, schemaPathSet) ?? path);
     }
     const lower: t.LowerLayers = { isScope: false, configValues, yamlConfig, schemaDefaults };
+    const targetAt = (path: string) =>
+      baseLayers ? revertTargetAt(path, baseLayers) : lowerValue(path, lower);
     const items = [...paths].flatMap((path): t.ChangeSummaryItem[] => {
       const before = getValueAtPath(overrides, path);
       const added = addedEntries.get(path);
@@ -1130,7 +1198,7 @@ export function useBaseOverrides({
           },
         ];
       }
-      const target = baseLayers ? revertTargetAt(path, baseLayers) : lowerValue(path, lower);
+      const target = targetAt(path);
       const reverted: t.ChangeSummaryItem = {
         path,
         kind: 'reverted',
@@ -1162,16 +1230,23 @@ export function useBaseOverrides({
       if (entries.length === 0) return [reverted];
       return entries.map((item) => asEntryRevert(item, lowerList));
     });
-    const tombstones = (features.keyedTombstones && baseLayers?.baseTombstones) || NO_TOMBSTONES;
-    const removals = baseRemovalItems(items, {
-      lower: yamlConfig ?? null,
-      own: overrides,
-      baseline: configValues,
-      isScope: false,
-      tombstones,
-      visibility: {},
-      keyedTombstones: true,
-    });
+    const tombstones = baseLayers?.baseTombstones ?? NO_TOMBSTONES;
+    const groupHides = appliesGroupHides(features);
+    const removals = baseRemovalItems(
+      items,
+      {
+        lower: yamlConfig ?? null,
+        own: overrides,
+        baseline: configValues,
+        isScope: false,
+        tombstones,
+        visibility: {},
+        keyedTombstones: features.keyedTombstones,
+      },
+      groupHides,
+      targetAt,
+      schemaPathSet,
+    );
     const keyMoves = findEntryKeyMoves(
       { lower: yamlConfig ?? {}, stored: overrides, storedAfter: {} },
       features,
@@ -1191,9 +1266,10 @@ export function useBaseOverrides({
       { localize, fields: schemaTree, tree: overrides },
     );
     /**
-     * Counted the way the tab badges count, so they add up to it: a keyed list
-     * is one stored value but counts per overridden entry, an MCP server once
-     * however many of its fields are set.
+     * Counted the way the tab badges count: a keyed list is one stored value
+     * but counts per overridden entry, an MCP server once however many of its
+     * fields are set. Each removal listed counts too: by key with the entry it
+     * is in, a hidden path as a setting of its own (which the badges leave out).
      */
     const units = new Set<string>();
     let entryCount = 0;
@@ -1204,6 +1280,11 @@ export function useBaseOverrides({
       const collection = getKeyedCollection(path);
       if (!collection || !countsByEntry(collection)) units.add(overrideCountUnit(path));
     }
+    const removed = removals.flatMap((item) => item.sourcePath ?? []);
+    for (const path of removed) {
+      const keyed = parseKeyedPath(path, groupHides);
+      if (!keyed || !countsByEntry(keyed.collection)) units.add(overrideCountUnit(path));
+    }
     for (const collection of KEYED_COLLECTIONS.values()) {
       if (!countsByEntry(collection)) continue;
       const keys = overriddenEntryKeys(
@@ -1211,7 +1292,7 @@ export function useBaseOverrides({
         getValueAtPath(overrides, collection.path),
         getValueAtPath(yamlConfig ?? null, collection.path),
       );
-      for (const name of keyedEntriesOf(tombstones, collection)) keys.add(name);
+      for (const name of keyedEntriesOf(removed, collection, groupHides)) keys.add(name);
       entryCount += keys.size;
     }
     return { count: units.size + entryCount, model };

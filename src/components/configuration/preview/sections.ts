@@ -65,7 +65,9 @@ export function previewSections(
 /**
  * A previewed tree as YAML. The server withholds secrets; anything still under
  * a key the panel's secret rule names is masked here too
- * (`maskStoredSecrets`), while `${VAR}` references stay readable.
+ * (`maskStoredSecrets`), while the references LibreChat's reads keep readable
+ * stay as written: `${VAR}`, a `user_provided` endpoint or Azure group key,
+ * an MCP server's `{{VAR}}` credential.
  */
 export function formatPreviewYaml(value: t.ConfigValue): string {
   return yaml

@@ -383,13 +383,57 @@ function EditableGroups({
     return isSaved ? [] : describeOverrideNotes(overrideNotes.took(name), localize);
   };
 
-  /** "region-sweden › Instance name": a group a stored hide names, and what inside it. */
-  const hideLabel = (hide: t.KeyedPath): string => {
+  /** "Instance name": what inside its group a stored hide names, none for the whole group. */
+  const insideLabels = (hide: t.KeyedPath): string[] => {
     const segments = hide.rest ? hide.rest.split('.') : [];
-    const inside = segments.map((_, at) =>
+    return segments.map((_, at) =>
       labelForPath(`${path}.0.${segments.slice(0, at + 1).join('.')}`, localize),
     );
-    return [hide.key, ...inside].join(' › ');
+  };
+
+  /** "region-sweden › Instance name": a group a stored hide names, and what inside it. */
+  const hideLabel = (hide: t.KeyedPath): string => [hide.key, ...insideLabels(hide)].join(' › ');
+
+  /** The stored hides (`useStoredGroupHides`) of the group as saved. */
+  const hidesOf = (entry: t.AzureGroupEntry): t.KeyedPath[] =>
+    hides.filter((hide) => hide.key === (entry.loadedName ?? entry.row.group));
+
+  /**
+   * Marks a group the target's stored hides name, which LibreChat applies
+   * and the editor doesn't: hidden whole, or settings inside it hidden.
+   */
+  const hiddenBadge = (entry: t.AzureGroupEntry) => {
+    const own = hidesOf(entry);
+    if (own.length === 0) return null;
+    if (own.some((hide) => !hide.rest)) {
+      return (
+        <Badge
+          tone="warning"
+          label={localize('com_config_providers_azure_hidden')}
+          description={localize(
+            scope
+              ? 'com_config_providers_azure_hidden_desc_scope'
+              : 'com_config_providers_azure_hidden_desc',
+            { scope: scopeName },
+          )}
+        />
+      );
+    }
+    return (
+      <Badge
+        tone="warning"
+        label={localize('com_config_providers_azure_part_hidden')}
+        description={localize(
+          scope
+            ? 'com_config_providers_azure_part_hidden_desc_scope'
+            : 'com_config_providers_azure_part_hidden_desc',
+          {
+            scope: scopeName,
+            fields: own.map((hide) => insideLabels(hide).join(' › ')).join(', '),
+          },
+        )}
+      />
+    );
   };
 
   /** The stored hides of groups by name (`useStoredGroupHides`) among `list`, which the editor doesn't apply. */
@@ -469,7 +513,7 @@ function EditableGroups({
           </Banner>
         )}
         {unresolvedNotice(entry)}
-        {hidesNotice(hides.filter((hide) => hide.key === (entry.loadedName ?? entry.row.group)))}
+        {hidesNotice(hidesOf(entry))}
       </>
     );
   };
@@ -539,6 +583,7 @@ function EditableGroups({
                         <span className="azure-group-source">
                           <GroupSourceBadge entry={entry} />
                         </span>
+                        {hiddenBadge(entry)}
                         {entry.isNew && (
                           <Badge
                             tone="edited"
@@ -622,7 +667,14 @@ function EditableGroups({
         open={open != null}
         onClose={closeDrawer}
         title={open?.row.group ?? ''}
-        badges={open ? <GroupSourceBadge entry={open} /> : undefined}
+        badges={
+          open ? (
+            <>
+              <GroupSourceBadge entry={open} />
+              {hiddenBadge(open)}
+            </>
+          ) : undefined
+        }
         subtitle={
           open
             ? (open.row.baseURL ??

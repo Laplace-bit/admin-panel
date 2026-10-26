@@ -118,6 +118,19 @@ export function editsAzureGroups(features: t.WriteRuleFeatures): boolean {
   return features.endpointRederive && features.azureGroupMergeKey && features.azureGroupSecrets;
 }
 
+/**
+ * Whether LibreChat applies the hides of Azure groups by name that another
+ * client stores (`endpoints.azureOpenAI.groups["east"]`, or a path inside
+ * one): it applies keyed tombstones (`keyedTombstones`) to the groups it
+ * derives from the overrides (`endpointRederive`). The panel then reads them
+ * by group; the groups editor writes none.
+ */
+export function appliesGroupHides(
+  features: Pick<t.ConfigFeatures, 'keyedTombstones' | 'endpointRederive'>,
+): boolean {
+  return features.keyedTombstones && features.endpointRederive;
+}
+
 /** Whether LibreChat derives Vertex AI from a profile's `endpoints.anthropic.vertex` (`endpointRederive`). */
 export function editsVertex(features: t.WriteRuleFeatures): boolean {
   return features.endpointRederive;
