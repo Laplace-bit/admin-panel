@@ -3,6 +3,7 @@ import { Icon } from '@clickhouse/click-ui';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Outlet, useRouter, Link, redirect } from '@tanstack/react-router';
 import type { ErrorComponentProps } from '@tanstack/react-router';
+import type * as t from '@/types';
 import { capabilitiesQueryOptions, useCommandMenu, useLocalize } from '@/hooks';
 import { AccessDenied, PermissionsUnavailable } from '@/components/shared';
 import { SystemCapabilities, hasImpliedCapability } from '@/constants';
@@ -34,10 +35,11 @@ export const Route = createFileRoute('/_app')({
 
     return { user: result.user };
   },
-  loader: ({ context }) =>
-    context.queryClient
-      .fetchQuery(capabilitiesQueryOptions(context.user.id))
-      .catch(() => undefined),
+  loader: ({ context }): Promise<t.AppGateLoaderData> =>
+    context.queryClient.fetchQuery(capabilitiesQueryOptions(context.user.id)).then(
+      () => ({ verified: true }),
+      () => ({ verified: false }),
+    ),
   pendingMs: 300,
   pendingComponent: AppPending,
   component: AppLayout,
@@ -47,13 +49,15 @@ export const Route = createFileRoute('/_app')({
 
 /**
  * Renders the panel only once the viewer's capabilities say it is an admin.
- * The loader has settled them by now; when they failed to load, the query
- * holds the error and the layout shows `PermissionsUnavailable` (not retried
- * on mount: the loader just tried). Once loaded, a failed background refetch
- * keeps the last answer instead of taking an admin out of the panel.
+ * The loader has settled them by now; when it could not verify them (no
+ * answer, or a stale one it failed to fetch again), the query holds the error
+ * and the layout shows `PermissionsUnavailable` (not retried on mount: the
+ * loader just tried). Once verified, a failed background refetch keeps the
+ * last answer instead of taking an admin out of the panel.
  */
 function AppLayout() {
   const { user } = Route.useRouteContext();
+  const { verified } = Route.useLoaderData();
   const { data, error } = useQuery({ ...capabilitiesQueryOptions(user.id), retryOnMount: false });
   const router = useRouter();
   const localize = useLocalize();
@@ -82,7 +86,7 @@ function AppLayout() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  if (!data) {
+  if (!data || (!verified && error)) {
     return error ? <PermissionsUnavailable /> : <AppPending />;
   }
   if (

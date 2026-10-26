@@ -33,6 +33,12 @@ export interface SectionMeta {
 }
 
 /** Context every route receives from `getRouter` (WS5: page shell). */
+/** What the `/_app` loader reports: whether it verified the capabilities on this navigation. */
+export interface AppGateLoaderData {
+  /** False when the capabilities request failed, even if an older answer is still cached. */
+  verified: boolean;
+}
+
 export interface RouterContext {
   queryClient: QueryClient;
 }

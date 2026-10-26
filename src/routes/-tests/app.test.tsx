@@ -215,6 +215,22 @@ describe('/_app admin gate', () => {
     expect(server.getEffectiveCapabilitiesFn).toHaveBeenCalledTimes(1);
   });
 
+  it('fails closed when stale cached capabilities cannot be fetched again', async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(
+      ['effectiveCapabilities', USER.id],
+      { available: true, capabilities: ADMIN_CAPABILITIES },
+      { updatedAt: Date.now() - 60_000 },
+    );
+    server.getEffectiveCapabilitiesFn.mockRejectedValue(new Error('Internal Server Error (500)'));
+    const { chrome } = renderApp(queryClient);
+
+    expect(
+      await screen.findByRole('heading', { name: localizeEn('com_perm_unavailable_title') }),
+    ).toBeVisible();
+    expectNoChrome(chrome);
+  });
+
   it('renders the panel for an admin with its nav items already in place', async () => {
     server.getEffectiveCapabilitiesFn.mockResolvedValue({ capabilities: ADMIN_CAPABILITIES });
     const { chrome } = renderApp();
