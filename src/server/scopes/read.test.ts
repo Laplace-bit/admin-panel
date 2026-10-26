@@ -20,8 +20,16 @@ interface FakeCall {
   body?: string;
 }
 
+type Route = [RegExp, (call: FakeCall) => [number, object]];
+
+interface FakeGroup {
+  _id: string;
+  name: string;
+  memberIds: string[];
+}
+
 const calls: FakeCall[] = [];
-let routes: Array<[RegExp, (call: FakeCall) => [number, object]]> = [];
+let routes: Route[] = [];
 
 function reply(status: number, body: object): FakeResponse {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -56,6 +64,7 @@ vi.mock('@tanstack/react-start', () => ({
 }));
 
 import { createScopeFn, setScopePriorityFn, getAvailableScopesFn } from './read';
+import { apiFetch } from '../utils/api';
 
 const BOB = '6ac3e10890468262c2267093';
 const ENG = '6ac3e10d90468262c22670b0';
@@ -103,6 +112,33 @@ const configs = [
   },
 ];
 
+const OBJECT_ID = /^[a-f0-9]{24}$/;
+
+/** The admin groups list (paged by limit and offset) and by-id routes over `groups`. */
+function groupRoutes(groups: FakeGroup[]): Route[] {
+  const byId = new Map(groups.map((group) => [group._id, group]));
+  return [
+    [
+      /^GET \/api\/admin\/groups\?/,
+      (call) => {
+        const params = new URL(call.url, 'http://x').searchParams;
+        const offset = Number(params.get('offset'));
+        const limit = Number(params.get('limit'));
+        return [200, { groups: groups.slice(offset, offset + limit), total: groups.length }];
+      },
+    ],
+    [
+      /^GET \/api\/admin\/groups\/[^/?]+$/,
+      (call) => {
+        const id = call.url.slice('/api/admin/groups/'.length);
+        if (!OBJECT_ID.test(id)) return [400, { error: 'Invalid group ID format' }];
+        const group = byId.get(id);
+        return group ? [200, { group }] : [404, { error: 'Group not found' }];
+      },
+    ],
+  ];
+}
+
 function userPage(offset: number) {
   const filler = Array.from({ length: 200 }, (_, i) => ({
     id: `filler-${offset + i}`,
@@ -118,13 +154,7 @@ beforeEach(() => {
   calls.length = 0;
   routes = [
     [/^GET \/api\/admin\/config$/, () => [200, { configs }]],
-    [
-      /^GET \/api\/admin\/groups\?/,
-      () => [
-        200,
-        { groups: [{ _id: ENG, name: 'Engineering', memberIds: ['a', 'b', 'c'] }], total: 1 },
-      ],
-    ],
+    ...groupRoutes([{ _id: ENG, name: 'Engineering', memberIds: ['a', 'b', 'c'] }]),
     [
       /^GET \/api\/admin\/users\?/,
       (call) => [200, userPage(Number(new URL(call.url, 'http://x').searchParams.get('offset')))],
@@ -206,6 +236,114 @@ describe('getAvailableScopesFn', () => {
     routes[0] = [/^GET \/api\/admin\/config$/, () => [200, { configs: [configs[3]] }]];
     await getAvailableScopesFn();
     expect(calls.some((c) => /users|groups/.test(c.url))).toBe(false);
+  });
+});
+
+/** Runs `run` with every request held for a macrotask; the most requests that were in flight at once. */
+async function peakConcurrency(run: () => Promise<void>): Promise<number> {
+  const fake = vi.mocked(apiFetch).getMockImplementation();
+  if (!fake) throw new Error('apiFetch is not faked');
+  let inFlight = 0;
+  let peak = 0;
+  vi.mocked(apiFetch).mockImplementation(async (url, init) => {
+    inFlight++;
+    peak = Math.max(peak, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    inFlight--;
+    return fake(url, init);
+  });
+  try {
+    await run();
+  } finally {
+    vi.mocked(apiFetch).mockImplementation(fake);
+  }
+  return peak;
+}
+
+describe('getAvailableScopesFn group names', () => {
+  const DIRECTORY_SIZE = 2_105;
+  const groupId = (index: number) => index.toString(16).padStart(24, '0');
+  const directory: FakeGroup[] = Array.from({ length: DIRECTORY_SIZE }, (_, index) => ({
+    _id: groupId(index),
+    name: `Group ${index}`,
+    memberIds: ['m1', 'm2'],
+  }));
+  const groupProfile = (principalId: string) => ({
+    _id: `c-${principalId}`,
+    principalType: 'group',
+    principalId,
+    priority: 20,
+    isActive: true,
+    overrides: {},
+  });
+
+  function serveProfiles(principalIds: string[], groups: FakeGroup[] = directory) {
+    routes = [
+      [/^GET \/api\/admin\/config$/, () => [200, { configs: principalIds.map(groupProfile) }]],
+      ...groupRoutes(groups),
+    ];
+  }
+
+  const groupCalls = () =>
+    calls.filter((c) => c.url.startsWith('/api/admin/groups')).map((c) => c.url);
+  const listPages = (count: number) =>
+    Array.from({ length: count }, (_, page) => `/api/admin/groups?limit=200&offset=${page * 200}`);
+
+  it('names a group that sits past the first 2,000 of the directory', async () => {
+    const id = groupId(2_050);
+    serveProfiles([id]);
+    const { scopes } = await getAvailableScopesFn();
+    expect(scopes[0]).toMatchObject({ principalId: id, name: 'Group 2050', memberCount: 2 });
+    expect(groupCalls()).toEqual([`/api/admin/groups/${id}`]);
+  });
+
+  it('walks the directory for many group profiles and reads by id only those past its page cap', async () => {
+    const inWalk = Array.from({ length: 11 }, (_, i) => groupId(i * 180));
+    const pastCap = groupId(DIRECTORY_SIZE - 1);
+    serveProfiles([...inWalk, pastCap]);
+    const { scopes } = await getAvailableScopesFn();
+    expect(scopes.map((s) => s.name)).toEqual([
+      ...inWalk.map((_, i) => `Group ${i * 180}`),
+      `Group ${DIRECTORY_SIZE - 1}`,
+    ]);
+    expect(groupCalls()).toEqual([...listPages(10), `/api/admin/groups/${pastCap}`]);
+  });
+
+  it('reads at most ten groups by id at a time', async () => {
+    const pastCap = Array.from({ length: 25 }, (_, i) => groupId(2_000 + i));
+    serveProfiles(pastCap);
+    const peak = await peakConcurrency(async () => {
+      const { scopes } = await getAvailableScopesFn();
+      expect(scopes.map((s) => s.name)).toEqual(pastCap.map((_, i) => `Group ${2_000 + i}`));
+    });
+    expect(peak).toBe(10);
+    expect(groupCalls().filter((url) => !url.includes('?'))).toHaveLength(25);
+  });
+
+  it('falls back to the id of a deleted group without walking the directory', async () => {
+    const deleted = 'ffffffffffffffffffffffff';
+    serveProfiles([deleted]);
+    const { scopes } = await getAvailableScopesFn();
+    expect(scopes[0].name).toBe(deleted);
+    expect(scopes[0].memberCount).toBeUndefined();
+    expect(groupCalls()).toEqual([`/api/admin/groups/${deleted}`]);
+  });
+
+  it('reads nothing by id that a fully walked directory lacks', async () => {
+    const deleted = 'ffffffffffffffffffffffff';
+    const listed = Array.from({ length: 11 }, (_, i) => groupId(i * 25));
+    serveProfiles([...listed, deleted], directory.slice(0, 300));
+    const { scopes } = await getAvailableScopesFn();
+    expect(scopes.at(-1)?.name).toBe(deleted);
+    expect(scopes[10].name).toBe('Group 250');
+    expect(groupCalls()).toEqual(listPages(2));
+  });
+
+  it('makes no group request for a legacy id that is not an ObjectId', async () => {
+    serveProfiles(['grp_legacy_team']);
+    const { scopes } = await getAvailableScopesFn();
+    expect(scopes[0].name).toBe('grp_legacy_team');
+    expect(groupCalls()).toEqual([]);
   });
 });
 

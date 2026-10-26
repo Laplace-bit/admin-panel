@@ -11,6 +11,7 @@ import type {
 import type * as t from '@/types';
 import {
   ABSENT_REVISION,
+  OBJECT_ID_PATTERN,
   MAX_SCOPE_PRIORITY,
   VERSION_CONFLICT_CODE,
   DEFAULT_SCOPE_PRIORITY,
@@ -33,6 +34,11 @@ import { deepGet } from './paths';
 const DIRECTORY_PAGE_SIZE = 200;
 /** Pages read per directory lookup before unresolved principals fall back to their ids. */
 const DIRECTORY_MAX_PAGES = 10;
+/**
+ * Groups read at once with `GET /api/admin/groups/:id`. Profiles for up to
+ * this many groups are resolved in that one round, without the directory.
+ */
+const GROUP_READ_CONCURRENCY = 10;
 
 interface DirectoryGroup {
   _id: string;
@@ -43,6 +49,12 @@ interface DirectoryGroup {
 interface DirectoryPage<T> {
   items: T[];
   total: number;
+}
+
+interface DirectoryLookup<T> {
+  found: Map<string, T>;
+  /** The walk stopped at `DIRECTORY_MAX_PAGES` with ids still missing and more of the list unread. */
+  capped: boolean;
 }
 
 function principalKey(principalType: PrincipalType, principalId: string): string {
@@ -102,40 +114,80 @@ async function lookupPaged<B, T>(
   wanted: ReadonlySet<string>,
   readPage: (body: B) => DirectoryPage<T>,
   idOf: (item: T) => string,
-): Promise<Map<string, T>> {
+): Promise<DirectoryLookup<T>> {
   const found = new Map<string, T>();
   for (let page = 0; page < DIRECTORY_MAX_PAGES && found.size < wanted.size; page++) {
     const offset = page * DIRECTORY_PAGE_SIZE;
     const response = await apiFetch(`${path}?limit=${DIRECTORY_PAGE_SIZE}&offset=${offset}`).catch(
       () => null,
     );
-    if (!response?.ok) break;
+    if (!response?.ok) return { found, capped: false };
     const { items, total } = readPage((await response.json()) as B);
     for (const item of items) {
       const id = idOf(item);
       if (wanted.has(id)) found.set(id, item);
     }
-    if (items.length === 0 || offset + items.length >= total) break;
+    if (items.length === 0 || offset + items.length >= total) return { found, capped: false };
   }
-  return found;
+  return { found, capped: found.size < wanted.size };
 }
 
+/** One group, or null when it is gone (404), can't be read (403) or the request fails. */
+async function readGroup(id: string): Promise<DirectoryGroup | null> {
+  const response = await apiFetch(`/api/admin/groups/${encodeURIComponent(id)}`).catch(() => null);
+  if (!response?.ok) return null;
+  const body = (await response.json().catch(() => ({}))) as { group?: DirectoryGroup };
+  return body.group ?? null;
+}
+
+/**
+ * Reads groups one by one (`readGroup`), `GROUP_READ_CONCURRENCY` at a time,
+ * and adds each one found to `into`.
+ */
+async function readGroupsById(
+  ids: readonly string[],
+  into = new Map<string, DirectoryGroup>(),
+): Promise<Map<string, DirectoryGroup>> {
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < ids.length) {
+      const id = ids[next++];
+      const group = await readGroup(id);
+      if (group) into.set(id, group);
+    }
+  };
+  const workers = Math.min(GROUP_READ_CONCURRENCY, ids.length);
+  await Promise.all(Array.from({ length: workers }, worker));
+  return into;
+}
+
+/**
+ * The groups with the given ids. A few are read by id; more are first looked
+ * up in the directory, and those it can't reach within its page cap are then
+ * read by id. Only ObjectIds are looked up, since every group id is one (a
+ * legacy `grp_<name>` principal id matches no group), and a group that can't
+ * be read (deleted, no access, failed request) stays unresolved.
+ */
 async function lookupGroups(ids: ReadonlySet<string>): Promise<Map<string, DirectoryGroup>> {
-  if (ids.size === 0) return new Map();
-  return lookupPaged(
+  const wanted = new Set([...ids].filter((id) => OBJECT_ID_PATTERN.test(id)));
+  if (wanted.size <= GROUP_READ_CONCURRENCY) return readGroupsById([...wanted]);
+  const { found, capped } = await lookupPaged(
     '/api/admin/groups',
-    ids,
+    wanted,
     (body: { groups?: DirectoryGroup[]; total?: number }) => ({
       items: body.groups ?? [],
       total: body.total ?? 0,
     }),
     (group) => group._id,
   );
+  if (!capped) return found;
+  const missing = [...wanted].filter((id) => !found.has(id));
+  return readGroupsById(missing, found);
 }
 
 async function lookupUsers(ids: ReadonlySet<string>): Promise<Map<string, AdminUserListItem>> {
   if (ids.size === 0) return new Map();
-  return lookupPaged(
+  const { found } = await lookupPaged(
     '/api/admin/users',
     ids,
     (body: { users?: AdminUserListItem[]; total?: number }) => ({
@@ -144,6 +196,7 @@ async function lookupUsers(ids: ReadonlySet<string>): Promise<Map<string, AdminU
     }),
     (user) => user.id,
   );
+  return found;
 }
 
 /** Number of users with a role, or undefined when its members can't be read. */
@@ -158,8 +211,9 @@ async function countRoleMembers(roleName: string): Promise<number | undefined> {
 
 /**
  * Names, emails and member counts for the principals of the given profiles,
- * keyed by `principalType:principalId`. Users and groups are read in pages from
- * the admin directory; role members are counted per role profile.
+ * keyed by `principalType:principalId`. Users are read in pages from the admin
+ * directory, groups by id or from the directory (`lookupGroups`); role members
+ * are counted per role profile.
  */
 export async function resolvePrincipals(
   configs: t.ScopeConfigDoc[],

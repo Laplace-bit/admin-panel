@@ -46,6 +46,9 @@ export const MEMBERS_PAGE_SIZE = 50;
 /** Backend max per request is 200; consumers needing all groups read pages of this size. */
 const ALL_GROUPS_LIMIT = 200;
 
+/** Longest group search the backend accepts; a longer one is refused with a 400. */
+export const MAX_SEARCH_LENGTH = 200;
+
 const GROUP_SOURCE_LOCAL = 'local' as const;
 
 // ── Server functions ─────────────────────────────────────────────────
@@ -65,7 +68,7 @@ export const getGroupsFn = createServerFn({ method: 'GET' })
       data: { search?: string; limit?: number; offset?: number };
     }): Promise<{ groups: AdminGroup[]; total: number }> => {
       const params = new URLSearchParams();
-      if (data.search) params.set('search', data.search);
+      if (data.search) params.set('search', data.search.slice(0, MAX_SEARCH_LENGTH));
       if (data.limit != null) params.set('limit', String(data.limit));
       if (data.offset != null) params.set('offset', String(data.offset));
       const qs = params.toString();
