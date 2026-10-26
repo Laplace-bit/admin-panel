@@ -402,6 +402,12 @@ export interface ChangeSummaryItem {
   /** A hidden custom endpoint: the model specs and endpoint lists LibreChat hides it from too. */
   hiddenUses?: HiddenEndpointUses;
   /**
+   * A hide or unhide by key that also stands for the value the same save
+   * writes there (a removed key restored and set again in one save): that
+   * value's pending edit, at the row's key, which Revert takes back with it.
+   */
+  valueEdit?: ChangeSummaryItem;
+  /**
    * In Base, the profiles that override the entry by name, for each way the
    * change affects them: a rename or removal leaves their overrides under the
    * old name, a moved destination stops their own keys, and a rename or new
