@@ -37,7 +37,7 @@ function getRequestOrigin(): string | undefined {
   const host = getRequestHeader('host');
   if (!host) return undefined;
 
-  const proto = getRequestHeader('x-forwarded-proto') ?? 'http';
+  const proto = getRequestHeader('x-forwarded-proto') || 'http';
   return `${proto}://${host}`;
 }
 
@@ -197,7 +197,8 @@ export const verifyAdminTokenFn = createServerFn({ method: 'GET' }).handler(asyn
       return { valid: false, error: 'Session expired due to inactivity' };
     }
 
-    const needsRevalidation = !lastVerified || now - lastVerified > sessionConfig.revalidationInterval;
+    const needsRevalidation =
+      !lastVerified || now - lastVerified > sessionConfig.revalidationInterval;
 
     if (needsRevalidation) {
       try {
@@ -379,9 +380,7 @@ export const openidLoginFn = createServerFn({ method: 'GET' }).handler(async () 
 });
 
 export const oauthExchangeFn = createServerFn({ method: 'POST' })
-  .validator(
-    z.object({ code: z.string().regex(/^[a-f0-9]{64}$/, 'Invalid exchange code format') }),
-  )
+  .validator(z.object({ code: z.string().regex(/^[a-f0-9]{64}$/, 'Invalid exchange code format') }))
   .handler(async ({ data }) => {
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
