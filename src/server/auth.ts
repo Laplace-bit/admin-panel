@@ -43,7 +43,7 @@ function getRequestOrigin(): string | undefined {
   const host = getRequestHeader('host');
   if (!host) return undefined;
 
-  const proto = getRequestHeader('x-forwarded-proto') ?? 'http';
+  const proto = getRequestHeader('x-forwarded-proto') || 'http';
   return `${proto}://${host}`;
 }
 

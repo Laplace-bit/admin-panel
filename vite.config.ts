@@ -67,7 +67,6 @@ const config = defineConfig({
       '@tanstack/router-core/ssr/client',
       '@tanstack/router-core/ssr/server',
       '@tanstack/history',
-      'h3-v2',
       'tiny-invariant',
       'seroval',
     ],

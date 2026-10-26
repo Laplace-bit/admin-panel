@@ -356,6 +356,24 @@ describe('oauthExchangeFn', () => {
     );
   });
 
+  it('derives an http origin from the host when X-Forwarded-Proto is present but empty', async () => {
+    sessionState.data = { codeVerifier: 'verifier-123' };
+    requestHeaders.set('host', 'admin.test');
+    requestHeaders.set('x-forwarded-proto', '');
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { token: 'jwt-token', user: { id: 'user-1', role: 'ADMIN' } }),
+    );
+
+    await oauthExchangeFn({ data: { code: 'c'.repeat(64) } });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://librechat.test/api/admin/oauth/exchange',
+      expect.objectContaining({
+        headers: { 'Content-Type': 'application/json', Origin: 'http://admin.test' },
+      }),
+    );
+  });
+
   it('does not consume the one-time LibreChat exchange code when the PKCE verifier was lost', async () => {
     sessionState.data = {};
 

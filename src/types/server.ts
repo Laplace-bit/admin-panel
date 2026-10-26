@@ -14,6 +14,40 @@ export interface SessionData {
   codeVerifier?: string;
 }
 
+/** What the `admin-session` cookie seals: the envelope TanStack Start's former `useSession` (h3) wrote. */
+export interface SessionRecord {
+  id: string;
+  createdAt: number;
+  data: SessionData;
+}
+
+/** The current request's admin session. */
+export interface SessionManager {
+  readonly data: SessionData;
+  /** Merges the fields into the session and reissues its cookie. */
+  update: (update: Partial<SessionData>) => Promise<void>;
+}
+
+export interface SessionCookieOptions {
+  path: string;
+  secure: boolean;
+  sameSite: 'lax';
+  httpOnly: true;
+  maxAge: number;
+}
+
+export interface SessionSettings {
+  password: string;
+  cookie: SessionCookieOptions;
+}
+
+/** One `Set-Cookie` of a chunked cookie write; `remove` expires that cookie. */
+export interface CookieWrite {
+  name: string;
+  value: string;
+  remove: boolean;
+}
+
 export interface AdminLoginResponse {
   token: string;
   user: SerializableUser;
