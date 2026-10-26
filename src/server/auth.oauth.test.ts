@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MISSING_PKCE_VERIFIER_MESSAGE } from './utils/oauth';
 
 const fetchMock = vi.fn();
 const updateSession = vi.fn();
@@ -8,6 +7,7 @@ const requestHeaders = new Map<string, string>();
 const sessionState: { data: Record<string, unknown> } = { data: {} };
 
 vi.mock('@tanstack/react-start', () => ({
+  createServerOnlyFn: (fn: (...args: unknown[]) => unknown) => fn,
   createServerFn: () => ({
     handler: (fn: (...args: unknown[]) => unknown) => fn,
     validator: () => ({
@@ -64,6 +64,7 @@ describe('adminLoginFn', () => {
     fetchMock.mockReset();
     updateSession.mockReset();
     sessionState.data = {};
+    requestHeaders.clear();
     vi.stubGlobal('fetch', fetchMock);
   });
 
@@ -89,6 +90,76 @@ describe('adminLoginFn', () => {
       }),
     );
   });
+
+  it("forwards the request's X-Tenant-Id so strict tenant isolation scopes the sign-in", async () => {
+    requestHeaders.set('x-tenant-id', '  tenant-a  ');
+    const user = { id: 'user-1', role: 'ADMIN', email: 'admin@tenant-a.example' };
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: 'jwt-token', user }));
+
+    await adminLoginFn({ data: { email: 'admin@tenant-a.example', password: 'password' } });
+
+    expect(fetchMock).toHaveBeenCalledWith('http://librechat.test/api/admin/login/local', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'tenant-a' },
+      body: JSON.stringify({ email: 'admin@tenant-a.example', password: 'password' }),
+    });
+  });
+
+  it('reads a strict-isolation refusal without a tenant apart from a missing admin capability', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(403, {
+        message: 'Tenant context required in strict isolation mode',
+        code: 'TENANT_CONTEXT_REQUIRED',
+      }),
+    );
+
+    const result = await adminLoginFn({ data: { email: 'a@example.com', password: 'password' } });
+
+    expect(result).toEqual({ error: true, code: 'tenant_required' });
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [403, { message: 'Forbidden', code: 'FORBIDDEN' }, 'not_admin'],
+    [403, { message: 'Forbidden' }, 'not_admin'],
+    [
+      403,
+      {
+        code: 'TWO_FACTOR_FEDERATED_LOGIN_BLOCKED',
+        message: 'Sign in with your identity provider to continue.',
+      },
+      'federated_login',
+    ],
+    [404, { message: 'Email does not exist.' }, 'invalid_credentials'],
+    [404, { message: 'Incorrect password.' }, 'invalid_credentials'],
+    [422, { message: 'Email not verified.' }, 'email_not_verified'],
+    [429, { message: 'Too many login attempts' }, 'rate_limited'],
+    [500, { message: 'Something went wrong' }, 'login_failed'],
+  ])('returns a code the page words for a %i reply (%j)', async (status, body, code) => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(status, body));
+
+    const result = await adminLoginFn({ data: { email: 'a@example.com', password: 'password' } });
+
+    expect(result).toEqual({ error: true, code });
+  });
+
+  it('reads a refusal with no JSON body by its status', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('Too Many Requests', { status: 429 }));
+
+    const result = await adminLoginFn({ data: { email: 'a@example.com', password: 'password' } });
+
+    expect(result).toEqual({ error: true, code: 'rate_limited' });
+  });
+
+  it('reports an unreachable LibreChat as such', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    const result = await adminLoginFn({ data: { email: 'a@example.com', password: 'password' } });
+
+    expect(result).toEqual({ error: true, code: 'unreachable' });
+    errorSpy.mockRestore();
+  });
 });
 
 describe('adminVerify2FAFn', () => {
@@ -96,6 +167,7 @@ describe('adminVerify2FAFn', () => {
     fetchMock.mockReset();
     updateSession.mockReset();
     sessionState.data = {};
+    requestHeaders.clear();
     vi.stubGlobal('fetch', fetchMock);
   });
 
@@ -138,11 +210,52 @@ describe('adminVerify2FAFn', () => {
       data: { tempToken: 'temp-token', totpCode: '123456' },
     });
 
-    expect(result).toEqual({ error: true, message: 'You do not have admin privileges' });
+    expect(result).toEqual({ error: true, code: 'not_admin' });
     expect(fetchMock).toHaveBeenCalledWith('http://librechat.test/api/admin/verify', {
       headers: { Authorization: 'Bearer user-jwt-token' },
     });
     expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it("forwards the request's X-Tenant-Id to the 2FA step", async () => {
+    requestHeaders.set('x-tenant-id', 'tenant-a');
+    const user = { id: 'user-2', role: 'ADMIN', email: 'admin@tenant-a.example' };
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, { token: 'jwt-token-2', user }))
+      .mockResolvedValueOnce(jsonResponse(200, { user }));
+
+    await adminVerify2FAFn({ data: { tempToken: 'temp-token', totpCode: '123456' } });
+
+    expect(fetchMock).toHaveBeenCalledWith('http://librechat.test/api/auth/2fa/verify-temp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'tenant-a' },
+      body: JSON.stringify({ tempToken: 'temp-token', token: '123456' }),
+    });
+  });
+
+  it.each([
+    [403, { code: 'TENANT_CONTEXT_REQUIRED' }, 'tenant_required'],
+    [
+      403,
+      {
+        code: 'TWO_FACTOR_FEDERATED_LOGIN_BLOCKED',
+        message: 'Sign in with your identity provider to continue.',
+      },
+      'federated_login',
+    ],
+    [401, { message: 'Invalid or expired temporary token' }, 'totp_expired'],
+    [401, { message: 'Invalid 2FA code or backup code' }, 'totp_invalid'],
+    [429, { message: 'Too many attempts' }, 'rate_limited'],
+    [403, { message: 'You have been temporarily banned' }, 'verification_failed'],
+  ])('returns a code the page words for a %i reply (%j)', async (status, body, code) => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(status, body));
+
+    const result = await adminVerify2FAFn({
+      data: { tempToken: 'temp-token', totpCode: '123456' },
+    });
+
+    expect(result).toEqual({ error: true, code });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -248,15 +361,44 @@ describe('oauthExchangeFn', () => {
 
     const result = await oauthExchangeFn({ data: { code: 'b'.repeat(64) } });
 
-    expect(result).toEqual({
-      error: true,
-      message: MISSING_PKCE_VERIFIER_MESSAGE,
-    });
+    expect(result).toEqual({ error: true, code: 'sso_verifier_lost' });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(updateSession).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(
       '[oauthExchangeFn] Missing PKCE verifier from admin session; check SESSION_COOKIE_SECURE for HTTP deployments',
     );
+  });
+
+  it("forwards the request's X-Tenant-Id to the code exchange", async () => {
+    sessionState.data = { codeVerifier: 'verifier-123' };
+    requestHeaders.set('x-tenant-id', 'tenant-a');
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { token: 'jwt-token', user: { id: 'user-1', role: 'ADMIN' } }),
+    );
+
+    await oauthExchangeFn({ data: { code: 'c'.repeat(64) } });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init as RequestInit).headers).toEqual({
+      'Content-Type': 'application/json',
+      'X-Tenant-Id': 'tenant-a',
+    });
+  });
+
+  it.each([
+    [401, { error_code: 'INVALID_OR_EXPIRED_CODE' }, 'sso_code_expired'],
+    [400, { error_code: 'INVALID_CODE_FORMAT' }, 'sso_code_invalid'],
+    [400, { error_code: 'MISSING_CODE' }, 'sso_code_invalid'],
+    [429, {}, 'rate_limited'],
+    [500, { error_code: 'INTERNAL_ERROR' }, 'sso_exchange_failed'],
+  ])('returns a code the page words for a %i reply (%j)', async (status, body, code) => {
+    sessionState.data = { codeVerifier: 'verifier-123' };
+    fetchMock.mockResolvedValueOnce(jsonResponse(status, body));
+
+    const result = await oauthExchangeFn({ data: { code: 'd'.repeat(64) } });
+
+    expect(result).toEqual({ error: true, code });
+    expect(updateSession).not.toHaveBeenCalled();
   });
 });
 
@@ -267,6 +409,7 @@ describe('checkOpenIdFn', () => {
   beforeEach(() => {
     fetchMock.mockReset();
     warnSpy.mockClear();
+    requestHeaders.clear();
     vi.stubGlobal('fetch', fetchMock);
     delete process.env.ADMIN_SSO_ENABLED;
     delete process.env.ADMIN_SSO_ONLY;
@@ -285,7 +428,20 @@ describe('checkOpenIdFn', () => {
     const result = await checkOpenIdFn();
 
     expect(result).toEqual({ available: true, ssoOnly: false });
-    expect(fetchMock).toHaveBeenCalledWith('http://librechat.test/api/admin/oauth/openid/check');
+    expect(fetchMock).toHaveBeenCalledWith('http://librechat.test/api/admin/oauth/openid/check', {
+      headers: {},
+    });
+  });
+
+  it("forwards the request's X-Tenant-Id to the OpenID check", async () => {
+    requestHeaders.set('x-tenant-id', 'tenant-a');
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {}));
+
+    await checkOpenIdFn();
+
+    expect(fetchMock).toHaveBeenCalledWith('http://librechat.test/api/admin/oauth/openid/check', {
+      headers: { 'X-Tenant-Id': 'tenant-a' },
+    });
   });
 
   it('marks the session SSO-only when ADMIN_SSO_ONLY=true', async () => {

@@ -81,15 +81,36 @@ describe('refreshAdminToken — tenant header forwarding', () => {
 
   it('omits X-Tenant-Id when the header is whitespace only', async () => {
     tenantHeader.value = '   ';
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse(200, { token: 'new-jwt' }),
-    );
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: 'new-jwt' }));
 
     await refreshAdminToken('rt1', 'openid', 'user-1');
 
     const [, init] = fetchMock.mock.calls[0];
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers['X-Tenant-Id']).toBeUndefined();
+  });
+
+  it('forwards X-Tenant-Id on the cookie-based refresh of a password session', async () => {
+    tenantHeader.value = 'tenant-a';
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: 'new-jwt' }));
+
+    await refreshAdminToken('rt1', 'librechat', 'user-1');
+
+    expect(fetchMock).toHaveBeenCalledWith('http://lc.test/api/auth/refresh', {
+      method: 'POST',
+      headers: { Cookie: 'refreshToken=rt1', 'X-Tenant-Id': 'tenant-a' },
+    });
+  });
+
+  it('sends only the refresh cookie when the BFF request had no tenant header', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: 'new-jwt' }));
+
+    await refreshAdminToken('rt1', 'librechat', 'user-1');
+
+    expect(fetchMock).toHaveBeenCalledWith('http://lc.test/api/auth/refresh', {
+      method: 'POST',
+      headers: { Cookie: 'refreshToken=rt1' },
+    });
   });
 });
 
