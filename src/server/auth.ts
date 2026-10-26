@@ -5,10 +5,16 @@ import { queryOptions } from '@tanstack/react-query';
 import { createServerFn } from '@tanstack/react-start';
 import { getRequestHeader } from '@tanstack/react-start/server';
 import type * as t from '@/types';
+import {
+  EXCHANGE_CODE_PATTERN,
+  TENANT_CONTEXT_REQUIRED_CODE,
+  TWO_FACTOR_FEDERATED_LOGIN_BLOCKED_CODE,
+} from '@/constants';
 import { getApiBaseUrl, getServerApiUrl } from './utils/url';
 import { refreshAdminTokenDeduped } from './utils/refresh';
 import { buildOAuthExchangePayload } from './utils/oauth';
 import { useAppSession, getSessionConfig } from './session';
+import { tenantHeaders } from './utils/tenant';
 
 /** Extract a named cookie value from `set-cookie` response headers. */
 function extractCookieValue(response: Response, name: string): string | undefined {
@@ -41,6 +47,78 @@ function getRequestOrigin(): string | undefined {
   return `${proto}://${host}`;
 }
 
+function failure(code: t.AuthErrorCode): t.AuthFailure {
+  return { error: true, code };
+}
+
+/** The reply's JSON error body; `{}` when it has none (a proxy's HTML page, an empty 429). */
+async function readErrorBody(response: Response): Promise<t.AuthErrorBody> {
+  const body: t.AuthErrorBody | null = await response.json().catch(() => null);
+  return body && typeof body === 'object' ? body : {};
+}
+
+/** The failure each `code` of LibreChat's pre-auth 403s names. */
+const FORBIDDEN_ERROR_CODES: ReadonlyMap<string, t.AuthErrorCode> = new Map([
+  [TENANT_CONTEXT_REQUIRED_CODE, 'tenant_required'],
+  [TWO_FACTOR_FEDERATED_LOGIN_BLOCKED_CODE, 'federated_login'],
+]);
+
+/**
+ * A 403 before sign-in: strict tenant isolation refusing a request that
+ * carried no tenant, or 2FA enforcement refusing a password for an account its
+ * identity provider owns. Any other 403 is `fallback`, as it read before
+ * LibreChat sent these codes.
+ */
+function forbiddenCode(body: t.AuthErrorBody, fallback: t.AuthErrorCode): t.AuthErrorCode {
+  return (body.code ? FORBIDDEN_ERROR_CODES.get(body.code) : undefined) ?? fallback;
+}
+
+/**
+ * Why `POST /api/admin/login/local` refused. LibreChat's `requireLocalAuth`
+ * answers 404 for an unknown email and a wrong password alike, and 422 only
+ * for an unverified email.
+ */
+function loginFailureCode(status: number, body: t.AuthErrorBody): t.AuthErrorCode {
+  switch (status) {
+    case 403:
+      return forbiddenCode(body, 'not_admin');
+    case 404:
+      return 'invalid_credentials';
+    case 422:
+      return 'email_not_verified';
+    case 429:
+      return 'rate_limited';
+    default:
+      return 'login_failed';
+  }
+}
+
+/** Why `POST /api/auth/2fa/verify-temp` refused: a 401 says whether the temp token expired or the code was wrong. */
+function verifyTempFailureCode(status: number, body: t.AuthErrorBody): t.AuthErrorCode {
+  if (status === 401) {
+    const message = typeof body.message === 'string' ? body.message : '';
+    return message.toLowerCase().includes('expired') ? 'totp_expired' : 'totp_invalid';
+  }
+  if (status === 403) return forbiddenCode(body, 'verification_failed');
+  if (status === 429) return 'rate_limited';
+  return 'verification_failed';
+}
+
+const EXCHANGE_ERROR_CODES: ReadonlyMap<string, t.AuthErrorCode> = new Map([
+  ['MISSING_CODE', 'sso_code_invalid'],
+  ['INVALID_CODE_FORMAT', 'sso_code_invalid'],
+  ['INVALID_OR_EXPIRED_CODE', 'sso_code_expired'],
+]);
+
+/** Why `POST /api/admin/oauth/exchange` refused (its `error_code`, else the status). */
+function exchangeFailureCode(status: number, body: t.AuthErrorBody): t.AuthErrorCode {
+  const known = body.error_code ? EXCHANGE_ERROR_CODES.get(body.error_code) : undefined;
+  if (known) return known;
+  if (status === 429) return 'rate_limited';
+  if (status === 403) return forbiddenCode(body, 'not_admin');
+  return 'sso_exchange_failed';
+}
+
 export const adminLoginFn = createServerFn({ method: 'POST' })
   .validator(
     z.object({
@@ -48,32 +126,19 @@ export const adminLoginFn = createServerFn({ method: 'POST' })
       password: z.string().min(1, 'Password is required'),
     }),
   )
-  .handler(async ({ data }) => {
+  .handler(async ({ data }): Promise<t.AdminLoginResult> => {
     try {
       const response = await fetch(`${getServerApiUrl()}/api/admin/login/local`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...tenantHeaders() },
         body: JSON.stringify(data),
       });
 
-      const responseData = await response.json();
-
       if (!response.ok) {
-        switch (response.status) {
-          case 403:
-            return { error: true, message: 'You do not have admin privileges' };
-          case 404:
-            return { error: true, message: 'User not found' };
-          case 422:
-            return { error: true, message: responseData.message || 'Invalid credentials' };
-          case 429:
-            return { error: true, message: 'Too many login attempts. Please try again later' };
-          default:
-            return { error: true, message: responseData.message || 'Login failed' };
-        }
+        return failure(loginFailureCode(response.status, await readErrorBody(response)));
       }
 
-      const loginData = responseData as t.AdminLoginResponse;
+      const loginData = (await response.json()) as t.AdminLoginResponse;
 
       if (loginData.twoFAPending) {
         return {
@@ -97,7 +162,7 @@ export const adminLoginFn = createServerFn({ method: 'POST' })
       return { error: false, user: loginData.user };
     } catch (error) {
       console.error('Admin login error:', error);
-      return { error: true, message: 'Login failed. Please check your connection and try again.' };
+      return failure('unreachable');
     }
   });
 
@@ -108,44 +173,27 @@ export const adminVerify2FAFn = createServerFn({ method: 'POST' })
       totpCode: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
     }),
   )
-  .handler(async ({ data }) => {
+  .handler(async ({ data }): Promise<t.AuthResult> => {
     try {
       const response = await fetch(`${getServerApiUrl()}/api/auth/2fa/verify-temp`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...tenantHeaders() },
         body: JSON.stringify({ tempToken: data.tempToken, token: data.totpCode }),
       });
 
-      const responseData = await response.json();
-
       if (!response.ok) {
-        if (response.status === 401) {
-          const msg = typeof responseData.message === 'string' ? responseData.message : '';
-          const isExpired = msg.toLowerCase().includes('expired');
-          return {
-            error: true,
-            expired: isExpired,
-            message: isExpired
-              ? 'Session expired. Please log in again.'
-              : 'Invalid verification code',
-          };
-        }
-        return { error: true, message: responseData.message || '2FA verification failed' };
+        return failure(verifyTempFailureCode(response.status, await readErrorBody(response)));
       }
 
-      const verifyData = responseData as t.TwoFAVerifyResponse;
+      const verifyData = (await response.json()) as t.TwoFAVerifyResponse;
       const adminVerifyResponse = await fetch(`${getServerApiUrl()}/api/admin/verify`, {
         headers: { Authorization: `Bearer ${verifyData.token}` },
       });
 
       if (!adminVerifyResponse.ok) {
-        if (adminVerifyResponse.status === 403) {
-          return { error: true, message: 'You do not have admin privileges' };
-        }
-        if (adminVerifyResponse.status === 401) {
-          return { error: true, message: 'Session is no longer valid' };
-        }
-        return { error: true, message: '2FA verification failed' };
+        if (adminVerifyResponse.status === 403) return failure('not_admin');
+        if (adminVerifyResponse.status === 401) return failure('session_invalid');
+        return failure('verification_failed');
       }
 
       const adminVerifyData = (await adminVerifyResponse.json()) as t.AdminVerifyResponse;
@@ -164,7 +212,7 @@ export const adminVerify2FAFn = createServerFn({ method: 'POST' })
       return { error: false, user: adminVerifyData.user };
     } catch (error) {
       console.error('2FA verification error:', error);
-      return { error: true, message: 'Verification failed. Please try again.' };
+      return failure('verification_failed');
     }
   });
 
@@ -197,7 +245,8 @@ export const verifyAdminTokenFn = createServerFn({ method: 'GET' }).handler(asyn
       return { valid: false, error: 'Session expired due to inactivity' };
     }
 
-    const needsRevalidation = !lastVerified || now - lastVerified > sessionConfig.revalidationInterval;
+    const needsRevalidation =
+      !lastVerified || now - lastVerified > sessionConfig.revalidationInterval;
 
     if (needsRevalidation) {
       try {
@@ -346,7 +395,7 @@ export const checkOpenIdFn = createServerFn({ method: 'GET' }).handler(async () 
   }
   const checkUrl = `${getServerApiUrl()}/api/admin/oauth/openid/check`;
   try {
-    const response = await fetch(checkUrl);
+    const response = await fetch(checkUrl, { headers: tenantHeaders() });
     if (!response.ok) {
       console.warn('[checkOpenIdFn] OpenID check failed:', response.status, checkUrl);
       return { available: false, ssoOnly: false };
@@ -359,72 +408,60 @@ export const checkOpenIdFn = createServerFn({ method: 'GET' }).handler(async () 
   }
 });
 
-export const openidLoginFn = createServerFn({ method: 'GET' }).handler(async () => {
-  try {
-    const baseUrl = getApiBaseUrl();
-    const authUrl = new URL(`${baseUrl}/api/admin/oauth/openid`);
+export const openidLoginFn = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<t.SsoStartResult> => {
+    try {
+      const baseUrl = getApiBaseUrl();
+      const authUrl = new URL(`${baseUrl}/api/admin/oauth/openid`);
 
-    const codeVerifier = crypto.randomBytes(32).toString('hex');
-    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('hex');
-    authUrl.searchParams.set('code_challenge', codeChallenge);
+      const codeVerifier = crypto.randomBytes(32).toString('hex');
+      const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('hex');
+      authUrl.searchParams.set('code_challenge', codeChallenge);
 
-    const session = await useAppSession();
-    await session.update({ codeVerifier });
+      const session = await useAppSession();
+      await session.update({ codeVerifier });
 
-    return { error: false, authUrl: authUrl.toString() };
-  } catch (error) {
-    console.error('OpenID login initiation error:', error);
-    return { error: true, message: 'Failed to initiate SSO login' };
-  }
-});
+      return { error: false, authUrl: authUrl.toString() };
+    } catch (error) {
+      console.error('OpenID login initiation error:', error);
+      return failure('sso_start_failed');
+    }
+  },
+);
 
 export const oauthExchangeFn = createServerFn({ method: 'POST' })
   .validator(
-    z.object({ code: z.string().regex(/^[a-f0-9]{64}$/, 'Invalid exchange code format') }),
+    z.object({ code: z.string().regex(EXCHANGE_CODE_PATTERN, 'Invalid exchange code format') }),
   )
-  .handler(async ({ data }) => {
+  .handler(async ({ data }): Promise<t.AuthResult> => {
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       const requestOrigin = getRequestOrigin();
-      if (requestOrigin) headers['Origin'] = requestOrigin;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(requestOrigin ? { Origin: requestOrigin } : {}),
+        ...tenantHeaders(),
+      };
 
       const session = await useAppSession();
-      const { codeVerifier } = session.data;
-      const exchangePayload = buildOAuthExchangePayload(data.code, codeVerifier);
-      if (!exchangePayload.ok) {
+      const exchangeBody = buildOAuthExchangePayload(data.code, session.data.codeVerifier);
+      if (!exchangeBody) {
         console.warn(
           '[oauthExchangeFn] Missing PKCE verifier from admin session; check SESSION_COOKIE_SECURE for HTTP deployments',
         );
-        return { error: true, message: exchangePayload.message };
+        return failure('sso_verifier_lost');
       }
 
       const response = await fetch(`${getServerApiUrl()}/api/admin/oauth/exchange`, {
         method: 'POST',
         headers,
-        body: exchangePayload.body,
+        body: exchangeBody,
       });
 
-      const responseData = await response.json();
-
       if (!response.ok) {
-        const errorCode = responseData.error_code;
-        switch (errorCode) {
-          case 'MISSING_CODE':
-            return { error: true, message: 'Authorization code is required' };
-          case 'INVALID_CODE_FORMAT':
-            return { error: true, message: 'Invalid authorization code format' };
-          case 'INVALID_OR_EXPIRED_CODE':
-            return { error: true, message: 'Authorization code has expired. Please try again.' };
-          default:
-            if (response.status === 429)
-              return { error: true, message: 'Too many requests. Please wait and try again.' };
-            if (response.status === 403)
-              return { error: true, message: 'You do not have admin privileges' };
-            return { error: true, message: responseData.message || 'OAuth exchange failed' };
-        }
+        return failure(exchangeFailureCode(response.status, await readErrorBody(response)));
       }
 
-      const exchangeData = responseData as t.OAuthExchangeResponse;
+      const exchangeData = (await response.json()) as t.OAuthExchangeResponse;
       const now = Date.now();
       await session.update({
         user: exchangeData.user,
@@ -440,6 +477,6 @@ export const oauthExchangeFn = createServerFn({ method: 'POST' })
       return { error: false, user: exchangeData.user };
     } catch (error) {
       console.error('OAuth exchange error:', error);
-      return { error: true, message: 'Failed to complete authentication. Please try again.' };
+      return failure('sso_exchange_failed');
     }
   });

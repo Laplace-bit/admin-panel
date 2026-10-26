@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import { createServerOnlyFn } from '@tanstack/react-start';
-import { getRequestHeader } from '@tanstack/react-start/server';
 import type * as t from '@/types';
+import { readTenantHeader, tenantHeaders } from './tenant';
 import { useAppSession } from '../session';
 import { getServerApiUrl } from './url';
 
@@ -17,23 +16,6 @@ export interface RefreshedTokenset {
   expiresAt?: number;
 }
 
-/**
- * Forwards the deployment's tenant header to the LibreChat backend so that
- * `preAuthTenantMiddleware` can scope the refresh lookup. Returns `undefined`
- * (no header) when the BFF request didn't carry one — single-tenant deploys.
- *
- * `createServerOnlyFn` (not a plain function): this file is reachable from a
- * client-bundled route (login.tsx -> @/server -> scopes.ts -> utils/api.ts)
- * even though every actual caller here is server-only, so the bundler can't
- * otherwise prove `getRequestHeader` is safe to keep out of the client build.
- */
-const readTenantHeader = createServerOnlyFn((): string | undefined => {
-  const raw = getRequestHeader('x-tenant-id');
-  if (typeof raw !== 'string') return undefined;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-});
-
 function extractRefreshTokenCookie(response: Response): string | undefined {
   const setCookies = response.headers.getSetCookie();
   for (const cookie of setCookies) {
@@ -46,10 +28,11 @@ function extractRefreshTokenCookie(response: Response): string | undefined {
 /**
  * Calls the LibreChat refresh endpoint matching the session's token provider.
  *
- * - `openid` sessions hit `/api/admin/oauth/refresh` (body-based) and forward
- *   the deployment's `X-Tenant-Id` header so the backend's
- *   `preAuthTenantMiddleware` scopes the user lookup correctly.
+ * - `openid` sessions hit `/api/admin/oauth/refresh` (body-based).
  * - `librechat` sessions hit the cookie-based `/api/auth/refresh`.
+ *
+ * Both forward the deployment's `X-Tenant-Id` header (`tenantHeaders`) so the
+ * backend's `preAuthTenantMiddleware` scopes the user lookup correctly.
  *
  * Returns `undefined` on any network or schema failure — callers decide
  * whether to clear the session.
@@ -65,14 +48,9 @@ export async function refreshAdminToken(
         console.warn('[refreshAdminToken] openid refresh requires user id; aborting');
         return undefined;
       }
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const tenantId = readTenantHeader();
-      if (tenantId) {
-        headers['X-Tenant-Id'] = tenantId;
-      }
       const response = await fetch(`${getServerApiUrl()}/api/admin/oauth/refresh`, {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json', ...tenantHeaders() },
         body: JSON.stringify({ refresh_token: refreshToken, user_id: userId }),
       });
       if (!response.ok) return undefined;
@@ -87,7 +65,7 @@ export async function refreshAdminToken(
 
     const response = await fetch(`${getServerApiUrl()}/api/auth/refresh`, {
       method: 'POST',
-      headers: { Cookie: `refreshToken=${refreshToken}` },
+      headers: { Cookie: `refreshToken=${refreshToken}`, ...tenantHeaders() },
     });
     if (!response.ok) return undefined;
     const parsed = refreshResponseSchema.safeParse(await response.json());

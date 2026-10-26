@@ -1,4 +1,5 @@
 export * from './audit';
+export * from './auth';
 export * from './capabilities';
 export * from './role';
 export * from './scope';

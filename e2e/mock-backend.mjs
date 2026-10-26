@@ -20,10 +20,28 @@ function parseBody(req) {
 
 const VALID_TEMP_TOKEN = 'valid-2fa-temp-token-for-testing';
 
+const FEDERATED_LOGIN_BLOCKED = [
+  403,
+  {
+    code: 'TWO_FACTOR_FEDERATED_LOGIN_BLOCKED',
+    message: 'Sign in with your identity provider to continue.',
+  },
+];
+
 const handlers = {
-  'POST /api/admin/login/local': (body) => {
-    if (body.email === 'rejected@test.com')
-      return [422, { message: 'Invalid credentials' }];
+  'POST /api/admin/login/local': (body, req) => {
+    if (body.email === 'rejected@test.com') return [404, { message: 'Incorrect password.' }];
+    if (body.email === 'unverified@test.com') return [422, { message: 'Email not verified.' }];
+    if (body.email === 'member@test.com') return [403, { message: 'Forbidden', code: 'FORBIDDEN' }];
+    if (body.email === 'federated@test.com') return FEDERATED_LOGIN_BLOCKED;
+    if (body.email === 'tenant@test.com' && req.headers['x-tenant-id'] !== 'tenant-a')
+      return [
+        403,
+        {
+          message: 'Tenant context required in strict isolation mode',
+          code: 'TENANT_CONTEXT_REQUIRED',
+        },
+      ];
     if (body.email === '2fa@test.com')
       return [200, { twoFAPending: true, tempToken: VALID_TEMP_TOKEN }];
     return [
@@ -42,8 +60,8 @@ const handlers = {
   'POST /api/auth/2fa/verify-temp': (body) => {
     if (body.tempToken !== VALID_TEMP_TOKEN)
       return [401, { message: 'Invalid or expired temporary token' }];
-    if (body.token === '000000')
-      return [401, { message: 'Invalid 2FA code or backup code' }];
+    if (body.token === '000000') return [401, { message: 'Invalid 2FA code or backup code' }];
+    if (body.token === '111111') return FEDERATED_LOGIN_BLOCKED;
     return [
       200,
       {
@@ -59,8 +77,7 @@ const handlers = {
   },
   'GET /api/admin/verify': (_body, req) => {
     const auth = req?.headers?.authorization;
-    if (!auth || !auth.startsWith('Bearer '))
-      return [401, { error: 'Authentication required' }];
+    if (!auth || !auth.startsWith('Bearer ')) return [401, { error: 'Authentication required' }];
     const token = auth.slice('Bearer '.length);
     if (token !== 'test-admin-token' && token !== 'test-admin-token-2fa')
       return [401, { error: 'Invalid or expired token' }];
@@ -76,10 +93,7 @@ const handlers = {
       },
     ];
   },
-  'GET /api/admin/oauth/openid/check': () => [
-    200,
-    { message: 'OpenID check successful' },
-  ],
+  'GET /api/admin/oauth/openid/check': () => [200, { message: 'OpenID check successful' }],
 };
 
 const server = createServer(async (req, res) => {
