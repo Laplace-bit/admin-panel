@@ -36,7 +36,7 @@ export const Route = createFileRoute('/_app')({
   },
   loader: ({ context }) =>
     context.queryClient
-      .ensureQueryData(capabilitiesQueryOptions(context.user.id))
+      .fetchQuery(capabilitiesQueryOptions(context.user.id))
       .catch(() => undefined),
   pendingMs: 300,
   pendingComponent: AppPending,

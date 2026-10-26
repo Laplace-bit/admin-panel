@@ -100,8 +100,7 @@ function watchChrome(): ChromeLog {
   return log;
 }
 
-function renderApp() {
-  const queryClient = new QueryClient();
+function renderApp(queryClient = new QueryClient()) {
   const router = createRouter({
     routeTree,
     history: createMemoryHistory({ initialEntries: ['/'] }),
@@ -197,6 +196,23 @@ describe('/_app admin gate', () => {
 
     expect(server.getEffectiveCapabilitiesFn).toHaveBeenCalledTimes(1);
     expect(queryClient.getQueryData(['effectiveCapabilities', USER.id])).toBeDefined();
+  });
+
+  it('waits for stale cached capabilities to be fetched again before rendering', async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(
+      ['effectiveCapabilities', USER.id],
+      { available: true, capabilities: ADMIN_CAPABILITIES },
+      { updatedAt: Date.now() - 60_000 },
+    );
+    server.getEffectiveCapabilitiesFn.mockResolvedValue({ capabilities: ['read:configs'] });
+    const { chrome } = renderApp(queryClient);
+
+    expect(
+      await screen.findByRole('heading', { name: localizeEn('com_access_denied_title') }),
+    ).toBeVisible();
+    expectNoChrome(chrome);
+    expect(server.getEffectiveCapabilitiesFn).toHaveBeenCalledTimes(1);
   });
 
   it('renders the panel for an admin with its nav items already in place', async () => {
