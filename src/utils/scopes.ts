@@ -173,10 +173,13 @@ export function scopeOverrideEntries(
 /**
  * What a profile changes, one item per setting: each overridden leaf, each
  * hidden path, each MCP server once however many of its fields are set, and
- * each entry of a list merged by entry (`scopeOverrideEntries`).
+ * each entry of a list merged by entry (`scopeOverrideEntries`). With
+ * `gated` (`appliesGroupHides`), the hides by name of Azure groups another
+ * client stored are read by group too.
  */
 export function listScopeOverrideItems(
   scope: Pick<t.ConfigScope, 'overridePaths' | 'overrideEntries' | 'tombstones'>,
+  gated = false,
 ): t.ScopeOverrideItem[] {
   const items = new Map<string, t.ScopeOverrideItem>();
   for (const path of scope.overridePaths ?? []) {
@@ -194,7 +197,7 @@ export function listScopeOverrideItems(
     else items.set(itemPath, { path: itemPath, paths: [path], hidden: false });
   }
   const hidden = (scope.tombstones ?? []).map((path): t.ScopeOverrideItem => {
-    const keyed = parseKeyedPath(path);
+    const keyed = parseKeyedPath(path, gated);
     if (!keyed) return { path, paths: [path], hidden: true };
     const { collection, key: name, rest } = keyed;
     return {

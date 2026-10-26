@@ -412,8 +412,68 @@ describe('Azure group hides by name another client stored (keyedTombstones)', ()
     );
   });
 
+  /** The row of a group in the groups table. */
+  const groupRow = (name: string): HTMLElement => {
+    const row = screen.getByRole('button', { name: `Edit Azure group ${name}` }).closest('tr');
+    if (!row) throw new Error(`no row for ${name}`);
+    return row;
+  };
+
+  it('marks a group with a setting hidden in the table and its drawer, naming the setting', () => {
+    renderGroups(KEYED, {}, [`${GROUPS}["eastus"].instanceName`]);
+    const badge = within(groupRow('eastus')).getByText(/^Partly hidden/);
+    expect(badge.getAttribute('title')).toBe(
+      'Base hides Instance name of this group by name: LibreChat serves the group without it, or not at all if it no longer resolves',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Azure group eastus' }));
+    expect(within(screen.getByRole('dialog')).getByText(/^Partly hidden/)).toBeTruthy();
+  });
+
+  it('marks a group hidden whole as hidden', () => {
+    renderGroups(KEYED, {}, [`${GROUPS}["eastus"]`]);
+    const badge = within(groupRow('eastus')).getByText(/^Hidden/);
+    expect(badge.getAttribute('title')).toBe(
+      "Base hides this group by name, so LibreChat doesn't serve it",
+    );
+  });
+
+  it('marks a renamed group by the hides of the name it will be saved under', () => {
+    const west = {
+      group: 'rv-west',
+      apiKeyPreview: '...4321',
+      instanceName: 'rv-west',
+      version: 'v1',
+      models: { m: { deploymentName: 'm' } },
+    };
+    renderGroups(KEYED, { endpoints: { azureOpenAI: { groups: [west] } } }, [
+      `${GROUPS}["rv-west"]`,
+    ]);
+    expect(within(groupRow('rv-west')).getByText(/^Hidden/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Azure group rv-west' }));
+    typeInto(`${GROUPS}.1.group`, 'rv-north');
+    expect(within(screen.getByRole('dialog')).queryByText(/^Hidden/)).toBeNull();
+  });
+
+  it('marks a group renamed onto a name a stored hide names', () => {
+    const west = {
+      group: 'rv-west',
+      apiKeyPreview: '...4321',
+      instanceName: 'rv-west',
+      version: 'v1',
+      models: { m: { deploymentName: 'm' } },
+    };
+    renderGroups(KEYED, { endpoints: { azureOpenAI: { groups: [west] } } }, [
+      `${GROUPS}["rv-north"]`,
+    ]);
+    expect(within(groupRow('rv-west')).queryByText(/^Hidden/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Azure group rv-west' }));
+    typeInto(`${GROUPS}.1.group`, 'rv-north');
+    expect(within(screen.getByRole('dialog')).getByText(/^Hidden/)).toBeTruthy();
+  });
+
   it('says nothing on a server without keyed tombstones', () => {
     renderGroups(REDERIVE, {}, [`${GROUPS}["eastus"].instanceName`]);
     expect(screen.queryByText(/hides Azure groups, or parts of them/)).toBeNull();
+    expect(within(groupRow('eastus')).queryByText(/hidden/i)).toBeNull();
   });
 });

@@ -5,7 +5,9 @@ import { QueryClient, QueryClientProvider, queryOptions } from '@tanstack/react-
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { availableScopesOptions, fieldProfileValuesOptions } from '@/server';
+import { ConfigContractContext } from '@/contexts/ContractContext';
 import { ScopeActionsProvider } from '@/contexts/ScopeContext';
+import { createServerContract } from '@/test/fixtures';
 import { ScopeOverridesDialog } from '../ScopeOverridesDialog';
 import { ConfigRow } from '../ConfigRow';
 
@@ -27,8 +29,11 @@ vi.mock('@/hooks', async () => {
   const field =
     await vi.importActual<typeof import('@/hooks/config/field')>('@/hooks/config/field');
   const dialogs = await vi.importActual<typeof import('@/hooks/dialogs')>('@/hooks/dialogs');
+  const contract =
+    await vi.importActual<typeof import('@/hooks/config/contract')>('@/hooks/config/contract');
   return {
     useLocalize: () => localize,
+    useConfigFeatures: contract.useConfigFeatures,
     useReturnFocus: dialogs.useReturnFocus,
     useScopeActions: scope.useScopeActions,
     useFieldProfiles: scope.useFieldProfiles,
@@ -229,6 +234,48 @@ describe('ScopeOverridesDialog', () => {
     expect(screen.getAllByText('com_scope_overrides_hidden_own(value=red)')).toHaveLength(1);
     fireEvent.click(screen.getAllByRole('button', { name: 'com_scope_overrides_unhide' })[0]);
     expect(onUnhide).toHaveBeenCalledWith(shadowed);
+  });
+
+  describe('hides of Azure groups by name another client stored', () => {
+    const groupField = 'endpoints.azureOpenAI.groups["region-sweden"].instanceName';
+    const wholeGroup = 'endpoints.azureOpenAI.groups["o4-mini"]';
+    const renderHides = (contract: t.ConfigContract) =>
+      renderPage(
+        <ConfigContractContext.Provider value={contract}>
+          <ScopeOverridesDialog
+            open
+            scope={{ ...role, overridePaths: [], tombstones: [groupField, wholeGroup] }}
+            config={{
+              endpoints: {
+                azureOpenAI: { groups: [{ group: 'o4-mini' }, { group: 'region-sweden' }] },
+              },
+            }}
+            onClose={vi.fn()}
+            onUnhide={vi.fn()}
+          />
+        </ConfigContractContext.Provider>,
+      );
+
+    it('names the group and the setting where LibreChat applies them, and goes to it', () => {
+      renderHides(createServerContract({ keyedTombstones: true, endpointRederive: true }));
+      expect(screen.getByText('region-sweden › instanceName')).toBeInTheDocument();
+      expect(screen.getByText('o4-mini')).toBeInTheDocument();
+      expect(screen.queryByText(/groups\["/)).toBeNull();
+      fireEvent.click(screen.getAllByRole('button', { name: 'com_scope_overrides_go' })[0]);
+      const { search } = navigate.mock.calls[0][0] as {
+        search: (prev: Record<string, string>) => Record<string, string>;
+      };
+      expect(search({})).toEqual({
+        tab: 'providers',
+        field: 'endpoints.azureOpenAI.groups.1.instanceName',
+      });
+    });
+
+    it('lists them by their stored path where LibreChat stores them without applying them', () => {
+      renderHides(createServerContract({ keyedTombstones: true }));
+      expect(screen.queryByText('region-sweden › instanceName')).toBeNull();
+      expect(screen.getAllByText('com_scope_overrides_hidden')).toHaveLength(2);
+    });
   });
 
   it('names the specs of a model spec list the profile owns, not its raw value', () => {

@@ -245,8 +245,46 @@ describe('maskStoredSecrets', () => {
   });
 
   it('masks a reference with text around it, and leaves empty values and other keys alone', () => {
-    expect(maskStoredSecrets('prefix-${KEY}', undefined, 'apiKey')).toBe(MASKED_SECRET);
-    expect(maskStoredSecrets('', undefined, 'cohereApiKey')).toBe('');
-    expect(maskStoredSecrets('live', 'headers', 'key')).toBe('live');
+    expect(maskStoredSecrets('prefix-${KEY}', ['apiKey'])).toBe(MASKED_SECRET);
+    expect(maskStoredSecrets('', ['cohereApiKey'])).toBe('');
+    expect(maskStoredSecrets('live', ['headers', 'key'])).toBe('live');
+  });
+
+  it('shows the references LibreChat keeps readable where it keeps them, and masks them elsewhere', () => {
+    expect(
+      maskStoredSecrets({
+        endpoints: {
+          custom: [
+            { name: 'Groq', apiKey: 'user_provided' },
+            { name: 'Mustache', apiKey: '{{GROQ_KEY}}' },
+          ],
+          azureOpenAI: { groups: [{ group: 'eastus', apiKey: 'user_provided' }] },
+        },
+        webSearch: { tavilyApiKey: 'user_provided' },
+        mcpServers: {
+          acme: {
+            apiKey: { source: 'user', key: '{{ACME_KEY}}' },
+            oauth: { client_secret: '{{ACME_SECRET}}' },
+          },
+          beta: { apiKey: { source: 'admin', key: 'user_provided' } },
+        },
+      }),
+    ).toEqual({
+      endpoints: {
+        custom: [
+          { name: 'Groq', apiKey: 'user_provided' },
+          { name: 'Mustache', apiKey: MASKED_SECRET },
+        ],
+        azureOpenAI: { groups: [{ group: 'eastus', apiKey: 'user_provided' }] },
+      },
+      webSearch: { tavilyApiKey: MASKED_SECRET },
+      mcpServers: {
+        acme: {
+          apiKey: { source: 'user', key: '{{ACME_KEY}}' },
+          oauth: { client_secret: '{{ACME_SECRET}}' },
+        },
+        beta: { apiKey: { source: 'admin', key: MASKED_SECRET } },
+      },
+    });
   });
 });

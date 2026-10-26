@@ -16,9 +16,9 @@ import {
   listScopeOverrideItems,
 } from '@/utils';
 import { CONFIG_TABS, SECTION_META, splitCamelCase, tabForPath } from './configMeta';
+import { useReturnFocus, useLocalize, useConfigFeatures } from '@/hooks';
+import { getConfigSection, appliesGroupHides } from '@/constants';
 import { findSchemaField, formatFieldValue } from './controls';
-import { useReturnFocus, useLocalize } from '@/hooks';
-import { getConfigSection } from '@/constants';
 import { fieldLabel } from './review/group';
 import { sourceLabel } from './values';
 import { labelForPath } from './meta';
@@ -101,8 +101,9 @@ function formatEntryValue(
 function keyedOwnValue(
   values: Record<string, t.ConfigValue> | null | undefined,
   item: t.ScopeOverrideItem,
+  gated: boolean,
 ): t.ConfigValue {
-  const keyed = item.keyed?.rest ? parseKeyedPath(item.path) : null;
+  const keyed = item.keyed?.rest ? parseKeyedPath(item.path, gated) : null;
   if (!keyed) return undefined;
   const list = values?.[keyed.collection.path];
   const entry = Array.isArray(list)
@@ -171,17 +172,18 @@ export function ScopeOverridesDialog({
   const localize = useLocalize();
   const returnFocus = useReturnFocus(open);
   const navigate = useNavigate();
+  const gated = appliesGroupHides(useConfigFeatures());
 
   const sections = useMemo(() => {
     const bySection = new Map<string, t.ScopeOverrideItem[]>();
-    for (const item of listScopeOverrideItems(scope)) {
+    for (const item of listScopeOverrideItems(scope, gated)) {
       const section = groupOf(item);
       const list = bySection.get(section);
       if (list) list.push(item);
       else bySection.set(section, [item]);
     }
     return [...bySection.entries()];
-  }, [scope]);
+  }, [scope, gated]);
 
   /**
    * A list that is a tab of its own (custom endpoints, model specs) is
@@ -210,7 +212,7 @@ export function ScopeOverridesDialog({
       return formatEntryValue(values, item, entryPath ?? item.path, fields, localize);
     }
     if (item.hidden) {
-      const own = keyedOwnValue(values, item);
+      const own = keyedOwnValue(values, item, gated);
       if (own === undefined || !item.keyed) return undefined;
       const path = `${item.keyed.collection}.0.${item.keyed.rest}`;
       return localize('com_scope_overrides_hidden_own', {

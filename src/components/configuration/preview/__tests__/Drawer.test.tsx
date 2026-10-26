@@ -207,6 +207,40 @@ describe('PreviewDrawer on a server that resolves configs (resolvedApi)', () => 
     expect(previewText()).toBe('interface:\n  customWelcome: Welcome, team');
   });
 
+  it('shows a key each user enters as written, where LibreChat keeps it readable, and masks a stored one', () => {
+    const client = seededClient();
+    client.setQueryData(['configPreview', 'role', 'USER'], {
+      ok: true,
+      preview: {
+        ...JANE_PREVIEW,
+        principals: undefined,
+        resolved: {
+          endpoints: {
+            custom: [
+              { name: 'groq', apiKey: 'user_provided' },
+              { name: 'shared', apiKey: 'sk-should-not-show' },
+            ],
+            azureOpenAI: { groups: [{ group: 'eastus', apiKey: 'user_provided' }] },
+          },
+          mcpServers: { acme: { apiKey: { source: 'user', key: '{{ACME_KEY}}' } } },
+        },
+      },
+    });
+    renderDrawer(
+      {
+        type: 'PRINCIPAL',
+        principal: { principalType: PrincipalType.ROLE, principalId: 'USER', name: 'USER' },
+      },
+      RESOLVED_API,
+      client,
+    );
+    expect(previewText()).toContain('- name: groq\n      apiKey: user_provided');
+    expect(previewText()).toContain('- group: eastus\n        apiKey: user_provided');
+    expect(previewText()).toContain("key: '{{ACME_KEY}}'");
+    expect(previewText()).toContain('- name: shared\n      apiKey: ••••••••');
+    expect(previewText()).not.toMatch(/should-not-show/);
+  });
+
   it('previews any role, group or user, and marks those with a profile', () => {
     renderDrawer({ type: 'PRINCIPAL', principal: jane });
     fireEvent.click(screen.getByRole('button', { name: 'Change' }));

@@ -8,8 +8,8 @@ import {
   removeValueAtPath,
   isConfigValueEqual,
 } from './format';
+import { isUserTemplate, isUserProvided, isEnvReference, toSecretPreviewKey } from './secrets';
 import { getEntryKey, diffOverride, entriesByKey } from './collections';
-import { toSecretPreviewKey, isEnvReference } from './secrets';
 import { AZURE_GROUPS_PATH } from '@/constants';
 
 /** The secrets an MCP server stores, by the object that holds each (`apiKey.key`, `oauth.client_secret`). */
@@ -65,14 +65,10 @@ const OWN_KEY_IGNORED_FIELDS: ReadonlySet<string> = new Set(['type']);
 /** The settings of an MCP server that decide where it connects, which LibreChat sets back together. */
 const SERVER_DESTINATION_KEYS = ['url', 'type', 'proxy'] as const;
 
-/** A whole `{{VAR}}` template: a value each user enters. */
-const USER_TEMPLATE = /^\{\{[^{}]+\}\}$/;
-
 /** A placeholder LibreChat fills with a credential of the user's: an OpenID or Graph token, or a custom variable. */
 const USER_CREDENTIAL_PLACEHOLDER =
   /\{\{LIBRECHAT_(?:OPENID_(?:ACCESS_TOKEN|ID_TOKEN|TOKEN)|GRAPH_ACCESS_TOKEN)\}\}|\{\{(?!LIBRECHAT_)[^{}]+\}\}/;
 
-const USER_PROVIDED = 'user_provided';
 const REENTRY_CODE = 'secret_reentry_required';
 const CUSTOM_ENDPOINTS = 'endpoints.custom';
 
@@ -110,8 +106,7 @@ function bindingText(value: t.ConfigValue): string | undefined {
 
 /** `user_provided` or a whole `{{VAR}}` template: a value each user enters for themselves. */
 function isUserEntered(value: string): boolean {
-  const trimmed = value.trim();
-  return trimmed === USER_PROVIDED || USER_TEMPLATE.test(trimmed);
+  return isUserProvided(value) || isUserTemplate(value);
 }
 
 /** Where an MCP server's API key is sent: its URL, transport, proxy and the header it travels in. */
@@ -307,7 +302,7 @@ function endpointSendsUserValues(entry: t.ConfigRecord): boolean {
   const { apiKey, baseURL } = entry;
   return (
     (typeof apiKey === 'string' && isUserEntered(apiKey)) ||
-    (typeof baseURL === 'string' && baseURL.trim() === USER_PROVIDED) ||
+    (typeof baseURL === 'string' && isUserProvided(baseURL)) ||
     declaresUserVars(entry) ||
     sendsUserCredential(apiKey) ||
     sendsUserCredential(entry.headers)
@@ -794,7 +789,7 @@ function storesWebSearchKey(owner: t.ConfigRecord, key: string): boolean {
   const value = owner[key];
   if (typeof value !== 'string') return keepsHidden(owner, key);
   const trimmed = value.trim();
-  return trimmed !== '' && trimmed !== USER_PROVIDED && extractVariableName(trimmed) == null;
+  return trimmed !== '' && !isUserProvided(trimmed) && extractVariableName(trimmed) == null;
 }
 
 /**

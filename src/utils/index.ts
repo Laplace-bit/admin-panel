@@ -1,4 +1,5 @@
 export * from './addresses';
+export * from './auth';
 export * from './binding';
 export * from './capabilities';
 export * from './changes';

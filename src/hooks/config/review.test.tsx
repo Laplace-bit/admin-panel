@@ -771,6 +771,23 @@ describe('hides and removals by key (keyedTombstones)', () => {
       expect(row.item.warnings).toBeUndefined();
     });
 
+    it('Revert of the row showing it again with another value takes back the value too', () => {
+      const { result } = renderPage(config, own, withSpec, keyed);
+      act(() => {
+        result.current.edits.handleUnhideField(header);
+        result.current.edits.handleFieldChange('endpoints.custom.1', {
+          ...gateway,
+          headers: { 'X-Team': 'green' },
+        });
+      });
+      const [row] = reviewRows(result.current.review);
+      act(() => result.current.review.revertRow(row));
+      expect(result.current.edits.visibilityEdits).toEqual({});
+      expect(result.current.edits.editedValues).toEqual({});
+      expect(result.current.edits.isDirty).toBe(false);
+      expect(reviewRows(result.current.review)).toEqual([]);
+    });
+
     it('showing it again with the value the layer beneath sets still reads as inherited', () => {
       const { result } = renderPage(config, own, withSpec, keyed);
       act(() => {
@@ -830,6 +847,28 @@ describe('hides and removals by key (keyedTombstones)', () => {
     render(<ReviewList tabs={result.current.review.model.tabs} isScope={false} />);
     expect(screen.getByText('green')).toBeTruthy();
     expect(screen.queryByText(/inherits/)).toBeNull();
+  });
+
+  it('Revert of a removed header restored and set again takes back both, leaving nothing to save', () => {
+    const removed: t.ConfigRecord = {
+      ...withSpec,
+      endpoints: { custom: [moonshot, { ...gateway, headers: {} }] },
+    };
+    const { result } = renderPage(removed, {}, withSpec, keyed);
+    act(() => {
+      result.current.edits.handleUnhideField('endpoints.custom["Gateway"].headers.X-Team');
+      result.current.edits.handleFieldChange('endpoints.custom.1', {
+        ...gateway,
+        headers: { 'X-Team': 'green' },
+      });
+    });
+    const rows = reviewRows(result.current.review);
+    expect(rows).toHaveLength(1);
+    act(() => result.current.review.revertRow(rows[0]));
+    expect(result.current.edits.visibilityEdits).toEqual({});
+    expect(result.current.edits.editedValues).toEqual({});
+    expect(result.current.edits.isDirty).toBe(false);
+    expect(reviewRows(result.current.review)).toEqual([]);
   });
 
   describe('an object-valued additional parameter', () => {
@@ -906,6 +945,39 @@ describe('hides and removals by key (keyedTombstones)', () => {
       expect(row.warnings).toBeUndefined();
     });
 
+    it('Revert of a row restored as the layer beneath sets it takes back the value too', () => {
+      const { result } = renderPage(withParams({ plain: 'x' }), {}, yamlParams, keyed);
+      act(() => {
+        result.current.edits.handleUnhideField(provider);
+        result.current.edits.handleFieldChange('endpoints.custom.1', gatewayWith(params));
+      });
+      const [row] = reviewRows(result.current.review);
+      act(() => result.current.review.revertRow(row));
+      expect(result.current.edits.visibilityEdits).toEqual({});
+      expect(result.current.edits.isDirty).toBe(false);
+      expect(reviewRows(result.current.review)).toEqual([]);
+    });
+
+    it('Revert of a hide with an edit of its own object pending takes back both', () => {
+      const own = {
+        endpoints: { custom: [{ name: 'Gateway', addParams: { provider: { order: ['z'] } } }] },
+      };
+      const config = withParams({ plain: 'x', provider: { order: ['z'] } });
+      const { result } = renderPage(config, own, yamlParams, keyed);
+      act(() => {
+        result.current.edits.handleFieldChange(
+          'endpoints.custom.1',
+          gatewayWith({ plain: 'x', provider: { order: ['q'] } }),
+        );
+        result.current.edits.handleHideField(provider);
+      });
+      const [row] = reviewRows(result.current.review);
+      act(() => result.current.review.revertRow(row));
+      expect(result.current.edits.visibilityEdits).toEqual({});
+      expect(result.current.edits.isDirty).toBe(false);
+      expect(reviewRows(result.current.review)).toEqual([]);
+    });
+
     it('hidden with an edit of its own object pending reads as one hide row', () => {
       const own = {
         endpoints: { custom: [{ name: 'Gateway', addParams: { provider: { order: ['z'] } } }] },
@@ -943,6 +1015,58 @@ describe('hides and removals by key (keyedTombstones)', () => {
         revertTarget: { value: 'blue', source: 'yaml' },
       }),
     ]);
+  });
+});
+
+describe('unhiding a hide of an Azure group by name another client stored', () => {
+  const sweden = { group: 'region-sweden', instanceName: 'libre-dall-e', version: 'v1' };
+  const groups: t.ConfigRecord = {
+    endpoints: { azureOpenAI: { groups: [{ group: 'o4-mini', instanceName: 'o4' }, sweden] } },
+  };
+  const field = 'endpoints.azureOpenAI.groups["region-sweden"].instanceName';
+  const whole = 'endpoints.azureOpenAI.groups["o4-mini"]';
+  const derived = createServerContract({
+    keyedTombstones: true,
+    endpointRederive: true,
+    azureGroupMergeKey: true,
+    azureGroupSecrets: true,
+  });
+
+  it('reads with the value the group gets back, and the group shown again, where LibreChat applies them', () => {
+    const { result } = renderPage(groups, {}, groups, derived);
+    act(() => {
+      result.current.edits.handleUnhideField(field);
+      result.current.edits.handleUnhideField(whole);
+    });
+    expect(reviewRows(result.current.review).map((row) => row.item)).toEqual([
+      expect.objectContaining({
+        kind: 'unhidden',
+        path: 'endpoints.azureOpenAI.groups.o4-mini',
+        entryIdentity: 'o4-mini',
+        collectionPath: 'endpoints.azureOpenAI.groups',
+      }),
+      expect.objectContaining({
+        kind: 'unhidden',
+        path: 'endpoints.azureOpenAI.groups.1.instanceName',
+        entryIdentity: 'region-sweden',
+        revertTarget: { value: 'libre-dall-e', source: 'yaml' },
+      }),
+    ]);
+    render(<ReviewList tabs={result.current.review.model.tabs} isScope={false} />);
+    expect(screen.getByText('libre-dall-e (librechat.yaml)')).toBeTruthy();
+  });
+
+  it('keeps the stored path where LibreChat stores them without applying them', () => {
+    const { result } = renderPage(
+      groups,
+      {},
+      groups,
+      createServerContract({ keyedTombstones: true, azureGroupMergeKey: true }),
+    );
+    act(() => result.current.edits.handleUnhideField(field));
+    const [row] = reviewRows(result.current.review);
+    expect(row.item).toMatchObject({ kind: 'unhidden', path: field });
+    expect(row.item.revertTarget).toBeUndefined();
   });
 });
 
@@ -1056,5 +1180,120 @@ describe('"Revert all to librechat.yaml" with removals by key (keyedTombstones)'
     });
     expect(renderOverrides(own, [removal], derived).result.current.count).toBe(3);
     expect(renderOverrides(own, [removal], keyed).result.current.count).toBe(2);
+  });
+});
+
+describe('"Revert all to librechat.yaml" with every tombstone Base stores', () => {
+  const yamlConfig: t.ConfigRecord = {
+    interface: { customWelcome: 'Hi', bookmarks: true },
+    endpoints: {
+      azureOpenAI: {
+        groups: [{ group: 'region-sweden', instanceName: 'libre-dall-e', version: 'v1' }],
+      },
+    },
+  };
+  const derived = createServerContract({
+    keyedTombstones: true,
+    endpointRederive: true,
+    azureGroupMergeKey: true,
+    azureGroupSecrets: true,
+  });
+  const groupField = 'endpoints.azureOpenAI.groups["region-sweden"].instanceName';
+
+  function renderOverrides(
+    dbOverrides: t.ConfigRecord,
+    dbTombstones: string[],
+    contract: t.ConfigContract,
+  ) {
+    const data: t.BaseConfigData = {
+      config: yamlConfig,
+      yamlConfig,
+      yamlPaths: Object.keys(flattenObject(yamlConfig)),
+      dbOverrides,
+      dbTombstones,
+      schemaDefaults: {},
+    };
+    const layers = {
+      configValues: yamlConfig,
+      dbOverrides,
+      yamlConfig,
+      yamlMcpServers: {},
+      schemaDefaults: {},
+      schemaPathSet,
+      overridePaths: new Set(Object.keys(flattenObject(dbOverrides))),
+      valueLayers: createBaseLayers(
+        data,
+        schemaPathSet,
+        undefined,
+        contract.features.keyedTombstones,
+      ),
+      baseActiveConfigValues: yamlConfig,
+    };
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ConfigContractContext.Provider value={contract}>{children}</ConfigContractContext.Provider>
+    );
+    return renderHook(() => useBaseOverrides({ schemaTree: tree, layers }), { wrapper });
+  }
+
+  it('counts and lists a hidden path Base stores alone, with what it gets back', () => {
+    const { result } = renderOverrides({}, ['interface.customWelcome'], BUNDLED_CONFIG_CONTRACT);
+    expect(result.current.count).toBe(1);
+    expect(reviewRows(result.current).map((row) => row.item)).toEqual([
+      expect.objectContaining({
+        kind: 'unhidden',
+        path: 'interface.customWelcome',
+        revertTarget: { value: 'Hi', source: 'yaml' },
+      }),
+    ]);
+    render(<ReviewList tabs={result.current.model.tabs} isScope={false} />);
+    expect(screen.getByText('Shown again')).toBeTruthy();
+    expect(screen.getByText('Hi (librechat.yaml)')).toBeTruthy();
+  });
+
+  it('leaves a hidden path Base sets its own value at to the row of that value', () => {
+    const { result } = renderOverrides(
+      { interface: { customWelcome: 'Hello' } },
+      ['interface.customWelcome'],
+      BUNDLED_CONFIG_CONTRACT,
+    );
+    expect(result.current.count).toBe(1);
+    expect(reviewRows(result.current).map((row) => [row.item.kind, row.item.path])).toEqual([
+      ['reverted', 'interface.customWelcome'],
+    ]);
+  });
+
+  it('lists a hide of an Azure group setting where LibreChat applies it, counting the group once', () => {
+    const { result } = renderOverrides({}, [groupField], derived);
+    expect(result.current.count).toBe(1);
+    expect(reviewRows(result.current).map((row) => row.item)).toEqual([
+      expect.objectContaining({
+        kind: 'unhidden',
+        path: 'endpoints.azureOpenAI.groups.0.instanceName',
+        entryIdentity: 'region-sweden',
+        revertTarget: { value: 'libre-dall-e', source: 'yaml' },
+      }),
+    ]);
+  });
+
+  it("lists a secret's hide once, without the preview LibreChat stores beside it", () => {
+    const { result } = renderOverrides(
+      {},
+      ['webSearch.tavilyApiKey', 'webSearch.tavilyApiKeyPreview'],
+      BUNDLED_CONFIG_CONTRACT,
+    );
+    expect(result.current.count).toBe(1);
+    expect(reviewRows(result.current).map((row) => row.item.path)).toEqual([
+      'webSearch.tavilyApiKey',
+    ]);
+  });
+
+  it('lists no hide of an Azure group where LibreChat stores it without applying it', () => {
+    const { result } = renderOverrides(
+      {},
+      [groupField, 'interface.bookmarks'],
+      createServerContract({ keyedTombstones: true, azureGroupMergeKey: true }),
+    );
+    expect(result.current.count).toBe(1);
+    expect(reviewRows(result.current).map((row) => row.item.path)).toEqual(['interface.bookmarks']);
   });
 });

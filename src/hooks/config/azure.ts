@@ -15,7 +15,7 @@ import {
 import { toAzureGroups } from '@/components/configuration/sections/providers/azure';
 import { CollectionEditsContext } from '@/contexts/CollectionEditsContext';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
-import { AZURE_GROUPS_PATH } from '@/constants';
+import { AZURE_GROUPS_PATH, appliesGroupHides } from '@/constants';
 import { useConfigFeatures } from './contract';
 import { useListKeys } from './keys';
 
@@ -119,18 +119,18 @@ export function useAzureGroupRows(items: t.ConfigValue[]): t.AzureGroupRows {
 /**
  * The hides of Azure groups by name the open target stores
  * (`endpoints.azureOpenAI.groups["east"]`, or a path inside one), which
- * another client wrote (`keyedTombstones`): LibreChat applies them, while the
- * groups editor neither applies nor writes them.
+ * another client wrote (`appliesGroupHides`): LibreChat applies them, while
+ * the groups editor neither applies nor writes them.
  */
 export function useStoredGroupHides(): t.KeyedPath[] {
-  const { keyedTombstones } = useConfigFeatures();
+  const applies = appliesGroupHides(useConfigFeatures());
   const layers = useContext(ConfigValuesContext)?.layers ?? null;
   return useMemo(() => {
-    if (!keyedTombstones || !layers) return [];
+    if (!applies || !layers) return [];
     const tombstones = layers.scope ? layers.scope.tombstones : layers.baseTombstones;
     return [...tombstones].flatMap((path) => {
       const keyed = parseKeyedPath(path, true);
       return keyed?.collection.path === AZURE_GROUPS_PATH ? [keyed] : [];
     });
-  }, [keyedTombstones, layers]);
+  }, [applies, layers]);
 }

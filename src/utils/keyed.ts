@@ -214,14 +214,17 @@ export function hiddenEntriesOf(
 
 /**
  * The entries of a keyed collection the target hides or removes values of
- * by key (`endpoints.custom["Name"]…`), by name: each is an entry it overrides.
+ * by key (`endpoints.custom["Name"]…`), by name: each is an entry it
+ * overrides. With `gated`, a list edited by entry only on some servers
+ * (Azure groups) is read too (`parseKeyedPath`).
  */
 export function keyedEntriesOf(
   tombstones: Iterable<string>,
   collection: t.KeyedCollection,
+  gated = false,
 ): string[] {
   return [...tombstones].flatMap((path) => {
-    const keyed = parseKeyedPath(path);
+    const keyed = parseKeyedPath(path, gated);
     return keyed?.collection.path === collection.path ? [keyed.key] : [];
   });
 }
