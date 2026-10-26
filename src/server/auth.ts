@@ -27,6 +27,17 @@ function extractCookieValue(response: Response, name: string): string | undefine
   return undefined;
 }
 
+/** The first entry of a header each proxy hop may append to (`https, http`), trimmed; `undefined` when blank. */
+function firstHeaderValue(name: string): string | undefined {
+  return getRequestHeader(name)?.split(',')[0].trim() || undefined;
+}
+
+/**
+ * The panel's browser-facing origin, which LibreChat checks against the origin
+ * it bound the exchange code to. Without `Origin` or `Referer` it is rebuilt
+ * from forwarding metadata, where `X-Forwarded-Host` wins over a `Host` the
+ * proxy rewrote to the upstream (`admin-panel:3000`).
+ */
 function getRequestOrigin(): string | undefined {
   const origin = getRequestHeader('origin');
   if (origin) return origin;
@@ -40,10 +51,10 @@ function getRequestOrigin(): string | undefined {
     }
   }
 
-  const host = getRequestHeader('host');
+  const host = firstHeaderValue('x-forwarded-host') ?? getRequestHeader('host');
   if (!host) return undefined;
 
-  const proto = getRequestHeader('x-forwarded-proto') || 'http';
+  const proto = firstHeaderValue('x-forwarded-proto') ?? 'http';
   return `${proto}://${host}`;
 }
 
@@ -458,7 +469,14 @@ export const oauthExchangeFn = createServerFn({ method: 'POST' })
       });
 
       if (!response.ok) {
-        return failure(exchangeFailureCode(response.status, await readErrorBody(response)));
+        const code = exchangeFailureCode(response.status, await readErrorBody(response));
+        if (code === 'sso_code_expired') {
+          console.warn(
+            "[oauthExchangeFn] LibreChat refused the exchange code as invalid or expired. It binds each code to its ADMIN_PANEL_URL's origin: if that differs from the Origin forwarded here, align ADMIN_PANEL_URL or the proxy's forwarded headers; if it matches, the code expired, was already used, failed its PKCE check, or was issued by a replica whose cache this one does not share. Forwarded Origin:",
+            requestOrigin ?? '(none)',
+          );
+        }
+        return failure(code);
       }
 
       const exchangeData = (await response.json()) as t.OAuthExchangeResponse;

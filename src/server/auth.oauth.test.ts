@@ -374,6 +374,86 @@ describe('oauthExchangeFn', () => {
     );
   });
 
+  it.each([
+    [
+      'the first X-Forwarded-Proto a proxy chain appended',
+      { host: 'admin.example.com', 'x-forwarded-proto': 'https, http' },
+      'https://admin.example.com',
+    ],
+    [
+      'X-Forwarded-Host over a Host the proxy rewrote to the upstream',
+      {
+        host: 'admin-panel:3000',
+        'x-forwarded-host': 'admin.example.com',
+        'x-forwarded-proto': 'https',
+      },
+      'https://admin.example.com',
+    ],
+    [
+      'the first X-Forwarded-Host a proxy chain appended',
+      {
+        host: 'admin-panel:3000',
+        'x-forwarded-host': ' admin.example.com , ingress.internal',
+        'x-forwarded-proto': 'https',
+      },
+      'https://admin.example.com',
+    ],
+    [
+      'Host when X-Forwarded-Host is blank',
+      { host: 'admin.test', 'x-forwarded-host': ' ' },
+      'http://admin.test',
+    ],
+    [
+      'the Origin header ahead of any forwarding metadata',
+      {
+        origin: 'https://admin.example.com',
+        host: 'admin-panel:3000',
+        'x-forwarded-host': 'ingress.internal',
+        'x-forwarded-proto': 'http',
+      },
+      'https://admin.example.com',
+    ],
+  ])('sends LibreChat an Origin from %s', async (_case, headers, origin) => {
+    sessionState.data = { codeVerifier: 'verifier-123' };
+    for (const [name, value] of Object.entries(headers)) requestHeaders.set(name, value);
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { token: 'jwt-token', user: { id: 'user-1', role: 'ADMIN' } }),
+    );
+
+    await oauthExchangeFn({ data: { code: 'c'.repeat(64) } });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://librechat.test/api/admin/oauth/exchange',
+      expect.objectContaining({
+        headers: { 'Content-Type': 'application/json', Origin: origin },
+      }),
+    );
+  });
+
+  it('logs the Origin it forwarded when LibreChat refuses the code as invalid or expired', async () => {
+    sessionState.data = { codeVerifier: 'verifier-123' };
+    requestHeaders.set('origin', 'https://admin.example.com');
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, { error_code: 'INVALID_OR_EXPIRED_CODE' }));
+
+    const result = await oauthExchangeFn({ data: { code: 'e'.repeat(64) } });
+
+    expect(result).toEqual({ error: true, code: 'sso_code_expired' });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("binds each code to its ADMIN_PANEL_URL's origin"),
+      'https://admin.example.com',
+    );
+  });
+
+  it('does not log an origin hint for refusals other than an invalid or expired code', async () => {
+    sessionState.data = { codeVerifier: 'verifier-123' };
+    requestHeaders.set('origin', 'https://admin.example.com');
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error_code: 'INVALID_CODE_FORMAT' }));
+
+    await oauthExchangeFn({ data: { code: 'e'.repeat(64) } });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
   it('does not consume the one-time LibreChat exchange code when the PKCE verifier was lost', async () => {
     sessionState.data = {};
 
