@@ -68,7 +68,7 @@ export const allGrantsQueryOptions = queryOptions({
 });
 
 export const getGrantsForPrincipalFn = createServerFn({ method: 'GET' })
-  .inputValidator(
+  .validator(
     z.object({
       principalType: z.nativeEnum(PrincipalType),
       principalId: z.string(),
@@ -173,7 +173,7 @@ export const effectiveCapabilitiesOptions = (userId: string) =>
 // ── Mutations ────────────────────────────────────────────────────────
 
 export const grantCapabilityFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       principalType: z.nativeEnum(PrincipalType),
       principalId: z.string(),
@@ -209,7 +209,7 @@ export const grantCapabilityFn = createServerFn({ method: 'POST' })
 // TanStack Start server functions only support 'GET' and 'POST'; 'POST' is used here
 // even though this handler proxies a DELETE to the backend.
 export const revokeCapabilityFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       principalType: z.nativeEnum(PrincipalType),
       principalId: z.string(),
@@ -346,7 +346,7 @@ function buildAuditLogQuery(filters: AuditFilters): string {
 }
 
 export const getAuditLogPageFn = createServerFn({ method: 'GET' })
-  .inputValidator(auditFilterSchema)
+  .validator(auditFilterSchema)
   .handler(async ({ data }: { data: AuditFilters }): Promise<AuditLogPage> => {
     await requireCapability(READ_AUDIT_LOG_CAPABILITY);
     /**
@@ -383,7 +383,7 @@ export const auditLogQueryOptions = (
 export const getAuditLogEntryFn = createServerFn({ method: 'GET' })
   /** Constrain to the backend's ObjectId shape so a crafted `entryId` (e.g.
    * `export.csv`) can't be proxied as a sibling audit-log sub-route. */
-  .inputValidator(z.object({ id: z.string().regex(/^[a-f0-9]{24}$/i) }))
+  .validator(z.object({ id: z.string().regex(/^[a-f0-9]{24}$/i) }))
   .handler(
     async ({
       data,
@@ -412,7 +412,7 @@ export const auditLogEntryQueryOptions = (id: string | undefined) =>
   });
 
 export const exportAuditLogServerFn = createServerFn({ method: 'POST' })
-  .inputValidator(auditFilterSchema)
+  .validator(auditFilterSchema)
   .handler(async ({ data }: { data: AuditFilters }): Promise<Response> => {
     await requireCapability(READ_AUDIT_LOG_CAPABILITY);
     /** Grant-scoped like the page fetch — this UI only deals with grant events. */

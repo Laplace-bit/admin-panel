@@ -233,7 +233,7 @@ export const MISSING_SCOPE_MESSAGE =
  * Fetches all configs and extracts the field value from each config's overrides.
  */
 export const getFieldProfileValuesFn = createServerFn({ method: 'GET' })
-  .inputValidator(z.object({ fieldPath: z.string() }))
+  .validator(z.object({ fieldPath: z.string() }))
   .handler(async ({ data }: { data: { fieldPath: string } }) => {
     const response = await apiFetch('/api/admin/config');
     if (!response.ok) {
@@ -350,7 +350,7 @@ async function createScopeOnce(
  * by reading first (`createScopeLegacy`).
  */
 export const createScopeFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z
       .object({
         principalType: z.nativeEnum(PrincipalType),
@@ -401,7 +401,7 @@ export const createScopeFn = createServerFn({ method: 'POST' })
  * only, like every priority change.
  */
 export const setScopePriorityFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       principalType: z.nativeEnum(PrincipalType),
       principalId: z.string().min(1),
@@ -431,7 +431,7 @@ export const setScopePriorityFn = createServerFn({ method: 'POST' })
  * Toggle a scope's isActive flag.
  */
 export const toggleScopeActiveFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       principalType: z.nativeEnum(PrincipalType),
       principalId: z.string(),
@@ -472,7 +472,7 @@ export const toggleScopeActiveFn = createServerFn({ method: 'POST' })
  * Delete a scope and all its config overrides.
  */
 export const deleteScopeFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       principalType: z.nativeEnum(PrincipalType),
       principalId: z.string(),

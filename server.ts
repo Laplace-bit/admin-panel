@@ -97,6 +97,9 @@ type Handler = { default: { fetch: (req: Request) => Promise<Response> } };
 
 const { default: handler } = (await import(SERVER_ENTRY.href)) as Handler;
 
+/** The status recorded for a request the client abandoned before it was answered (nginx's convention). */
+const CLIENT_CLOSED_REQUEST = '499';
+
 async function withHttpMetrics(
   req: Request,
   pathname: string,
@@ -105,7 +108,8 @@ async function withHttpMetrics(
   const path = normalizeMetricsPath(pathname);
   const end = httpRequestDurationSeconds.startTimer({ method: req.method, path });
   const res = await getResponse();
-  const statusCode = String(res.status);
+  /** TanStack Start answers an aborted server function with 500; that is the client leaving, not a server error. */
+  const statusCode = req.signal.aborted ? CLIENT_CLOSED_REQUEST : String(res.status);
   httpRequestsTotal.inc({ method: req.method, path, status_code: statusCode });
   end({ status_code: statusCode });
   return res;
@@ -136,9 +140,10 @@ const server = Bun.serve({
     ...(BASE_PATH ? { [`${BASE_PATH}`]: () => Response.redirect(`${BASE_PATH}/`, 302) } : {}),
     '/*': async (req) => {
       const url = new URL(req.url);
-      const metricsPath = BASE_PATH && url.pathname.startsWith(BASE_PATH)
-        ? url.pathname.slice(BASE_PATH.length) || '/'
-        : url.pathname;
+      const metricsPath =
+        BASE_PATH && url.pathname.startsWith(BASE_PATH)
+          ? url.pathname.slice(BASE_PATH.length) || '/'
+          : url.pathname;
       const res = await withHttpMetrics(req, metricsPath, () => handler.fetch(req));
       const patched = new Response(res.body, res);
       for (const [k, v] of Object.entries(NO_CACHE)) {

@@ -21,7 +21,7 @@ const EMPTY_SCOPE_CONFIG: t.ResolvedConfigData = {
  * vary per user and are not part of a profile's inheritance (EV-5).
  */
 export const getResolvedConfigFn = createServerFn({ method: 'GET' })
-  .inputValidator(
+  .validator(
     z.object({
       principalType: z.nativeEnum(PrincipalType),
       principalId: z.string(),

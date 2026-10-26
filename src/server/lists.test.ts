@@ -13,7 +13,7 @@ vi.mock('./utils/api', () => ({
 vi.mock('@tanstack/react-start', () => ({
   createServerFn: () => ({
     handler: (fn: (...args: never[]) => unknown) => fn,
-    inputValidator: () => ({ handler: (fn: (...args: never[]) => unknown) => fn }),
+    validator: () => ({ handler: (fn: (...args: never[]) => unknown) => fn }),
   }),
 }));
 
@@ -45,7 +45,7 @@ beforeEach(() => {
 describe('all-principals queries', () => {
   it('reads every page of roles, past the per-request cap', async () => {
     servePages('roles');
-    const roles = await new QueryClient().fetchQuery(allRolesQueryOptions);
+    const roles = await new QueryClient().query(allRolesQueryOptions);
     expect(roles).toHaveLength(TOTAL);
     expect(roles.at(-1)?.name).toBe(`roles-${TOTAL - 1}`);
     expect(apiFetchMock).toHaveBeenCalledTimes(2);
@@ -53,7 +53,7 @@ describe('all-principals queries', () => {
 
   it('reads every page of groups, past the per-request cap', async () => {
     servePages('groups');
-    const groups = await new QueryClient().fetchQuery(allGroupsQueryOptions);
+    const groups = await new QueryClient().query(allGroupsQueryOptions);
     expect(groups).toHaveLength(TOTAL);
     expect(groups.at(-1)?.id).toBe(`id${TOTAL - 1}`);
     expect(apiFetchMock).toHaveBeenCalledTimes(2);

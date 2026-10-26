@@ -51,7 +51,7 @@ const GROUP_SOURCE_LOCAL = 'local' as const;
 // ── Server functions ─────────────────────────────────────────────────
 
 export const getGroupsFn = createServerFn({ method: 'GET' })
-  .inputValidator(
+  .validator(
     z.object({
       search: z.string().optional(),
       limit: z.number().optional(),
@@ -115,7 +115,7 @@ export const groupAssignmentsQueryOptions = queryOptions({
 });
 
 export const createGroupFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       name: z.string().min(1),
       description: z.string().default(''),
@@ -138,7 +138,7 @@ export const createGroupFn = createServerFn({ method: 'POST' })
   });
 
 export const updateGroupFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       id: z.string(),
       name: z.string().min(1).optional(),
@@ -159,7 +159,7 @@ export const updateGroupFn = createServerFn({ method: 'POST' })
   });
 
 export const deleteGroupFn = createServerFn({ method: 'POST' })
-  .inputValidator(z.object({ id: z.string() }))
+  .validator(z.object({ id: z.string() }))
   .handler(async ({ data }: { data: { id: string } }) => {
     const response = await apiFetch(`/api/admin/groups/${encodeURIComponent(data.id)}`, {
       method: 'DELETE',
@@ -171,7 +171,7 @@ export const deleteGroupFn = createServerFn({ method: 'POST' })
   });
 
 export const getGroupMembersFn = createServerFn({ method: 'GET' })
-  .inputValidator(
+  .validator(
     z.object({
       groupId: z.string(),
       limit: z.number().optional(),
@@ -213,7 +213,7 @@ export const groupMembersQueryOptions = (groupId: string, page = 1) =>
   });
 
 export const addGroupMemberFn = createServerFn({ method: 'POST' })
-  .inputValidator(z.object({ groupId: z.string(), userId: z.string() }))
+  .validator(z.object({ groupId: z.string(), userId: z.string() }))
   .handler(async ({ data }: { data: { groupId: string; userId: string } }) => {
     const response = await apiFetch(
       `/api/admin/groups/${encodeURIComponent(data.groupId)}/members`,
@@ -229,7 +229,7 @@ export const addGroupMemberFn = createServerFn({ method: 'POST' })
   });
 
 export const removeGroupMemberFn = createServerFn({ method: 'POST' })
-  .inputValidator(z.object({ groupId: z.string(), userId: z.string() }))
+  .validator(z.object({ groupId: z.string(), userId: z.string() }))
   .handler(async ({ data }: { data: { groupId: string; userId: string } }) => {
     const response = await apiFetch(
       `/api/admin/groups/${encodeURIComponent(data.groupId)}/members/${encodeURIComponent(data.userId)}`,

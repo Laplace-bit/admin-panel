@@ -26,8 +26,8 @@ export const Route = createFileRoute('/_app/configuration/')({
    */
   loader: async ({ context: { queryClient } }) => {
     const [tree] = await Promise.all([
-      queryClient.ensureQueryData(configSchemaTreeOptions),
-      queryClient.prefetchQuery(baseConfigOptions),
+      queryClient.query({ ...configSchemaTreeOptions, staleTime: 'static' }),
+      queryClient.query(baseConfigOptions).catch(() => undefined),
     ]);
     return { tree };
   },

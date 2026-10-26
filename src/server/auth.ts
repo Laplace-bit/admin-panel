@@ -42,7 +42,7 @@ function getRequestOrigin(): string | undefined {
 }
 
 export const adminLoginFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       email: z.string().email('Valid email address is required'),
       password: z.string().min(1, 'Password is required'),
@@ -102,7 +102,7 @@ export const adminLoginFn = createServerFn({ method: 'POST' })
   });
 
 export const adminVerify2FAFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({
       tempToken: z.string().min(1, 'Temporary token is required'),
       totpCode: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
@@ -271,7 +271,7 @@ export const verifyAdminTokenFn = createServerFn({ method: 'GET' }).handler(asyn
 });
 
 export const requireAuthFn = createServerFn({ method: 'GET' })
-  .inputValidator(z.object({ location: z.string() }))
+  .validator(z.object({ location: z.string() }))
   .handler(async ({ data }) => {
     const verifyResult = await verifyAdminTokenFn();
 
@@ -379,7 +379,7 @@ export const openidLoginFn = createServerFn({ method: 'GET' }).handler(async () 
 });
 
 export const oauthExchangeFn = createServerFn({ method: 'POST' })
-  .inputValidator(
+  .validator(
     z.object({ code: z.string().regex(/^[a-f0-9]{64}$/, 'Invalid exchange code format') }),
   )
   .handler(async ({ data }) => {

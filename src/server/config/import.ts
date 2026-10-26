@@ -103,5 +103,5 @@ export function parseConfigYaml(yamlContent: string): t.ImportParseResult {
 }
 
 export const parseImportedYaml = createServerFn({ method: 'POST' })
-  .inputValidator(z.object({ yamlContent: z.string() }))
+  .validator(z.object({ yamlContent: z.string() }))
   .handler(async ({ data }) => parseConfigYaml(data.yamlContent));

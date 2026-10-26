@@ -36,7 +36,7 @@ export const getLangfuseConnectionFn = createServerFn({ method: 'GET' }).handler
 );
 
 export const updateLangfuseConnectionFn = createServerFn({ method: 'POST' })
-  .inputValidator(connectionInputSchema)
+  .validator(connectionInputSchema)
   .handler(async ({ data }): Promise<TLangfuseConnectionStatus> => {
     await requireAllSectionCapabilities(['langfuse']);
     const response = await apiFetch('/api/admin/langfuse/connection', {
@@ -50,7 +50,7 @@ export const updateLangfuseConnectionFn = createServerFn({ method: 'POST' })
   });
 
 export const testLangfuseConnectionFn = createServerFn({ method: 'POST' })
-  .inputValidator(connectionTestInputSchema)
+  .validator(connectionTestInputSchema)
   .handler(async ({ data }): Promise<LangfuseConnectionTestResponse> => {
     await requireAllSectionCapabilities(['langfuse']);
     const response = await apiFetch('/api/admin/langfuse/connection/test', {

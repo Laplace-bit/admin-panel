@@ -10,7 +10,7 @@ const sessionState: { data: Record<string, unknown> } = { data: {} };
 vi.mock('@tanstack/react-start', () => ({
   createServerFn: () => ({
     handler: (fn: (...args: unknown[]) => unknown) => fn,
-    inputValidator: () => ({
+    validator: () => ({
       handler: (fn: (...args: unknown[]) => unknown) => fn,
     }),
   }),

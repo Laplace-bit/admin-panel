@@ -49,6 +49,7 @@ docker compose down     # stop
 | `ADMIN_SSO_ENABLED`             | No                                  | `true`                                                                           | Set `false` to hide the SSO button (and auto-redirect) while keeping email/password login       |
 | `ADMIN_SESSION_IDLE_TIMEOUT_MS` | No                                  | `1800000` (30 min)                                                               | Session idle timeout in ms                                                                      |
 | `SESSION_COOKIE_SECURE`         | No                                  | `true` in production, `false` otherwise                                          | Set `false` only for plain-HTTP deployments so the browser keeps the admin session cookie       |
+| `ADMIN_PANEL_TRUSTED_ORIGINS`   | No                                  | None (only the panel's own origin)                                               | Comma-separated public origins allowed to call server functions; see the note below             |
 
 For OpenID SSO, the admin panel stores a short-lived PKCE verifier in the
 `admin-session` cookie before redirecting to LibreChat. If the admin panel is
@@ -57,6 +58,14 @@ served over plain HTTP while running in production mode, browsers reject a
 that deployment shape, set `SESSION_COOKIE_SECURE=false` on the admin panel.
 Set the same override on LibreChat itself when LibreChat is also reached over
 plain HTTP, so its OAuth and auth cookies are not dropped either.
+
+Server functions (sign-in included) answer `403 Forbidden` to requests the
+browser did not send from the panel's own origin. Over HTTPS or on `localhost`,
+browsers declare this with `Sec-Fetch-Site`. Over plain HTTP they do not, so the
+panel compares the `Origin`/`Referer` header with the `Host` it received. Behind
+a reverse proxy, either forward the original `Host` including its port (nginx:
+`proxy_set_header Host $http_host;`) or list the public origin in
+`ADMIN_PANEL_TRUSTED_ORIGINS` (e.g. `http://admin.example.com:8080`).
 
 #### Standalone Docker build
 

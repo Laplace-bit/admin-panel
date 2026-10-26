@@ -100,7 +100,7 @@ export function previewPath(principal: t.ConfigPrincipal): string {
  * status and code, so the preview can say why.
  */
 export const getConfigPreviewFn = createServerFn({ method: 'GET' })
-  .inputValidator(
+  .validator(
     z.object({ principalType: z.nativeEnum(PrincipalType), principalId: z.string().min(1) }),
   )
   .handler(async ({ data }: { data: t.ConfigPrincipal }): Promise<t.ConfigPreviewResult> => {
