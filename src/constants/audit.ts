@@ -5,6 +5,7 @@ import type {
   AuditOutcome,
   AuditSeverity,
 } from '@librechat/data-schemas';
+import { OBJECT_ID_PATTERN } from './scope';
 
 /**
  * Client-safe mirrors of the audit enums from `@librechat/data-schemas`.
@@ -60,10 +61,10 @@ export const AUDIT_ACTOR_TYPES = [
   'api',
 ] as const satisfies readonly AuditActorType[];
 
-/** Backend audit-entry id shape (Mongo ObjectId). Shared by the BFF validator
- * and the client query guard so a crafted `?entryId=` deep link is rejected. */
-const AUDIT_ENTRY_ID_RE = /^[a-f0-9]{24}$/i;
-
+/**
+ * Client guard for the backend's audit-entry id shape (a Mongo ObjectId, as the BFF validator
+ * requires), so a crafted `?entryId=` deep link is rejected.
+ */
 export function isAuditEntryId(id: string | undefined | null): id is string {
-  return typeof id === 'string' && AUDIT_ENTRY_ID_RE.test(id);
+  return typeof id === 'string' && OBJECT_ID_PATTERN.test(id);
 }

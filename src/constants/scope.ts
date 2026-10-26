@@ -70,6 +70,9 @@ export function getScopeGateReason(
 /** The admin user search needs at least this many characters. */
 export const MIN_USER_SEARCH_LENGTH = 2;
 
+/** A Mongo ObjectId, the shape of the admin API's group, user and audit-entry ids. */
+export const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i;
+
 /** The principal of the Base document: the admin overrides that apply to everyone. */
 export const BASE_PRINCIPAL: t.ConfigPrincipal = {
   principalType: PrincipalType.ROLE,

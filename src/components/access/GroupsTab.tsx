@@ -10,7 +10,7 @@ import {
   Pagination,
   TrashButton,
 } from '@/components/shared';
-import { deleteGroupFn, groupsQueryOptions, GROUPS_PAGE_SIZE } from '@/server';
+import { deleteGroupFn, groupsQueryOptions, GROUPS_PAGE_SIZE, MAX_SEARCH_LENGTH } from '@/server';
 import { useLocalize, useCapabilities, useRefreshScopes } from '@/hooks';
 import { cn, notifySuccess, notifyError } from '@/utils';
 import { EditGroupDialog } from './EditGroupDialog';
@@ -35,10 +35,11 @@ export function GroupsTab({ onCreateGroup }: t.GroupsTabProps) {
   }, []);
 
   const handleSearchChange = (value: string) => {
-    setSearch(value);
+    const clamped = value.slice(0, MAX_SEARCH_LENGTH);
+    setSearch(clamped);
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      setDebouncedSearch(value);
+      setDebouncedSearch(clamped);
       setPage(1);
     }, 300);
   };

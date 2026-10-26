@@ -17,7 +17,7 @@ vi.mock('@tanstack/react-start', () => ({
   }),
 }));
 
-import { allGroupsQueryOptions } from './groups';
+import { allGroupsQueryOptions, getGroupsFn, MAX_SEARCH_LENGTH } from './groups';
 import { allRolesQueryOptions } from './roles';
 
 const TOTAL = 250;
@@ -57,5 +57,16 @@ describe('all-principals queries', () => {
     expect(groups).toHaveLength(TOTAL);
     expect(groups.at(-1)?.id).toBe(`id${TOTAL - 1}`);
     expect(apiFetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('getGroupsFn', () => {
+  it('sends at most the 200 search characters the backend accepts', async () => {
+    servePages('groups');
+    await getGroupsFn({ data: { search: 'x'.repeat(250), limit: 50, offset: 0 } });
+    const [path] = apiFetchMock.mock.calls[0] as [string];
+    const search = new URL(path, 'http://admin.test').searchParams.get('search');
+    expect(MAX_SEARCH_LENGTH).toBe(200);
+    expect(search).toBe('x'.repeat(200));
   });
 });

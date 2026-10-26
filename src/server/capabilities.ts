@@ -19,6 +19,7 @@ import {
   AUDIT_SEVERITIES,
   AUDIT_ACTOR_TYPES,
   READ_AUDIT_LOG_CAPABILITY,
+  OBJECT_ID_PATTERN,
   isAuditEntryId,
 } from '@/constants';
 import { apiFetch, extractApiError } from './utils/api';
@@ -383,7 +384,7 @@ export const auditLogQueryOptions = (
 export const getAuditLogEntryFn = createServerFn({ method: 'GET' })
   /** Constrain to the backend's ObjectId shape so a crafted `entryId` (e.g.
    * `export.csv`) can't be proxied as a sibling audit-log sub-route. */
-  .validator(z.object({ id: z.string().regex(/^[a-f0-9]{24}$/i) }))
+  .validator(z.object({ id: z.string().regex(OBJECT_ID_PATTERN) }))
   .handler(
     async ({
       data,
