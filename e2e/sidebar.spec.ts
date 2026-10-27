@@ -7,6 +7,9 @@ import type { Locator, Page } from '@playwright/test';
  * drawn whole instead of clipped by the panel or the viewport.
  */
 
+/** Headless Chromium hides scrollbars by default; the rail must also fit beside a real one. */
+test.use({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
+
 const COLLAPSED_KEY = 'admin-panel:sidebar-collapsed';
 /** The sidebar controls whose focus rings sit against a clipped edge, by accessible name. */
 const RINGED = [
@@ -126,6 +129,29 @@ test.describe('Sidebar rail', () => {
     expect(last.icons.length).toBeGreaterThan(2);
     expect(last.icons).toEqual(last.icons.map(() => rail));
     expect(first.icons).toEqual(last.icons);
+  });
+
+  test('keeps the collapsed nav icons centered without a sideways scroll when the nav scrolls', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 300 });
+    await openSidebar(page, true);
+    const nav = await page.getByRole('navigation').evaluate((el) => {
+      const left = el.getBoundingClientRect().left + el.clientLeft;
+      return {
+        scrolls: el.scrollHeight > el.clientHeight,
+        sideways: el.scrollWidth > el.clientWidth,
+        center: el.clientWidth / 2,
+        icons: [...el.querySelectorAll('a > span[aria-hidden="true"]')].map((icon) => {
+          const rect = icon.getBoundingClientRect();
+          return rect.left + rect.width / 2 - left;
+        }),
+      };
+    });
+
+    expect(nav.scrolls).toBe(true);
+    expect(nav.sideways).toBe(false);
+    for (const icon of nav.icons) expect(Math.abs(icon - nav.center)).toBeLessThanOrEqual(0.5);
   });
 
   for (const collapsed of [true, false]) {

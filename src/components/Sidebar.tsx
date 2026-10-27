@@ -39,8 +39,9 @@ const navItems: t.NavItem[] = [
  * A collapsed row spans the rail's inner width (w-14, less its 1px border and
  * px-2 on each side) from the first frame of the collapse, so its icon centers
  * in the rail instead of sweeping in from the middle of the shrinking panel.
+ * It narrows to the space a scrolling nav leaves beside its scrollbar.
  */
-const RAIL_ROW = 'w-[calc(--spacing(10)-1px)] justify-center gap-0';
+const RAIL_ROW = 'w-[calc(--spacing(10)-1px)] max-w-full justify-center gap-0';
 const RAIL_LABEL = 'w-0 flex-none overflow-hidden';
 
 function getUserInitials(user?: { name?: string; email?: string } | null): string {
