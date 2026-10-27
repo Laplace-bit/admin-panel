@@ -14,6 +14,8 @@ export interface SessionData {
   lastVerified?: number;
   lastActivity?: number;
   codeVerifier?: string;
+  /** The provider an SSO sign-in started with, which its callback's session belongs to. */
+  ssoProvider?: SsoProviderId;
   /** The in-app path an SSO sign-in started from, for its callback to return to. */
   ssoRedirect?: string;
 }

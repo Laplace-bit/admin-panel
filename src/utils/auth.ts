@@ -23,8 +23,18 @@ export function ssoCallbackPath(id: t.SsoProviderId): string {
 }
 
 /**
- * Whether the sign-in page offers the provider. A provider `socialLogins`
- * leaves out is not offered, as on LibreChat's own sign-in page. A flag of
+ * The providers in button order. With a `socialLogins` list, LibreChat's own
+ * sign-in page shows only those, in that order, and so does the panel;
+ * without one, the registry's order.
+ */
+function ssoButtonOrder(config: t.SsoStartupConfig | undefined): readonly t.SsoProviderId[] {
+  const socialLogins = config?.socialLogins;
+  if (!Array.isArray(socialLogins)) return SSO_PROVIDER_IDS;
+  return [...new Set(socialLogins)].filter(isSsoProviderId);
+}
+
+/**
+ * Whether LibreChat can sign the admin in with the provider. A flag of
  * `GET /api/config` counts only with social login on: LibreChat registers
  * those admin strategies under `ALLOW_SOCIAL_LOGIN` alone.
  */
@@ -33,8 +43,6 @@ function isSsoOffered(
   config: t.SsoStartupConfig | undefined,
   checked: ReadonlySet<t.SsoProviderId>,
 ): boolean {
-  const socialLogins = config?.socialLogins;
-  if (Array.isArray(socialLogins) && !socialLogins.includes(id)) return false;
   const { availability } = SSO_PROVIDERS[id];
   if (availability === 'check') return checked.has(id);
   return config?.socialLoginEnabled === true && config[availability] === true;
@@ -59,7 +67,7 @@ export function offeredSsoProviders(
   config: t.SsoStartupConfig | undefined,
   checked: ReadonlySet<t.SsoProviderId>,
 ): t.SsoProviderOption[] {
-  return SSO_PROVIDER_IDS.flatMap((id) => {
+  return ssoButtonOrder(config).flatMap((id) => {
     if (!isSsoOffered(id, config, checked)) return [];
     const label = ssoButtonLabel(id, config);
     return [label ? { id, label } : { id }];

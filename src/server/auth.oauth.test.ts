@@ -468,7 +468,7 @@ describe('oauthExchangeFn', () => {
   });
 
   it('signs a Google admin in as a Google session, for its refresh to go to Google', async () => {
-    sessionState.data = { codeVerifier: 'verifier-123' };
+    sessionState.data = { codeVerifier: 'verifier-123', ssoProvider: 'google' };
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, {
         token: 'jwt-token',
@@ -492,6 +492,33 @@ describe('oauthExchangeFn', () => {
         refreshToken: 'google-refresh-token',
         tokenProvider: 'google',
       }),
+    );
+  });
+
+  it('signs the admin in with the provider sign-in started with, whichever callback the code came back to', async () => {
+    sessionState.data = { codeVerifier: 'verifier-123', ssoProvider: 'openid' };
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { token: 'jwt-token', user: { id: 'user-1', role: 'ADMIN' } }),
+    );
+
+    const result = await oauthExchangeFn({ data: { code: 'e'.repeat(64), provider: 'google' } });
+
+    expect(result).toMatchObject({ error: false });
+    expect(updateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ tokenProvider: 'openid', ssoProvider: undefined }),
+    );
+  });
+
+  it("takes the callback's provider for a sign-in started before the session kept one", async () => {
+    sessionState.data = { codeVerifier: 'verifier-123' };
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { token: 'jwt-token', user: { id: 'user-1', role: 'ADMIN' } }),
+    );
+
+    await oauthExchangeFn({ data: { code: 'e'.repeat(64), provider: 'google' } });
+
+    expect(updateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ tokenProvider: 'google' }),
     );
   });
 
@@ -705,7 +732,7 @@ describe('ssoStartFn', () => {
     vi.stubGlobal('fetch', fetchMock);
   });
 
-  function startedSession(): { codeVerifier: string; ssoRedirect: string } {
+  function startedSession(): { codeVerifier: string; ssoProvider: string; ssoRedirect: string } {
     expect(updateSession).toHaveBeenCalledTimes(1);
     return updateSession.mock.calls[0][0];
   }
@@ -731,13 +758,14 @@ describe('ssoStartFn', () => {
     },
   );
 
-  it('keeps the in-app path to return to in the admin session', async () => {
+  it('keeps the provider and the in-app path to return to in the admin session', async () => {
     await ssoStartFn({
       data: { provider: 'google', redirectTo: '/configuration?scope=role:USER' },
     });
 
     expect(startedSession()).toEqual({
       codeVerifier: expect.stringMatching(/^[a-f0-9]{64}$/),
+      ssoProvider: 'google',
       ssoRedirect: '/configuration?scope=role:USER',
     });
   });

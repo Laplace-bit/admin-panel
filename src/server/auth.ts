@@ -488,7 +488,11 @@ export const ssoStartFn = createServerFn({ method: 'POST' })
       authUrl.searchParams.set('code_challenge', codeChallenge);
 
       const session = await useAppSession();
-      await session.update({ codeVerifier, ssoRedirect: ssoRedirectOf(data.redirectTo) });
+      await session.update({
+        codeVerifier,
+        ssoProvider: data.provider,
+        ssoRedirect: ssoRedirectOf(data.redirectTo),
+      });
 
       return { error: false, authUrl: authUrl.toString() };
     } catch (error) {
@@ -497,6 +501,11 @@ export const ssoStartFn = createServerFn({ method: 'POST' })
     }
   });
 
+/**
+ * Exchanges LibreChat's one-time code for an admin session. The session is the
+ * provider's that sign-in started with: the callback's `provider` stands in only
+ * for a sign-in started before the panel kept it.
+ */
 export const oauthExchangeFn = createServerFn({ method: 'POST' })
   .validator(
     z.object({
@@ -546,11 +555,12 @@ export const oauthExchangeFn = createServerFn({ method: 'POST' })
         user: exchangeData.user,
         token: exchangeData.token,
         refreshToken: exchangeData.refreshToken ?? extractCookieValue(response, 'refreshToken'),
-        tokenProvider: data.provider,
+        tokenProvider: session.data.ssoProvider ?? data.provider,
         expiresAt: exchangeData.expiresAt,
         lastVerified: now,
         lastActivity: now,
         codeVerifier: undefined,
+        ssoProvider: undefined,
         ssoRedirect: undefined,
       });
 

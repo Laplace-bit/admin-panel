@@ -173,6 +173,21 @@ describe('offeredSsoProviders', () => {
     expect(offeredSsoProviders({ ...config, socialLogins: [] }, OPENID_CHECKED)).toEqual([]);
   });
 
+  it('orders the buttons as socialLogins does, skipping names the panel has no provider for', () => {
+    const config: t.SsoStartupConfig = {
+      ...SOCIAL,
+      socialLogins: ['github', 'saml', 'google', 'saml', 'openid'],
+      googleLoginEnabled: true,
+      samlLoginEnabled: true,
+    };
+
+    expect(offeredSsoProviders(config, OPENID_CHECKED)).toEqual([
+      { id: 'saml' },
+      { id: 'google' },
+      { id: 'openid' },
+    ]);
+  });
+
   it("names OpenID's and SAML's buttons as the deployer did, and Google's by its phrase", () => {
     const config: t.SsoStartupConfig = {
       ...SOCIAL,
