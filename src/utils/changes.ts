@@ -50,6 +50,7 @@ import {
   validateField,
   validateSection,
   describeIssueCode,
+  isUnknownEnumValue,
   validateResolvableGroup,
   validateLoadableEndpoint,
 } from './validation';
@@ -1311,6 +1312,15 @@ function isIntroducedIssue(state: PlanState, path: string, issue: t.ConfigIssue)
   return touched === undefined || touched.has(issue.entryIdentity);
 }
 
+/**
+ * Whether a schema issue blocks the write. A text value an enum of the
+ * bundled schema doesn't list is written (`isUnknownEnumValue`): LibreChat
+ * may know it, and from v0.8.8 refuses it on the field when it doesn't.
+ */
+function isBlockingIssue(issue: t.ConfigIssue): boolean {
+  return !isUnknownEnumValue(issue);
+}
+
 /** Validates every set; returns the paths a write rule blocks outright. */
 function validateSets(state: PlanState): Set<string> {
   const blocked = new Set<string>();
@@ -1324,11 +1334,11 @@ function validateSets(state: PlanState): Set<string> {
       continue;
     }
     const collection = getKeyedCollection(path);
-    state.issues.push(
-      ...(collection && Array.isArray(value)
+    const issues =
+      collection && Array.isArray(value)
         ? validateCollectionSet(state, collection, value)
-        : validateField(path, value)),
-    );
+        : validateField(path, value);
+    state.issues.push(...issues.filter(isBlockingIssue));
   }
   return blocked;
 }
@@ -1417,7 +1427,9 @@ function validationFloors(
  * after the write), so refinements and required siblings are checked. An
  * issue is reported when the write introduced it, or when it lies at or
  * under a written path; issues the configuration already had elsewhere do
- * not block an unrelated write. Collection entries are validated per entry.
+ * not block an unrelated write, and neither does an enum value the bundled
+ * schema doesn't list (`isBlockingIssue`). Collection entries are validated
+ * per entry.
  */
 function validateSections(state: PlanState, blocked: ReadonlySet<string>): void {
   const sets = [...state.sets.keys()].filter((path) => !blocked.has(path));
@@ -1446,7 +1458,9 @@ function validateSections(state: PlanState, blocked: ReadonlySet<string>): void 
     const after = mergeConfigLayers(floors.after[section], storedAfter[section], section);
     const existing = new Set(validateSection(section, before).map(issueKey));
     for (const issue of validateSection(section, after)) {
-      if (isInCollection(issue.path) || reported.has(issueKey(issue))) continue;
+      if (!isBlockingIssue(issue) || isInCollection(issue.path) || reported.has(issueKey(issue))) {
+        continue;
+      }
       const underWrite = written.some(
         (path) => issue.path === path || issue.path.startsWith(`${path}.`),
       );

@@ -2,8 +2,9 @@ import { z } from 'zod';
 import yaml from 'js-yaml';
 import { configSchema } from 'librechat-data-provider';
 import { createServerFn } from '@tanstack/react-start';
+import type { ZodIssue } from 'zod/v3';
 import type * as t from '@/types';
-import { isConfigRecord, findUnknownImportPaths } from '@/utils';
+import { isConfigRecord, isUnknownEnumValue, findUnknownImportPaths } from '@/utils';
 
 /** Leaf paths of `raw` the bundled config schema does not describe (AppService aliases resolved). */
 export function findUnknownConfigPaths(raw: Record<string, t.ConfigValue>): string[] {
@@ -36,13 +37,37 @@ function mcpShapeErrors(servers: t.ConfigValue): t.ImportValidationError[] {
 }
 
 /**
+ * The schema's issues, split: text values an enum doesn't list
+ * (`isUnknownEnumValue`), which import keeps and the review names, and
+ * every other issue, which fails the parse.
+ */
+function splitIssues(issues: ZodIssue[]): {
+  errors: t.ImportValidationError[];
+  unknownEnumValues: t.ImportEnumValue[];
+} {
+  const errors: t.ImportValidationError[] = [];
+  const unknownEnumValues: t.ImportEnumValue[] = [];
+  for (const issue of issues) {
+    const path = issue.path.join('.');
+    if (issue.code === 'invalid_enum_value' && isUnknownEnumValue(issue)) {
+      unknownEnumValues.push({ path, value: String(issue.received), options: issue.options });
+    } else {
+      errors.push({ path, message: issue.message });
+    }
+  }
+  return { errors, unknownEnumValues };
+}
+
+/**
  * Parses and validates pasted/uploaded YAML for import. MCP servers are
  * checked for shape only (`mcpShapeErrors`): the preview validates them
  * against the chosen target. Validation runs on a copy with `version`
  * replaced (a snippet need not carry it, and import never writes it, so
  * `version: 1.2` read as a number must not fail), but the result
  * is the raw parsed object: no Zod defaults are injected and keys the bundled
- * schema does not know are kept (and reported in `unknownPaths`). Keys the
+ * schema does not know are kept (and reported in `unknownPaths`). So are
+ * text values an enum doesn't list (`unknownEnumValues`): a newer LibreChat
+ * may know them (v0.8.8 and later refuse one they don't on save). Keys the
  * admin API can't store do not fail the parse: the import plan leaves out
  * only the leaves that carry them, and only when they would be written.
  */
@@ -55,6 +80,7 @@ export function parseConfigYaml(yamlContent: string): t.ImportParseResult {
     error,
     appConfig: null,
     unknownPaths: [],
+    unknownEnumValues: [],
     ...extra,
   });
 
@@ -82,15 +108,8 @@ export function parseConfigYaml(yamlContent: string): t.ImportParseResult {
   const appConfig = rawConfig as t.ConfigRecord;
   const { mcpServers, ...rest } = appConfig;
   const result = configSchema.safeParse({ ...rest, version: '1.0.0' });
-  const validationErrors = [
-    ...(result.success
-      ? []
-      : result.error.errors.map((e: { path: (string | number)[]; message: string }) => ({
-          path: e.path.join('.'),
-          message: e.message,
-        }))),
-    ...mcpShapeErrors(mcpServers),
-  ];
+  const { errors, unknownEnumValues } = splitIssues(result.success ? [] : result.error.errors);
+  const validationErrors = [...errors, ...mcpShapeErrors(mcpServers)];
   if (validationErrors.length > 0) {
     return failure('Config validation failed', { validationErrors });
   }
@@ -99,6 +118,7 @@ export function parseConfigYaml(yamlContent: string): t.ImportParseResult {
     success: true,
     appConfig,
     unknownPaths: findUnknownConfigPaths(appConfig),
+    unknownEnumValues,
   };
 }
 
