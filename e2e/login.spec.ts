@@ -157,7 +157,7 @@ test.describe('2FA verification flow', () => {
 
     await expect(page.getByText(/two-factor/i)).toBeVisible();
     await expect(page.locator('[data-input-otp]')).toBeVisible();
-    await expect(page.locator('[role="separator"]')).toBeVisible();
+    await expect(page.locator('[data-input-otp-container] [role="separator"]')).toBeVisible();
     await expect(page.getByText(/back to login/i)).toBeVisible();
   });
 
