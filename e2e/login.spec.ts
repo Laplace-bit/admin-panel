@@ -231,14 +231,14 @@ test.describe('SSO availability', () => {
     });
   });
 
-  test('shows a Google button next to OpenID when LibreChat has Google admin sign-in', async ({
+  test('shows a Google button next to OpenID, in the order of LibreChat socialLogins', async ({
     page,
   }) => {
     await page.goto('/login');
     await page.waitForLoadState('networkidle');
 
     const buttons = page.getByRole('button', { name: /^continue with (openid|google)$/i });
-    await expect(buttons).toHaveText([/openid/i, /google/i], { timeout: 10_000 });
+    await expect(buttons).toHaveText([/google/i, /openid/i], { timeout: 10_000 });
   });
 
   test('has zero WCAG 2.1 AA violations with SSO buttons visible', async ({ page }) => {
