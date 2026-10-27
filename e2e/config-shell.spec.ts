@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
-import { LIVE, LIVE_SKIP_REASON } from './live';
+import { LIVE, LIVE_SKIP_REASON, lockUserProfile } from './live';
 
 /**
  * Configuration page shell (WS5): loading and error routes, Expand all,
@@ -179,7 +179,7 @@ test.describe('Configuration shell: search and deep links', () => {
   });
 });
 
-test.describe('Configuration shell: profile scope and guard', () => {
+test.describe('Configuration shell: Back from the USER role profile', () => {
   /** Set once a test creates the USER role's profile, so cleanup never deletes one it found. */
   let createdUserProfile = false;
 
@@ -222,7 +222,7 @@ test.describe('Configuration shell: profile scope and guard', () => {
     await expect(user).toHaveCount(0);
   }
 
-  test.afterEach(async ({ page }) => {
+  lockUserProfile(async (page) => {
     if (!createdUserProfile) return;
     createdUserProfile = false;
     await deleteUserProfile(page);
@@ -237,7 +237,9 @@ test.describe('Configuration shell: profile scope and guard', () => {
     await expect(page).not.toHaveURL(/scope=/);
     await expect(page.getByRole('button', { name: /^Select scope: Base/ })).toBeVisible();
   });
+});
 
+test.describe('Configuration shell: profile scope and guard', () => {
   test('a fresh visit opens Base, an unknown profile says so', async ({ page }) => {
     await openTab(page, 'system');
     await expect(page.getByRole('button', { name: /^Select scope: Base/ })).toBeVisible();

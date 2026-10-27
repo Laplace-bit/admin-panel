@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { LIVE, LIVE_SKIP_REASON } from './live';
+import { LIVE, LIVE_SKIP_REASON, lockUserProfile } from './live';
 
 /**
  * The YAML import wizard needs LibreChat's admin config API, which the mock
@@ -63,18 +63,24 @@ test('imports a snippet into Base, previewing exactly its keys', async ({ page }
   await expect(await startBalanceIn(page)).toHaveValue(value.toLocaleString('en-US'));
 });
 
-test('imports into an existing profile, comparing with its own values', async ({ page }) => {
-  const value = 200000 + (Date.now() % 100000);
-  await ensureUserProfile(page);
-  await openWizard(page, `balance:\n  startBalance: ${value}\n`, 'role:USER');
-  await expect(page.getByRole('radio', { name: /This profile \(USER\)/ })).toHaveAttribute(
-    'aria-checked',
-    'true',
-  );
-  const { apply } = await previewAndApply(page, /into Role: USER$/);
-  await apply.click();
-  await expect(page.getByText(/Imported 1 value into Role: USER/).first()).toBeVisible();
-  await expect(await startBalanceIn(page, 'role:USER')).toHaveValue(value.toLocaleString('en-US'));
+test.describe('the USER role profile', () => {
+  lockUserProfile();
+
+  test('imports into an existing profile, comparing with its own values', async ({ page }) => {
+    const value = 200000 + (Date.now() % 100000);
+    await ensureUserProfile(page);
+    await openWizard(page, `balance:\n  startBalance: ${value}\n`, 'role:USER');
+    await expect(page.getByRole('radio', { name: /This profile \(USER\)/ })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    const { apply } = await previewAndApply(page, /into Role: USER$/);
+    await apply.click();
+    await expect(page.getByText(/Imported 1 value into Role: USER/).first()).toBeVisible();
+    await expect(await startBalanceIn(page, 'role:USER')).toHaveValue(
+      value.toLocaleString('en-US'),
+    );
+  });
 });
 
 test('imports into a role that has no profile yet', async ({ page }) => {

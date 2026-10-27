@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
-import { LIVE, LIVE_SKIP_REASON } from './live';
+import { LIVE, LIVE_SKIP_REASON, lockUserProfile } from './live';
 
 /**
  * Model specs journeys (WS11, the audit's specs journeys). They need a live
@@ -176,19 +176,23 @@ test.describe('Model specs', () => {
     await expect(unsavedBar(page)).toHaveCount(0);
   });
 
-  test('a profile shows the specs it inherits read-only until it customizes the list', async ({
-    page,
-  }) => {
-    await openSpecs(page, '&scope=role:USER');
-    const customize = page.getByRole('button', { name: /^Override for Role: USER/ });
-    test.skip((await customize.count()) === 0, 'Needs a USER role profile without its own list');
-    await expect(page.getByRole('button', { name: 'Add spec' })).toHaveCount(0);
-    await expect(cards(page).first()).toBeVisible();
-    await customize.click();
-    await expect(page.getByRole('button', { name: 'Add spec' })).toBeVisible();
-    await expect(page.getByText(/replaces Base's list/)).toBeVisible();
-    await page.getByRole('button', { name: 'Cancel' }).click();
-    await expect(page.getByRole('button', { name: 'Add spec' })).toHaveCount(0);
+  test.describe('the USER role profile', () => {
+    lockUserProfile();
+
+    test('a profile shows the specs it inherits read-only until it customizes the list', async ({
+      page,
+    }) => {
+      await openSpecs(page, '&scope=role:USER');
+      const customize = page.getByRole('button', { name: /^Override for Role: USER/ });
+      test.skip((await customize.count()) === 0, 'Needs a USER role profile without its own list');
+      await expect(page.getByRole('button', { name: 'Add spec' })).toHaveCount(0);
+      await expect(cards(page).first()).toBeVisible();
+      await customize.click();
+      await expect(page.getByRole('button', { name: 'Add spec' })).toBeVisible();
+      await expect(page.getByText(/replaces Base's list/)).toBeVisible();
+      await page.getByRole('button', { name: 'Cancel' }).click();
+      await expect(page.getByRole('button', { name: 'Add spec' })).toHaveCount(0);
+    });
   });
 
   test('the tab filter finds spec fields and phone width has no sideways scroll', async ({
