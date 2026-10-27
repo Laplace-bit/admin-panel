@@ -1,10 +1,11 @@
 import { Command } from 'cmdk';
+import * as Dialog from '@radix-ui/react-dialog';
 import { useQuery } from '@tanstack/react-query';
 import { Badge, Button } from '@clickhouse/click-ui';
 import { PrincipalType } from 'librechat-data-provider';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
-import { Title as DialogTitle, Description as DialogDescription } from '@radix-ui/react-dialog';
+import type { KeyboardEvent } from 'react';
 import type * as t from '@/types';
 import {
   cn,
@@ -37,8 +38,20 @@ const TYPE_LABEL_KEYS: Readonly<Record<string, string>> = {
   [PrincipalType.USER]: 'com_scope_type_user',
 };
 
+const BASE_OPTION = 'base-configuration';
+
 function principalKey(type: PrincipalType, id: string): string {
   return `${type}:${id}`;
+}
+
+/** A profile option's cmdk value, which the search also matches against. */
+function scopeOptionValue(scope: t.ConfigScope, localize: t.LocalizeFn): string {
+  return `${localize(TYPE_LABEL_KEYS[scope.principalType] ?? '')} ${scope.name} ${scope.email ?? ''} ${scope.principalId}`;
+}
+
+/** cmdk's root keydown cancels Enter to run the highlighted option instead, so a button inside a menu keeps Enter from reaching it. */
+function keepEnter(event: KeyboardEvent<HTMLButtonElement>) {
+  if (event.key === 'Enter') event.stopPropagation();
 }
 
 export function ScopeSelector({
@@ -62,6 +75,8 @@ export function ScopeSelector({
   const [togglingKey, setTogglingKey] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<t.ConfigScope | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /** The profile option the user moved to; until then the open profile is highlighted. */
+  const [highlight, setHighlight] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const userFilter = useDebouncedFilter('', () => undefined);
   const userQuery = userFilter.debouncedValue.trim();
@@ -101,6 +116,7 @@ export function ScopeSelector({
     setCreatingKey(null);
     setDeleteTarget(null);
     setDeleting(false);
+    setHighlight(null);
     clearUserFilter('');
   }, [clearUserFilter]);
 
@@ -201,6 +217,13 @@ export function ScopeSelector({
     [currentSelection],
   );
 
+  /** The open profile's option; empty (cmdk highlights its first option) while the list lacks it. */
+  const openOption = useMemo(() => {
+    if (currentSelection.type === 'BASE') return BASE_OPTION;
+    const scope = scopes.find((s) => isSameScope(s, currentSelection.scope));
+    return scope ? scopeOptionValue(scope, localize) : '';
+  }, [currentSelection, scopes, localize]);
+
   const deleteBlocked = deleteTarget != null && isDirty && isOpenScope(deleteTarget);
 
   const handleDelete = useCallback(async () => {
@@ -217,6 +240,7 @@ export function ScopeSelector({
       if (isOpenScope(deleteTarget)) onSelect({ type: 'BASE' });
       setDeleteTarget(null);
       setDeleting(false);
+      setHighlight(null);
     } catch (err) {
       setDeleting(false);
       onError?.(errorText(err, localize('com_scope_delete_error'), localize));
@@ -234,27 +258,17 @@ export function ScopeSelector({
 
   if (!permissions.canView) return null;
 
-  const dialogProps = {
-    open,
-    onOpenChange: handleOpenChange,
-    overlayClassName: 'cmdk-overlay',
-    contentClassName: 'cmdk-content scope-selector-dialog',
-  };
+  const dialogProps = { open, onOpenChange: handleOpenChange };
 
   if (deleteTarget) {
     const overrideCount = countScopeOverrides(deleteTarget);
+    const confirmText = localize('com_scope_delete_confirm', {
+      name: formatScopeName(deleteTarget),
+    });
     return (
-      <Command.Dialog {...dialogProps} label={localize('com_scope_delete')}>
-        <VisuallyHidden>
-          <DialogTitle>{localize('com_scope_delete')}</DialogTitle>
-          <DialogDescription>
-            {localize('com_scope_delete_confirm', { name: formatScopeName(deleteTarget) })}
-          </DialogDescription>
-        </VisuallyHidden>
+      <ScopeDialog {...dialogProps} title={localize('com_scope_delete')} description={confirmText}>
         <div className="flex flex-col gap-3 p-4">
-          <p className="text-sm text-(--cui-color-text-default)">
-            {localize('com_scope_delete_confirm', { name: formatScopeName(deleteTarget) })}
-          </p>
+          <p className="text-sm text-(--cui-color-text-default)">{confirmText}</p>
           {overrideCount > 0 && (
             <p className="text-xs text-(--cui-color-text-muted)">
               {localize('com_scope_delete_impact', { count: overrideCount })}
@@ -271,6 +285,7 @@ export function ScopeSelector({
               type="secondary"
               label={localize('com_ui_cancel')}
               disabled={deleting}
+              autoFocus
               onClick={() => setDeleteTarget(null)}
             />
             <Button
@@ -283,7 +298,7 @@ export function ScopeSelector({
             />
           </div>
         </div>
-      </Command.Dialog>
+      </ScopeDialog>
     );
   }
 
@@ -310,11 +325,12 @@ export function ScopeSelector({
     };
 
     return (
-      <Command.Dialog {...dialogProps} label={localize('com_scope_create_title')}>
-        <VisuallyHidden>
-          <DialogTitle>{localize('com_scope_create_title')}</DialogTitle>
-          <DialogDescription>{localize('com_scope_create_desc')}</DialogDescription>
-        </VisuallyHidden>
+      <ScopeDialog
+        {...dialogProps}
+        menu="candidates"
+        title={localize('com_scope_create_title')}
+        description={localize('com_scope_create_desc')}
+      >
         <div className="flex items-center gap-2 border-b border-(--cui-color-stroke-default) px-3">
           <button
             type="button"
@@ -322,6 +338,7 @@ export function ScopeSelector({
               setShowCreate(false);
               clearUserFilter('');
             }}
+            onKeyDown={keepEnter}
             aria-label={localize('com_scope_create_back')}
             title={localize('com_scope_create_back')}
             className="flex cursor-pointer items-center rounded-sm p-1 text-(--cui-color-text-muted) hover:text-(--cui-color-text-default)"
@@ -329,6 +346,7 @@ export function ScopeSelector({
             <DecorativeIcon name="chevron-left" size="sm" />
           </button>
           <Command.Input
+            autoFocus
             value={userFilter.value}
             onValueChange={userFilter.onChange}
             placeholder={localize('com_scope_create_search')}
@@ -396,20 +414,24 @@ export function ScopeSelector({
             );
           })}
         </Command.List>
-      </Command.Dialog>
+      </ScopeDialog>
     );
   }
 
   const baseConfig = getScopeTypeConfig('BASE');
 
   return (
-    <Command.Dialog {...dialogProps} label={localize('com_scope_select')}>
-      <VisuallyHidden>
-        <DialogTitle>{localize('com_scope_select')}</DialogTitle>
-        <DialogDescription>{localize(precedenceKey)}</DialogDescription>
-      </VisuallyHidden>
+    <ScopeDialog
+      {...dialogProps}
+      menu="profiles"
+      title={localize('com_scope_select')}
+      description={localize(precedenceKey)}
+      value={highlight ?? openOption}
+      onValueChange={setHighlight}
+    >
       <div className="flex items-center gap-2 border-b border-(--cui-color-stroke-default) px-4">
         <Command.Input
+          autoFocus
           value={search}
           onValueChange={handleSearchChange}
           placeholder={localize('com_scope_search_profiles')}
@@ -422,6 +444,7 @@ export function ScopeSelector({
             iconLeft="plus"
             label={localize('com_scope_create')}
             onClick={() => setShowCreate(true)}
+            onKeyDown={keepEnter}
           />
         )}
       </div>
@@ -444,7 +467,7 @@ export function ScopeSelector({
 
             <Command.Group heading={localize('com_scope_base_config')} className="cmdk-group">
               <Command.Item
-                value="base-configuration"
+                value={BASE_OPTION}
                 onSelect={() => choose({ type: 'BASE' })}
                 className="scope-item"
                 data-active={currentSelection.type === 'BASE'}
@@ -501,7 +524,44 @@ export function ScopeSelector({
       <p className="border-t border-(--cui-color-stroke-default) px-4 py-2 text-xs text-(--cui-color-text-muted)">
         {localize(precedenceKey)}
       </p>
-    </Command.Dialog>
+    </ScopeDialog>
+  );
+}
+
+/**
+ * Keeps one dialog open while its views swap. Each view with a menu mounts its own cmdk root,
+ * since a shared root re-highlights its first option (Base) when the highlighted one unmounts.
+ * The delete confirmation has no menu, so cmdk's Enter handling never reaches its buttons.
+ */
+function ScopeDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  menu,
+  value,
+  onValueChange,
+  children,
+}: t.ScopeDialogProps) {
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="cmdk-overlay" />
+        <Dialog.Content className="cmdk-content scope-selector-dialog">
+          <VisuallyHidden>
+            <Dialog.Title>{title}</Dialog.Title>
+            <Dialog.Description>{description}</Dialog.Description>
+          </VisuallyHidden>
+          {menu ? (
+            <Command key={menu} label={title} value={value} onValueChange={onValueChange}>
+              {children}
+            </Command>
+          ) : (
+            children
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -537,7 +597,7 @@ function ScopeRow({
       : localize('com_scope_no_overrides'),
   ].filter((item): item is string => typeof item === 'string');
 
-  const value = `${localize(TYPE_LABEL_KEYS[scope.principalType] ?? '')} ${scope.name} ${scope.email ?? ''} ${scope.principalId}`;
+  const value = scopeOptionValue(scope, localize);
   const revealAction =
     'opacity-0 transition-opacity group-hover:opacity-100 group-has-[[data-selected=true]]:opacity-100 group-data-[active=true]:opacity-100';
 

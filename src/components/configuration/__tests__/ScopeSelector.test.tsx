@@ -1,3 +1,4 @@
+import userEvent from '@testing-library/user-event';
 import { PrincipalType } from 'librechat-data-provider';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -139,11 +140,11 @@ function renderSelector({
   const onError = vi.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   seedResolvedReads(queryClient);
-  render(
+  const tree = (open: boolean) => (
     <QueryClientProvider client={queryClient}>
       <ConfigContractContext.Provider value={contract}>
         <ScopeSelector
-          open
+          open={open}
           onOpenChange={onOpenChange}
           currentSelection={selection}
           onSelect={onSelect}
@@ -152,9 +153,11 @@ function renderSelector({
           isDirty={isDirty}
         />
       </ConfigContractContext.Provider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
-  return { onSelect, onOpenChange, onError, queryClient };
+  const { rerender } = render(tree(true));
+  const setOpen = (open: boolean) => rerender(tree(open));
+  return { onSelect, onOpenChange, onError, queryClient, setOpen };
 }
 
 /** Server-resolved reads cached before a profile change: Jane's preview, a scope catalog and the env status. */
@@ -372,5 +375,140 @@ describe('ScopeSelector create picker', () => {
         email: 'alice@test.local',
       },
     });
+  });
+});
+
+describe('ScopeSelector keyboard', () => {
+  const searchInput = () => screen.getByPlaceholderText('com_scope_search_profiles');
+  const createSearch = () => screen.getByPlaceholderText('com_scope_create_search');
+  const highlighted = () => screen.getByRole('option', { selected: true });
+  const openEngineering: t.ScopeSelection = { type: 'SCOPE', scope: scopes[1] };
+
+  async function press(keys: string, element?: HTMLElement) {
+    element?.focus();
+    await userEvent.setup().keyboard(keys);
+  }
+
+  async function openCreate() {
+    fireEvent.click(await screen.findByRole('button', { name: 'com_scope_create' }));
+    await screen.findByRole('option', { name: /^ADMIN/ });
+  }
+
+  it('highlights the open profile, so Enter in the untouched search keeps it', async () => {
+    const { onSelect, onOpenChange } = renderSelector({ selection: openEngineering });
+    await row(/^Engineering/);
+    await waitFor(() => expect(highlighted()).toHaveAccessibleName(/^Engineering/));
+    expect(searchInput()).toHaveFocus();
+    await press('{Enter}');
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('highlights the open profile again when reopened', async () => {
+    const { onSelect, onOpenChange, setOpen } = renderSelector({ selection: openEngineering });
+    await row(/^Engineering/);
+    await waitFor(() => expect(highlighted()).toHaveAccessibleName(/^Engineering/));
+    await press('{Home}', searchInput());
+    expect(highlighted()).toHaveTextContent('com_scope_base_config');
+    await press('{Escape}');
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    setOpen(false);
+    setOpen(true);
+    await row(/^Engineering/);
+    await waitFor(() => expect(highlighted()).toHaveAccessibleName(/^Engineering/));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('still selects a profile reached with the arrow keys', async () => {
+    const { onSelect } = renderSelector();
+    await row(/^USER/);
+    await waitFor(() => expect(highlighted()).toHaveTextContent('com_scope_base_config'));
+    await press('{ArrowDown}', searchInput());
+    expect(highlighted()).toHaveAccessibleName(/^USER/);
+    await press('{Enter}');
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith({ type: 'SCOPE', scope: scopes[0] });
+  });
+
+  it('opens the create view with Enter on Create, without changing the open profile', async () => {
+    const { onSelect, onOpenChange } = renderSelector({ selection: openEngineering });
+    await row(/^Engineering/);
+    await press('{Enter}', screen.getByRole('button', { name: 'com_scope_create' }));
+    expect(await screen.findByPlaceholderText('com_scope_create_search')).toHaveFocus();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it('goes back with Enter on Back without creating a profile', async () => {
+    const { onSelect, onOpenChange } = renderSelector({ selection: openEngineering });
+    await openCreate();
+    await press('{Enter}', screen.getByRole('button', { name: 'com_scope_create_back' }));
+    expect(await row(/^Engineering/)).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('com_scope_create_search')).toBeNull();
+    expect(searchInput()).toHaveFocus();
+    expect(createScopeFn).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it('highlights the open profile again after going back from a create search', async () => {
+    const { onSelect } = renderSelector({ selection: openEngineering });
+    await openCreate();
+    await userEvent.setup().type(createSearch(), 'adm');
+    fireEvent.click(screen.getByRole('button', { name: 'com_scope_create_back' }));
+    await row(/^Engineering/);
+    await waitFor(() => expect(highlighted()).toHaveAccessibleName(/^Engineering/));
+    await press('{Enter}', searchInput());
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('still creates the highlighted candidate with Enter in the create search', async () => {
+    const created: t.ConfigScope = {
+      ...scopes[0],
+      _id: 'c-admin',
+      principalId: 'ADMIN',
+      name: 'ADMIN',
+    };
+    vi.mocked(createScopeFn).mockResolvedValue({ scope: created });
+    const { onSelect } = renderSelector({ selection: openEngineering });
+    await openCreate();
+    await waitFor(() => expect(highlighted()).toHaveAccessibleName(/^ADMIN/));
+    await press('{Enter}', createSearch());
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith({ type: 'SCOPE', scope: created }));
+    expect(createScopeFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('deletes exactly once with Enter on Delete', async () => {
+    vi.mocked(deleteScopeFn).mockResolvedValue({ success: true });
+    const { onSelect } = renderSelector();
+    await row(/^Engineering/);
+    fireEvent.click(
+      screen.getByRole('option', { name: 'com_scope_delete_named(name=Engineering)' }),
+    );
+    await press('{Enter}', await screen.findByRole('button', { name: 'com_scope_delete' }));
+    await waitFor(() => expect(screen.queryAllByText(/com_scope_delete_confirm/)).toHaveLength(0));
+    expect(deleteScopeFn).toHaveBeenCalledExactlyOnceWith({
+      data: { principalType: PrincipalType.GROUP, principalId: 'g-eng' },
+    });
+    expect(onSelect).not.toHaveBeenCalled();
+    await waitFor(() => expect(highlighted()).toHaveTextContent('com_scope_base_config'));
+  });
+
+  it('cancels a delete reached with the keyboard and returns to its option', async () => {
+    const { onSelect, onOpenChange } = renderSelector({ selection: openEngineering });
+    await row(/^Engineering/);
+    await waitFor(() => expect(highlighted()).toHaveAccessibleName(/^Engineering/));
+    await press('{ArrowDown}{ArrowDown}', searchInput());
+    expect(highlighted()).toHaveAccessibleName('com_scope_delete_named(name=Engineering)');
+    await press('{Enter}');
+    const cancel = await screen.findByRole('button', { name: 'com_ui_cancel' });
+    expect(cancel).toHaveFocus();
+    await press('{Enter}');
+    expect(await row(/^Engineering/)).toBeInTheDocument();
+    expect(screen.queryAllByText(/com_scope_delete_confirm/)).toHaveLength(0);
+    expect(highlighted()).toHaveAccessibleName('com_scope_delete_named(name=Engineering)');
+    expect(searchInput()).toHaveFocus();
+    expect(deleteScopeFn).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 });

@@ -475,14 +475,14 @@ select:focus-visible {
   text-decoration: none;
 }
 
-/* The highlighted option's secondary text reads in the default color: muted text on the active background is below 4.5:1. */
+.scope-item[data-active='true'] {
+  background: var(--cui-color-background-hover);
+}
+
+/* Comes after the open-profile rule so the highlight still shows on the open profile; muted text on the active background is below 4.5:1, so it reads in the default color. */
 .scope-item[aria-selected='true'] {
   --cui-color-text-muted: var(--cui-color-text-default);
   background: var(--cui-color-background-active);
-}
-
-.scope-item[data-active='true'] {
-  background: var(--cui-color-background-hover);
 }
 
 .scope-action {
