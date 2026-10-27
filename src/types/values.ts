@@ -15,12 +15,7 @@ import type { ConfigRules, ConfigWriteRules } from './contract';
  * - `inherited`: a profile field without its own value, inherited from Base.
  */
 export type ProvenanceSource =
-  | 'default'
-  | 'runtimeDefault'
-  | 'yaml'
-  | 'admin'
-  | 'scope'
-  | 'inherited';
+  'default' | 'runtimeDefault' | 'yaml' | 'admin' | 'scope' | 'inherited';
 
 /** The value a field returns to when its own override is removed, and that value's layer (WS4). */
 export interface RevertTarget {

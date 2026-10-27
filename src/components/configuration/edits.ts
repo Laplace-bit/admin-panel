@@ -420,13 +420,11 @@ export function buildConfigChanges(
   }
   const payload = buildSavePayload(touchedPaths, plain, schemaPaths, context);
   const ops: t.ConfigChange[] = [
-    ...payload.saves.map(
-      ({ fieldPath, value }): t.ConfigChange => ({
-        op: 'set',
-        path: fieldPath,
-        value,
-      }),
-    ),
+    ...payload.saves.map(({ fieldPath, value }): t.ConfigChange => ({
+      op: 'set',
+      path: fieldPath,
+      value,
+    })),
     ...payload.resets.map((path): t.ConfigChange => ({ op: 'reset', path })),
   ];
   const issues: t.ConfigIssue[] = [];

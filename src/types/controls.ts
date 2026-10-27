@@ -236,8 +236,7 @@ export interface McpRemoval extends PendingRemoval<string> {
 
 /** A row of a list with pending deletions: an entry, or a deleted entry shown with Undo. */
 export type RemovalRow<T> =
-  | { kind: 'entry'; key: string; value: T }
-  | { kind: 'removed'; ghost: McpRemoval };
+  { kind: 'entry'; key: string; value: T } | { kind: 'removed'; ghost: McpRemoval };
 
 /** Options of `useDraftValue`. */
 export interface DraftValueOptions<T> {

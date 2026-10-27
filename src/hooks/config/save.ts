@@ -259,13 +259,11 @@ export function useConfigSave({
   const writeChanges = useCallback<t.WriteChangesFn>(
     async (target, saves, resets) => {
       const ops: t.ConfigChange[] = [
-        ...saves.map(
-          ({ fieldPath, value }): t.ConfigChange => ({
-            op: 'set',
-            path: fieldPath,
-            value,
-          }),
-        ),
+        ...saves.map(({ fieldPath, value }): t.ConfigChange => ({
+          op: 'set',
+          path: fieldPath,
+          value,
+        })),
         ...resets.map((path): t.ConfigChange => ({ op: 'reset', path })),
       ];
       const result = await applyChanges(target, ops);

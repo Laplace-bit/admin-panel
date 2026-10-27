@@ -356,13 +356,7 @@ export interface ApplyConfigChangesResult {
 
 /** How a change reads in the review (WS1). */
 export type ChangeKind =
-  | 'added'
-  | 'changed'
-  | 'reverted'
-  | 'removed'
-  | 'hidden'
-  | 'unhidden'
-  | 'renamed';
+  'added' | 'changed' | 'reverted' | 'removed' | 'hidden' | 'unhidden' | 'renamed';
 
 /** One human-readable row of the change review (WS1 produces, WS7 renders). */
 export interface ChangeSummaryItem {
@@ -583,8 +577,7 @@ export interface CollectionResolution {
 
 /** The write target as the server needs it: base, or a profile's principal (WS1). */
 export type WriteTargetRef =
-  | { type: 'base' }
-  | { type: 'scope'; scope: Pick<ConfigScope, 'principalType' | 'principalId'> };
+  { type: 'base' } | { type: 'scope'; scope: Pick<ConfigScope, 'principalType' | 'principalId'> };
 
 /** A write the apply step performed, kept to roll it back if a later write fails (WS1). */
 export interface AppliedWrite {

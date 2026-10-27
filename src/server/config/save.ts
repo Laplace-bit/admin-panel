@@ -1011,13 +1011,12 @@ export const applyConfigChangesFn = createServerFn({ method: 'POST' })
       expectedRevision: z.string().min(1).max(200).optional(),
     }),
   )
-  .handler(
-    ({ data }): Promise<t.ApplyConfigChangesResult> =>
-      applyConfigChanges(
-        data.target as t.WriteTargetRef,
-        data.ops as t.ConfigChange[],
-        data.expectedRevision,
-      ),
+  .handler(({ data }): Promise<t.ApplyConfigChangesResult> =>
+    applyConfigChanges(
+      data.target as t.WriteTargetRef,
+      data.ops as t.ConfigChange[],
+      data.expectedRevision,
+    ),
   );
 
 /** Deletes the entire base config DB override, reverting every value back to

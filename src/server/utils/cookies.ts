@@ -55,13 +55,10 @@ export function planChunkedCookie(
     (_, i): t.CookieWrite => ({ name: chunkName(name, kept + i + 1), value: '', remove: true }),
   );
   if (count <= 1) return [...removals, { name, value, remove: false }];
-  const chunks = Array.from(
-    { length: count },
-    (_, i): t.CookieWrite => ({
-      name: chunkName(name, i + 1),
-      value: value.slice(i * CHUNK_MAX_LENGTH, (i + 1) * CHUNK_MAX_LENGTH),
-      remove: false,
-    }),
-  );
+  const chunks = Array.from({ length: count }, (_, i): t.CookieWrite => ({
+    name: chunkName(name, i + 1),
+    value: value.slice(i * CHUNK_MAX_LENGTH, (i + 1) * CHUNK_MAX_LENGTH),
+    remove: false,
+  }));
   return [...removals, { name, value: `${CHUNK_MARKER}${count}`, remove: false }, ...chunks];
 }

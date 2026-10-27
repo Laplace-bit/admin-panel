@@ -105,15 +105,13 @@ export function CommandMenu({ open, onOpenChange }: t.CommandMenuProps) {
   ];
 
   const tabs: t.StaticCommand[] = [
-    ...CONFIG_TABS.map(
-      (tab): t.StaticCommand => ({
-        id: `config-tab-${tab.id}`,
-        icon: 'settings',
-        label: localize(tab.labelKey),
-        keywords: ['configuration', 'config', tab.id],
-        onSelect: () => navigateTo('/configuration', { tab: tab.id }),
-      }),
-    ),
+    ...CONFIG_TABS.map((tab): t.StaticCommand => ({
+      id: `config-tab-${tab.id}`,
+      icon: 'settings',
+      label: localize(tab.labelKey),
+      keywords: ['configuration', 'config', tab.id],
+      onSelect: () => navigateTo('/configuration', { tab: tab.id }),
+    })),
     {
       id: 'access-groups',
       icon: 'user',

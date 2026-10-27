@@ -297,14 +297,12 @@ function partLabel(
 
 /** What a change deletes of the target's own value with it (`dropped`), listed under its row. */
 function droppedDetails(item: t.ChangeSummaryItem, key: string, ctx: t.ReviewLabelContext) {
-  return item.dropped?.map(
-    (part, i): t.ReviewRow => ({
-      key: `${key}:dropped:${i}`,
-      label: partLabel(part, item, ctx),
-      item: part,
-      valueLabels: valueLabelsAt(part.path, ctx),
-    }),
-  );
+  return item.dropped?.map((part, i): t.ReviewRow => ({
+    key: `${key}:dropped:${i}`,
+    label: partLabel(part, item, ctx),
+    item: part,
+    valueLabels: valueLabelsAt(part.path, ctx),
+  }));
 }
 
 /**

@@ -228,14 +228,12 @@ export function summarizeChanges(
     });
   const visibility = changeSet.ops
     .filter((op) => op.op === 'tombstone' || op.op === 'untombstone')
-    .map(
-      (op): t.ChangeSummaryItem => ({
-        path: op.path,
-        kind: op.op === 'tombstone' ? 'hidden' : 'reverted',
-        before: layers.baselineAt(op.path),
-        after: undefined,
-      }),
-    );
+    .map((op): t.ChangeSummaryItem => ({
+      path: op.path,
+      kind: op.op === 'tombstone' ? 'hidden' : 'reverted',
+      before: layers.baselineAt(op.path),
+      after: undefined,
+    }));
   return [
     ...plainItems(changeSet, plan, layers),
     ...changeSet.collections.flatMap((pending) =>

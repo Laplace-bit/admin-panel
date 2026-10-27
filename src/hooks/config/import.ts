@@ -599,9 +599,11 @@ export function useImportPreview({
   const issuesFor = useCallback(
     (included: ReadonlySet<string>): string[] => {
       if (!snapshot) return [];
-      const ops = entriesFor(included).map(
-        ({ fieldPath, value }): t.ConfigChange => ({ op: 'set', path: fieldPath, value }),
-      );
+      const ops = entriesFor(included).map(({ fieldPath, value }): t.ConfigChange => ({
+        op: 'set',
+        path: fieldPath,
+        value,
+      }));
       if (ops.length === 0) return [];
       const { issues } = planConfigChanges(ops, snapshot, features, writeRules, limits);
       return describeIssues(issues, [], localize).summaries;

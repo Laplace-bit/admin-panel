@@ -316,7 +316,7 @@ export function revealConfigPath(
      * flat rows, eagerly rendered bodies): open every group around it.
      */
     const openAround = (inner: HTMLElement) => {
-      for (let grid = inner.closest<HTMLElement>(CLOSED_GRID); grid; ) {
+      for (let grid = inner.closest<HTMLElement>(CLOSED_GRID); grid;) {
         const owner = grid.parentElement;
         if (owner) changed = expandContainer(owner, tried) || changed;
         grid = owner?.closest<HTMLElement>(CLOSED_GRID) ?? null;
