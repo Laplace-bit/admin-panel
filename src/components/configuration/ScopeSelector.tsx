@@ -27,9 +27,15 @@ import {
   allGroupsQueryOptions,
   availableScopesOptions,
 } from '@/server';
+import {
+  useLocalize,
+  useReturnFocus,
+  useRefreshScopes,
+  useConfigFeatures,
+  useDebouncedFilter,
+} from '@/hooks';
 import { getScopeTypeConfig, MIN_USER_SEARCH_LENGTH, SCOPE_PRINCIPAL_GROUPS } from '@/constants';
-import { useLocalize, useRefreshScopes, useConfigFeatures, useDebouncedFilter } from '@/hooks';
-import { DecorativeIcon } from '@/components/shared';
+import { CommandDialog, DecorativeIcon } from '@/components/shared';
 
 const TYPE_LABEL_KEYS: Readonly<Record<string, string>> = {
   [PrincipalType.ROLE]: 'com_scope_type_role',
@@ -63,6 +69,7 @@ export function ScopeSelector({
   const [deleteTarget, setDeleteTarget] = useState<t.ConfigScope | null>(null);
   const [deleting, setDeleting] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const returnFocus = useReturnFocus(open);
   const userFilter = useDebouncedFilter('', () => undefined);
   const userQuery = userFilter.debouncedValue.trim();
 
@@ -237,6 +244,7 @@ export function ScopeSelector({
   const dialogProps = {
     open,
     onOpenChange: handleOpenChange,
+    onCloseAutoFocus: returnFocus,
     overlayClassName: 'cmdk-overlay',
     contentClassName: 'cmdk-content scope-selector-dialog',
   };
@@ -244,7 +252,7 @@ export function ScopeSelector({
   if (deleteTarget) {
     const overrideCount = countScopeOverrides(deleteTarget);
     return (
-      <Command.Dialog {...dialogProps} label={localize('com_scope_delete')}>
+      <CommandDialog {...dialogProps} label={localize('com_scope_delete')}>
         <VisuallyHidden>
           <DialogTitle>{localize('com_scope_delete')}</DialogTitle>
           <DialogDescription>
@@ -283,7 +291,7 @@ export function ScopeSelector({
             />
           </div>
         </div>
-      </Command.Dialog>
+      </CommandDialog>
     );
   }
 
@@ -310,7 +318,7 @@ export function ScopeSelector({
     };
 
     return (
-      <Command.Dialog {...dialogProps} label={localize('com_scope_create_title')}>
+      <CommandDialog {...dialogProps} label={localize('com_scope_create_title')}>
         <VisuallyHidden>
           <DialogTitle>{localize('com_scope_create_title')}</DialogTitle>
           <DialogDescription>{localize('com_scope_create_desc')}</DialogDescription>
@@ -396,14 +404,14 @@ export function ScopeSelector({
             );
           })}
         </Command.List>
-      </Command.Dialog>
+      </CommandDialog>
     );
   }
 
   const baseConfig = getScopeTypeConfig('BASE');
 
   return (
-    <Command.Dialog {...dialogProps} label={localize('com_scope_select')}>
+    <CommandDialog {...dialogProps} label={localize('com_scope_select')}>
       <VisuallyHidden>
         <DialogTitle>{localize('com_scope_select')}</DialogTitle>
         <DialogDescription>{localize(precedenceKey)}</DialogDescription>
@@ -501,7 +509,7 @@ export function ScopeSelector({
       <p className="border-t border-(--cui-color-stroke-default) px-4 py-2 text-xs text-(--cui-color-text-muted)">
         {localize(precedenceKey)}
       </p>
-    </Command.Dialog>
+    </CommandDialog>
   );
 }
 

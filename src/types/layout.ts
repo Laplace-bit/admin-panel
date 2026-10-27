@@ -1,4 +1,6 @@
-import type { ReactNode } from 'react';
+import type { DialogContentProps } from '@radix-ui/react-dialog';
+import type { ComponentProps, ReactNode } from 'react';
+import type { Command } from 'cmdk';
 import type { IconName } from './scope';
 
 export interface SidebarProps {
@@ -22,6 +24,10 @@ export interface HeaderProps {
   onSearchClick?: () => void;
   children?: ReactNode;
 }
+
+/** cmdk's `Command.Dialog` props, plus the dialog content's `onCloseAutoFocus`. */
+export type CommandDialogProps = ComponentProps<typeof Command.Dialog> &
+  Pick<DialogContentProps, 'onCloseAutoFocus'>;
 
 export interface CommandMenuProps {
   open: boolean;
