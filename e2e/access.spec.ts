@@ -1,17 +1,18 @@
 import { test as base, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import type { Page } from '@playwright/test';
+import type { Browser, BrowserContextOptions, Page } from '@playwright/test';
 import {
   createGroup,
   createRole,
   deleteFromList,
   grantReadUsage,
   grantsRow,
+  isListed,
   renameRole,
   searchField,
   uniqueName,
 } from './access';
-import { LIVE, MOCK_FIXTURES_SKIP_REASON } from './live';
+import { AUDITED_WRITES_SKIP_REASON, LIVE, MOCK_FIXTURES_SKIP_REASON } from './live';
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
@@ -23,28 +24,93 @@ async function hideTanStackDevtools(page: Page) {
   });
 }
 
+interface StagedGroups {
+  engineering: string;
+  marketing: string;
+}
+
+/**
+ * When a worker fixture runs out of time, Playwright fails the test and closes
+ * the browser under the step that stalled, so the fixture's `finally` could no
+ * longer delete anything. Each staging and cleanup step therefore fails after
+ * STAGING_STEP_TIMEOUT, well inside STAGING_TIMEOUT, while the browser is open.
+ */
+const STAGING_STEP_TIMEOUT = 10_000;
+const STAGING_TIMEOUT = 60_000;
+
+/**
+ * Opens a page in a context of its own whose actions and page loads each fail
+ * after STAGING_STEP_TIMEOUT. The timeout is set on the page: Playwright gives
+ * a new context the config's navigationTimeout, which is unset here (no limit)
+ * and outranks a context-wide default.
+ */
+async function openStagingPage(browser: Browser, options: BrowserContextOptions) {
+  const context = await browser.newContext(options);
+  const page = await context.newPage();
+  page.setDefaultTimeout(STAGING_STEP_TIMEOUT);
+  return page;
+}
+
 /**
  * `groups` names the Engineering and Marketing groups a test lists. The mock
- * serves them as fixtures; against a live LibreChat the test creates them under
- * unique names first and deletes them afterwards. Staging reloads the page at
- * the end so its "created" toasts are gone, as on a fresh load from the mock.
+ * serves them as fixtures. A fresh LibreChat has none, so against a live one
+ * the worker creates them under unique names and deletes them when it ends.
+ * Staging uses a page of its own, so its "created" toasts never reach a test's
+ * page. Each name is tracked before its group is created, and every tracked
+ * group still listed is deleted even when staging fails or stalls part-way.
+ * Cleanup closes the staging context and starts a fresh one, so it works
+ * whatever state staging left its page in.
  */
-const test = base.extend<{ groups: { engineering: string; marketing: string } }>({
-  groups: async ({ page }, use) => {
-    if (!LIVE) {
-      await use({ engineering: 'Engineering', marketing: 'Marketing' });
-      return;
-    }
-    const staged = { engineering: uniqueName('Engineering'), marketing: uniqueName('Marketing') };
-    await createGroup(page, staged.engineering);
-    await createGroup(page, staged.marketing);
-    await page.reload();
-    await page.waitForLoadState('networkidle');
-    await use(staged);
-    await deleteFromList(page, 'groups', staged.engineering);
-    await deleteFromList(page, 'groups', staged.marketing);
-  },
+const test = base.extend<object, { groups: StagedGroups }>({
+  groups: [
+    async ({ browser }, use, workerInfo) => {
+      if (!LIVE) {
+        await use({ engineering: 'Engineering', marketing: 'Marketing' });
+        return;
+      }
+      const { baseURL, storageState } = workerInfo.project.use;
+      const contextOptions: BrowserContextOptions = { baseURL, storageState };
+      const staging = await openStagingPage(browser, contextOptions);
+      const staged: StagedGroups = {
+        engineering: uniqueName('Engineering'),
+        marketing: uniqueName('Marketing'),
+      };
+      const tracked: string[] = [];
+      try {
+        for (const name of Object.values(staged)) {
+          tracked.push(name);
+          await createGroup(staging, name);
+        }
+        await use(staged);
+      } finally {
+        await staging.context().close();
+        const fresh = await openStagingPage(browser, contextOptions);
+        await deleteFromList(fresh, 'groups', ...tracked).finally(() => fresh.context().close());
+      }
+    },
+    { scope: 'worker', timeout: STAGING_TIMEOUT },
+  ],
 });
+
+/**
+ * LibreChat audits every group write, so live the file runs in order in one
+ * worker and the worker-scoped `groups` are staged once per run, not once per
+ * worker that runs a Groups-tab test.
+ */
+if (LIVE) test.describe.configure({ mode: 'default' });
+
+/** The Groups tab's own search field, which a switch from the Roles tab has to wait for. */
+const groupSearchField = (page: Page) => page.getByRole('textbox', { name: /^search groups/i });
+
+/**
+ * Searches the Groups tab for the group's full name and waits until it is
+ * listed: the tab shows 50 groups a page, sorted by name, so on a live
+ * LibreChat with more groups a staged group may not be on the first page.
+ */
+async function findGroup(page: Page, name: string) {
+  await groupSearchField(page).fill(name);
+  await expect(page.getByText(name, { exact: true })).toBeVisible();
+}
 
 test.describe('Access page accessibility', () => {
   test.beforeEach(async ({ page }) => {
@@ -54,7 +120,7 @@ test.describe('Access page accessibility', () => {
 
   test('has zero WCAG 2.1 AA violations on Groups tab', async ({ page, groups }) => {
     await page.getByRole('tab', { name: /groups/i }).click();
-    await expect(page.getByText(groups.engineering, { exact: true })).toBeVisible();
+    await findGroup(page, groups.engineering);
 
     const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
 
@@ -84,7 +150,7 @@ test.describe('Access page tabs', () => {
 
     await page.getByRole('tab', { name: /groups/i }).click();
 
-    await expect(page.getByText(groups.engineering, { exact: true })).toBeVisible();
+    await findGroup(page, groups.engineering);
     expect(page.url()).toContain('tab=groups');
   });
 
@@ -102,7 +168,7 @@ test.describe('Access page tabs', () => {
 
     await page.getByRole('tab', { name: /groups/i }).click();
 
-    await expect(page.getByText(groups.engineering, { exact: true })).toBeVisible();
+    await findGroup(page, groups.engineering);
     expect(page.url()).toContain('tab=groups');
   });
 });
@@ -111,9 +177,9 @@ test.describe('Access page search', () => {
   test('filters groups by name', async ({ page, groups }) => {
     await page.goto('/access?tab=groups');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByText(groups.engineering, { exact: true })).toBeVisible();
+    await findGroup(page, groups.engineering);
 
-    await searchField(page).fill('marketing');
+    await groupSearchField(page).fill(groups.marketing.toLowerCase());
 
     await expect(page.getByText(groups.marketing, { exact: true })).toBeVisible();
     await expect(page.getByText(groups.engineering, { exact: true })).not.toBeVisible();
@@ -150,6 +216,7 @@ test.describe('Access page Create Group dialog', () => {
   });
 
   test('creates a new group and shows it in the list', async ({ page }) => {
+    test.skip(LIVE, AUDITED_WRITES_SKIP_REASON);
     const name = uniqueName('E2E Group');
     await page.goto('/access?tab=groups');
     await page.waitForLoadState('networkidle');
@@ -159,13 +226,13 @@ test.describe('Access page Create Group dialog', () => {
 
     await page.locator('#create-group-name').fill(name);
     await page.locator('#create-group-description').fill('Created by e2e test');
+    created = name;
     await page
       .getByRole('dialog')
       .getByRole('button', { name: /create group/i })
       .click();
 
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 });
-    created = name;
     await expect(page.getByText(name, { exact: true })).toBeVisible({ timeout: 5000 });
   });
 
@@ -182,6 +249,7 @@ test.describe('Access page Create Group dialog', () => {
 });
 
 test.describe('Access page Create Role dialog', () => {
+  test.skip(LIVE, AUDITED_WRITES_SKIP_REASON);
   let created: string | undefined;
 
   test.afterEach(async ({ page }) => {
@@ -199,13 +267,13 @@ test.describe('Access page Create Role dialog', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
 
     await page.locator('#create-role-name').fill(name);
+    created = name;
     await page
       .getByRole('dialog')
       .getByRole('button', { name: /create role/i })
       .click();
 
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 });
-    created = name;
     await expect(page.getByText(name, { exact: true })).toBeVisible({ timeout: 5000 });
   });
 });
@@ -276,6 +344,7 @@ test.describe('Access page system role protection', () => {
 });
 
 test.describe('Access page delete', () => {
+  test.skip(LIVE, AUDITED_WRITES_SKIP_REASON);
   let created: string | undefined;
 
   test.afterEach(async ({ page }) => {
@@ -292,12 +361,12 @@ test.describe('Access page delete', () => {
     await page.getByRole('button', { name: /create role/i }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.locator('#create-role-name').fill(name);
+    created = name;
     await page
       .getByRole('dialog')
       .getByRole('button', { name: /create role/i })
       .click();
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 });
-    created = name;
     await expect(page.getByText(name, { exact: true })).toBeVisible({ timeout: 5000 });
 
     // TanStack Devtools' toggle can cover the row's Delete button
@@ -321,28 +390,34 @@ test.describe('Access page delete', () => {
  * takes the old name again.
  */
 test.describe('Access page role rename', () => {
-  let created: string | undefined;
+  test.skip(LIVE, AUDITED_WRITES_SKIP_REASON);
+  let staged: { original: string; renamed: string } | undefined;
 
+  /**
+   * The grant stays under the original name whatever the role is called when the
+   * test stops, and deleting a role removes only the grants under its own name,
+   * so the role takes its original name back before it is deleted.
+   */
   test.afterEach(async ({ page }) => {
-    if (!created) return;
-    await deleteFromList(page, 'roles', created);
-    created = undefined;
+    if (!staged) return;
+    const { original, renamed } = staged;
+    staged = undefined;
+    if (await isListed(page, 'roles', renamed)) await renameRole(page, renamed, original);
+    await deleteFromList(page, 'roles', original);
   });
 
   test('a renamed role leaves its grants under its old name', async ({ page }) => {
     const original = uniqueName('E2E Usage Role');
     const renamed = uniqueName('E2E Renamed Role');
+    staged = { original, renamed };
     await createRole(page, original);
-    created = original;
     await grantReadUsage(page, original);
     await expect(await grantsRow(page, original)).toContainText('1 capabilities');
 
     await renameRole(page, original, renamed);
-    created = renamed;
     await expect(await grantsRow(page, renamed)).toContainText('No capabilities');
 
     await renameRole(page, renamed, original);
-    created = original;
     await expect(await grantsRow(page, original)).toContainText('1 capabilities');
   });
 });

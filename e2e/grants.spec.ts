@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import { createRole, deleteFromList, grantReadUsage, searchField, uniqueName } from './access';
-import { LIVE, MOCK_FIXTURES_SKIP_REASON } from './live';
+import { AUDITED_WRITES_SKIP_REASON, LIVE, MOCK_FIXTURES_SKIP_REASON } from './live';
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
@@ -158,96 +158,99 @@ test.describe('Grants page - Audit Log tab', () => {
     await expect(page.getByRole('table')).toBeVisible();
   });
 
-  test('shows diverse audit entries', async ({ page }) => {
-    test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
-    const rows = page.getByRole('button', { name: 'Open audit log entry' });
-    await expect(rows.first()).toBeVisible();
-    const count = await rows.count();
-    expect(count).toBeGreaterThan(5);
-  });
-
-  test('action type filter shows only granted entries', async ({ page }) => {
-    test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
-    await page.getByRole('button', { name: /^Granted$/i }).click();
-    const rows = page.locator('tbody tr');
-    await expect(rows.filter({ hasNotText: 'Granted' })).toHaveCount(0);
-    const count = await rows.count();
-    expect(count).toBeGreaterThan(0);
-    for (let i = 0; i < count; i++) {
-      await expect(rows.nth(i).getByText('Granted', { exact: true })).toBeVisible();
-    }
-  });
-
-  test('action type filter shows only revoked entries', async ({ page }) => {
-    test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
-    await page.getByRole('button', { name: /^Revoked$/i }).click();
-    const rows = page.locator('tbody tr');
-    await expect(rows.filter({ hasNotText: 'Revoked' })).toHaveCount(0);
-    const count = await rows.count();
-    expect(count).toBeGreaterThan(0);
-    for (let i = 0; i < count; i++) {
-      await expect(rows.nth(i).getByText('Revoked', { exact: true })).toBeVisible();
-    }
-  });
-
-  test('search filters by actor/target name', async ({ page }) => {
-    test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
-    await searchField(page).fill('Alice');
-    const rows = page.locator('tbody tr');
-    await expect(rows.filter({ hasNotText: /alice/i })).toHaveCount(0);
-    const count = await rows.count();
-    expect(count).toBeGreaterThan(0);
-    for (let i = 0; i < count; i++) {
-      const text = await rows.nth(i).textContent();
-      expect(text?.toLowerCase()).toContain('alice');
-    }
-  });
-
-  test('Export writes the seeded entry the filters match', async ({ page }) => {
-    test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
-    await searchField(page).fill('Alice');
-    await page.getByRole('button', { name: /^Revoked$/i }).click();
-    await expect(page.locator('tbody tr')).toHaveCount(1);
-
-    expect(await exportAuditRows(page)).toEqual([
-      {
-        Timestamp: '2026-01-05T16:00:00.000Z',
-        Category: 'grant',
-        Action: 'grant.removed',
-        Outcome: 'success',
-        Severity: 'warning',
-        'Actor type': 'user',
-        Actor: 'Alice Chen',
-        'Actor ID': expect.stringMatching(/^[0-9a-f]{24}$/),
-        'Target type': 'role',
-        Target: 'USER',
-        'Target ID': 'USER',
-        Capability: 'read:agents',
-        Details: '"{""capability"":""read:agents""}"',
-        IP: '',
-        'Request ID': '',
-        Seq: '7',
-        Hash: expect.stringMatching(/^[0-9a-f]{64}$/),
-      },
-    ]);
-  });
-
   test('empty state when no entries match filters', async ({ page }) => {
     await searchField(page).fill('zzzznonexistent');
     await page.waitForTimeout(500);
     await expect(page.getByText(/no audit log entries found/i)).toBeVisible();
   });
 
-  test('capability column shows human-readable label with raw key', async ({ page }) => {
+  /**
+   * These read the mock's seeded grant history. The describe skips them live
+   * before the hook above opens the log, since LibreChat audits every read of it.
+   */
+  test.describe('seeded history', () => {
     test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
-    const firstCapCell = page.locator('tbody tr').first().locator('td').nth(2);
-    await expect(firstCapCell).toBeVisible();
-    const text = await firstCapCell.textContent();
-    expect(text).toContain(':');
+
+    test('shows diverse audit entries', async ({ page }) => {
+      const rows = page.getByRole('button', { name: 'Open audit log entry' });
+      await expect(rows.first()).toBeVisible();
+      const count = await rows.count();
+      expect(count).toBeGreaterThan(5);
+    });
+
+    test('action type filter shows only granted entries', async ({ page }) => {
+      await page.getByRole('button', { name: /^Granted$/i }).click();
+      const rows = page.locator('tbody tr');
+      await expect(rows.filter({ hasNotText: 'Granted' })).toHaveCount(0);
+      const count = await rows.count();
+      expect(count).toBeGreaterThan(0);
+      for (let i = 0; i < count; i++) {
+        await expect(rows.nth(i).getByText('Granted', { exact: true })).toBeVisible();
+      }
+    });
+
+    test('action type filter shows only revoked entries', async ({ page }) => {
+      await page.getByRole('button', { name: /^Revoked$/i }).click();
+      const rows = page.locator('tbody tr');
+      await expect(rows.filter({ hasNotText: 'Revoked' })).toHaveCount(0);
+      const count = await rows.count();
+      expect(count).toBeGreaterThan(0);
+      for (let i = 0; i < count; i++) {
+        await expect(rows.nth(i).getByText('Revoked', { exact: true })).toBeVisible();
+      }
+    });
+
+    test('search filters by actor/target name', async ({ page }) => {
+      await searchField(page).fill('Alice');
+      const rows = page.locator('tbody tr');
+      await expect(rows.filter({ hasNotText: /alice/i })).toHaveCount(0);
+      const count = await rows.count();
+      expect(count).toBeGreaterThan(0);
+      for (let i = 0; i < count; i++) {
+        const text = await rows.nth(i).textContent();
+        expect(text?.toLowerCase()).toContain('alice');
+      }
+    });
+
+    test('Export writes the seeded entry the filters match', async ({ page }) => {
+      await searchField(page).fill('Alice');
+      await page.getByRole('button', { name: /^Revoked$/i }).click();
+      await expect(page.locator('tbody tr')).toHaveCount(1);
+
+      expect(await exportAuditRows(page)).toEqual([
+        {
+          Timestamp: '2026-01-05T16:00:00.000Z',
+          Category: 'grant',
+          Action: 'grant.removed',
+          Outcome: 'success',
+          Severity: 'warning',
+          'Actor type': 'user',
+          Actor: 'Alice Chen',
+          'Actor ID': expect.stringMatching(/^[0-9a-f]{24}$/),
+          'Target type': 'role',
+          Target: 'USER',
+          'Target ID': 'USER',
+          Capability: 'read:agents',
+          Details: '"{""capability"":""read:agents""}"',
+          IP: '',
+          'Request ID': '',
+          Seq: '7',
+          Hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        },
+      ]);
+    });
+
+    test('capability column shows human-readable label with raw key', async ({ page }) => {
+      const firstCapCell = page.locator('tbody tr').first().locator('td').nth(2);
+      await expect(firstCapCell).toBeVisible();
+      const text = await firstCapCell.textContent();
+      expect(text).toContain(':');
+    });
   });
 });
 
 test.describe('Grants page - Audit Log export', () => {
+  test.skip(LIVE, AUDITED_WRITES_SKIP_REASON);
   let created: string | undefined;
 
   test.afterEach(async ({ page }) => {
@@ -258,8 +261,8 @@ test.describe('Grants page - Audit Log export', () => {
 
   test('Export downloads only the entries the filters match, as CSV', async ({ page }) => {
     const role = uniqueName('E2E Audited Role');
-    await createRole(page, role);
     created = role;
+    await createRole(page, role);
     await grantReadUsage(page, role);
     await page.goto('/grants?tab=audit-log');
     await searchField(page).fill(role);
