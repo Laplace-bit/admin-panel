@@ -35,6 +35,14 @@ const navItems: t.NavItem[] = [
   { labelKey: 'com_nav_help', path: '/help', icon: 'question' },
 ];
 
+/**
+ * A collapsed row spans the rail's inner width (w-14, less its 1px border and
+ * px-2 on each side) from the first frame of the collapse, so its icon centers
+ * in the rail instead of sweeping in from the middle of the shrinking panel.
+ */
+const RAIL_ROW = 'w-[calc(--spacing(10)-1px)] justify-center gap-0';
+const RAIL_LABEL = 'w-0 flex-none overflow-hidden';
+
 function getUserInitials(user?: { name?: string; email?: string } | null): string {
   if (user?.name) return getInitials(user.name);
   if (user?.email) return user.email[0].toUpperCase();
@@ -88,13 +96,23 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
         )}
       >
         <div className="flex h-14 shrink-0 items-center px-2">
-          <div className="flex items-center gap-2.5 overflow-hidden px-1.5">
+          <div
+            className={cn(
+              'flex items-center overflow-hidden px-1.5',
+              collapsed ? RAIL_ROW : 'gap-2.5',
+            )}
+          >
             <img
               src={libreChatLogo}
               alt={localize('com_a11y_logo_alt')}
               className="h-6 w-6 shrink-0"
             />
-            <span className="truncate text-sm font-semibold text-(--cui-color-text-default)">
+            <span
+              className={cn(
+                'truncate text-sm font-semibold text-(--cui-color-text-default)',
+                collapsed && RAIL_LABEL,
+              )}
+            >
               {localize('com_auth_title')}
             </span>
           </div>
@@ -110,7 +128,8 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
                 aria-label={collapsed ? localize(item.labelKey) : undefined}
                 title={collapsed ? localize(item.labelKey) : undefined}
                 className={cn(
-                  'flex h-8 items-center gap-2.5 overflow-hidden rounded-md px-2.5 text-sm whitespace-nowrap no-underline transition-colors duration-100',
+                  'flex h-8 items-center overflow-hidden rounded-md px-2.5 text-sm whitespace-nowrap no-underline transition-colors duration-100',
+                  collapsed ? RAIL_ROW : 'gap-2.5',
                   isActive(item.path)
                     ? 'bg-(--cui-color-background-active) font-medium text-(--cui-color-text-default)'
                     : 'font-normal text-(--cui-color-text-muted) hover:bg-(--cui-color-background-hover) hover:text-(--cui-color-text-default)',
@@ -119,7 +138,9 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
                 <span aria-hidden="true" className="shrink-0">
                   <Icon name={item.icon} size="sm" />
                 </span>
-                <span className="truncate text-sm">{localize(item.labelKey)}</span>
+                <span className={cn('truncate text-sm', collapsed && RAIL_LABEL)}>
+                  {localize(item.labelKey)}
+                </span>
               </Link>
             ))}
           </div>
@@ -127,7 +148,9 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
 
         {initials && (
           <div className="flex shrink-0 items-center border-t border-(--cui-color-stroke-default) px-2 py-3">
-            <div className="flex items-center gap-2.5 overflow-hidden px-0.5">
+            <div
+              className={cn('flex min-w-0 items-center px-0.5', collapsed ? RAIL_ROW : 'gap-2.5')}
+            >
               <Dropdown>
                 <Dropdown.Trigger>
                   <button
@@ -171,7 +194,7 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
                 </Dropdown.Content>
               </Dropdown>
               {user && (
-                <div className="min-w-0 flex-1">
+                <div className={cn('min-w-0', collapsed ? RAIL_LABEL : 'flex-1')}>
                   <span className="block truncate text-sm leading-tight font-medium text-(--cui-color-text-default)">
                     {user.name || ''}
                   </span>
@@ -191,7 +214,7 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
           onClick={onToggle}
           aria-label={localize(collapsed ? 'com_nav_expand_sidebar' : 'com_nav_collapse_sidebar')}
           title={localize(collapsed ? 'com_nav_expand_sidebar' : 'com_nav_collapse_sidebar')}
-          className="flex w-full shrink-0 cursor-pointer items-center justify-center border-t border-(--cui-color-stroke-default) bg-transparent py-3 text-(--cui-color-text-muted) transition-colors hover:bg-(--cui-color-background-hover) hover:text-(--cui-color-text-default)"
+          className="sidebar-toggle flex w-full shrink-0 cursor-pointer items-center justify-center border-t border-(--cui-color-stroke-default) bg-transparent py-3 text-(--cui-color-text-muted) transition-colors hover:bg-(--cui-color-background-hover) hover:text-(--cui-color-text-default)"
         >
           <DecorativeIcon name={collapsed ? 'slide-in' : 'slide-out'} size="sm" />
         </button>
