@@ -608,6 +608,11 @@ const handlers = {
       },
     ];
   }),
+  'GET /api/admin/audit-log/:id': admin((_body, _req, { id }) => {
+    if (!isObjectId(id)) return [400, { error: 'Invalid id' }];
+    const entry = auditLog.find((candidate) => candidate.id === id);
+    return entry ? [200, { entry }] : [404, { error: 'Not found' }];
+  }),
 };
 
 /** A percent-decoded path segment, or `null` when it is malformed. */

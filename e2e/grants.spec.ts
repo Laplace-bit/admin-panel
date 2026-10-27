@@ -3,7 +3,13 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import { createRole, deleteFromList, grantReadUsage, searchField, uniqueName } from './access';
-import { AUDITED_WRITES_SKIP_REASON, LIVE, MOCK_FIXTURES_SKIP_REASON } from './live';
+import {
+  LIVE,
+  MOCK_BACKEND_URL,
+  MOCK_ADMIN_HEADERS,
+  MOCK_FIXTURES_SKIP_REASON,
+  AUDITED_WRITES_SKIP_REASON,
+} from './live';
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
@@ -238,6 +244,38 @@ test.describe('Grants page - Audit Log tab', () => {
           Hash: expect.stringMatching(/^[0-9a-f]{64}$/),
         },
       ]);
+    });
+
+    test('a permalink opens its seeded entry in the detail drawer', async ({ page }) => {
+      await searchField(page).fill('Alice');
+      await page.getByRole('button', { name: /^Revoked$/i }).click();
+      await expect(page.locator('tbody tr')).toHaveCount(1);
+      await page.getByRole('button', { name: 'Open audit log entry' }).click();
+      await expect(page).toHaveURL(/entryId=/);
+      const entryId = new URL(page.url()).searchParams.get('entryId');
+
+      await page.goto(`/grants?tab=audit-log&entryId=${entryId}`);
+      const drawer = page.getByRole('dialog');
+      await expect(drawer).toBeVisible();
+      await expect(drawer.getByText('Alice Chen').first()).toBeVisible();
+      await expect(drawer.getByText('read:agents').first()).toBeVisible();
+      await expect(drawer.getByText(/entry not found/i)).toHaveCount(0);
+    });
+
+    test('the mock serves one entry by id, as LibreChat does', async ({ request }) => {
+      const auditLog = `${MOCK_BACKEND_URL}/api/admin/audit-log`;
+      const list = await request.get(auditLog, { headers: MOCK_ADMIN_HEADERS });
+      const [first] = (await list.json()).entries;
+
+      const one = await request.get(`${auditLog}/${first.id}`, { headers: MOCK_ADMIN_HEADERS });
+      expect(one.status()).toBe(200);
+      expect(await one.json()).toEqual({ entry: first });
+      const malformed = await request.get(`${auditLog}/not-an-id`, { headers: MOCK_ADMIN_HEADERS });
+      expect(malformed.status()).toBe(400);
+      const unknown = await request.get(`${auditLog}/${'f'.repeat(24)}`, {
+        headers: MOCK_ADMIN_HEADERS,
+      });
+      expect(unknown.status()).toBe(404);
     });
 
     test('capability column shows human-readable label with raw key', async ({ page }) => {

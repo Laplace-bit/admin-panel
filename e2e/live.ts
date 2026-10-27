@@ -34,6 +34,10 @@ export const MOCK_FIXTURES_SKIP_REASON =
 export const AUDITED_WRITES_SKIP_REASON =
   'Writes roles, groups or grants, which a live LibreChat records in an audit log its admin API cannot delete';
 
+/** The mock backend playwright.config.ts starts, and the admin token it accepts. */
+export const MOCK_BACKEND_URL = 'http://localhost:3081';
+export const MOCK_ADMIN_HEADERS = { Authorization: 'Bearer test-admin-token' };
+
 export const CONFIG_TABS = [
   'providers',
   'custom',
