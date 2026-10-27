@@ -31,11 +31,12 @@ async function previewAndApply(page: Page, target: RegExp) {
 /** Opens the USER role's profile, creating it on a clean database. */
 async function ensureUserProfile(page: Page) {
   await page.goto('/configuration?tab=system&scope=role:USER');
-  await page.waitForLoadState('networkidle');
+  const opened = page.getByRole('button', { name: /^Select scope: USER/ });
   const create = page.getByRole('button', { name: 'Create profile' });
-  if ((await create.count()) === 0) return;
+  await expect(opened.or(create)).toBeVisible({ timeout: 30_000 });
+  if (await opened.isVisible()) return;
   await create.click();
-  await expect(page.getByRole('button', { name: /^Select scope: USER/ })).toBeVisible();
+  await expect(opened).toBeVisible();
 }
 
 async function startBalanceIn(page: Page, scope?: string) {

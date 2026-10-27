@@ -180,22 +180,53 @@ test.describe('Configuration shell: search and deep links', () => {
 });
 
 test.describe('Configuration shell: profile scope and guard', () => {
+  /** Set once a test creates the USER role's profile, so cleanup never deletes one it found. */
+  let createdUserProfile = false;
+
+  /** Opens the scope selector once its profile list has loaded. */
   async function openScopeSelector(page: Page) {
     await page.getByRole('button', { name: /^Select scope/ }).click();
-    return page.getByRole('dialog');
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('option', { name: /^Base configuration/ })).toBeVisible();
+    return dialog;
   }
 
   /** Opens the USER role's profile; on a clean database, creating it opens it. */
   async function selectUserRole(page: Page) {
     const dialog = await openScopeSelector(page);
-    const user = dialog.getByText('USER', { exact: true });
-    if ((await user.count()) === 0) {
-      await dialog.getByRole('button', { name: 'Create' }).click();
-      await dialog.getByText('USER', { exact: true }).first().click();
+    const user = dialog.getByRole('option', { name: /^USER / });
+    if ((await user.count()) > 0) {
+      await user.click();
       return;
     }
-    await user.first().click();
+    await dialog.getByRole('button', { name: 'Create' }).click();
+    await dialog.getByRole('option', { name: 'USER', exact: true }).click();
+    createdUserProfile = true;
   }
+
+  /**
+   * Deletes the USER role's profile unless something has saved overrides to it since.
+   * The confirm view lists no options and stays up until the delete succeeds, so the
+   * profile list coming back is what proves the delete finished.
+   */
+  async function deleteUserProfile(page: Page) {
+    await openTab(page, 'system');
+    const dialog = await openScopeSelector(page);
+    const user = dialog.getByRole('option', { name: /^USER / });
+    if ((await user.filter({ hasText: 'No overrides' }).count()) === 0) return;
+    await dialog.getByRole('option', { name: 'Delete profile USER', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Delete configuration' }).click();
+    await expect(dialog.getByRole('option', { name: /^Base configuration/ })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(user).toHaveCount(0);
+  }
+
+  test.afterEach(async ({ page }) => {
+    if (!createdUserProfile) return;
+    createdUserProfile = false;
+    await deleteUserProfile(page);
+  });
 
   test('Back after selecting a profile restores Base in the URL and the UI', async ({ page }) => {
     await openTab(page, 'system');
