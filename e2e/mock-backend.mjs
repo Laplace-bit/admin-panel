@@ -206,6 +206,44 @@ const AUDIT_TEXT_FILTERS = {
   ],
 };
 
+/** LibreChat's CSV guards: a leading formula character is quoted out, and Excel reads the BOM. */
+const CSV_FORMULA_PREFIX = /^[=+\-@\t\r]/;
+const CSV_BOM = '\uFEFF';
+
+/** A CSV cell as LibreChat's `escapeCsvCell` writes it. */
+function csvCell(value) {
+  if (value === '') return '';
+  const guarded = CSV_FORMULA_PREFIX.test(value) ? `'${value}` : value;
+  return /[",\n\r]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
+}
+
+/** A metadata value as LibreChat's `stringifyMetaValue` writes it: objects are left blank. */
+const metaCell = (value) =>
+  ['string', 'number', 'boolean'].includes(typeof value) ? String(value) : '';
+
+/** LibreChat's audit-log export columns, in order: `CSV_COLUMNS` in its admin `auditLog.ts`. */
+const AUDIT_CSV_COLUMNS = [
+  ['Timestamp', (entry) => entry.timestamp],
+  ['Category', (entry) => entry.category],
+  ['Action', (entry) => entry.action],
+  ['Outcome', (entry) => entry.outcome],
+  ['Severity', (entry) => entry.severity],
+  ['Actor type', (entry) => entry.actor.type],
+  ['Actor', (entry) => entry.actor.name],
+  ['Actor ID', (entry) => entry.actor.id ?? ''],
+  ['Target type', (entry) => entry.target.type],
+  ['Target', (entry) => entry.target.name ?? ''],
+  ['Target ID', (entry) => entry.target.id ?? ''],
+  ['Capability', (entry) => metaCell(entry.metadata?.capability)],
+  ['Details', (entry) => (entry.metadata ? JSON.stringify(entry.metadata) : '')],
+  ['IP', (entry) => entry.context?.ip ?? ''],
+  ['Request ID', (entry) => entry.context?.requestId ?? ''],
+  ['Seq', (entry) => String(entry.integrity.seq)],
+  ['Hash', (entry) => entry.integrity.hash],
+];
+
+const csvLine = (cells) => `${cells.map(csvCell).join(',')}\r\n`;
+
 /** The audit-log query's filter: an entry matches when every filter given matches it. */
 function auditFilter(query) {
   const checks = [
@@ -263,7 +301,7 @@ const admin =
 // Keyed `METHOD /path`. A `:param` segment matches any one segment and the
 // first match in declaration order wins, so literal paths come before
 // parameterized ones. Handlers take (body, req, params, query) and return
-// [status, body].
+// [status, body] for JSON, or [status, text, headers] to send the text as is.
 
 const handlers = {
   'POST /api/admin/login/local': (body, req) => {
@@ -360,6 +398,11 @@ const handlers = {
     if (isRename && findRole(newName)) return [409, { error: `Role "${newName}" already exists` }];
     if (body.description !== undefined) role.description = body.description;
     if (!isRename) return [200, { role }];
+    /**
+     * LibreChat's `renameRole` moves the role's users and renames the role, and
+     * nothing else: its grants stay keyed by the old name, so the renamed role
+     * holds none and a role later created under the old name gets them back.
+     */
     role.name = newName;
     users.filter((user) => user.role === name).forEach((user) => (user.role = newName));
     return [200, { role }];
@@ -548,6 +591,23 @@ const handlers = {
     const nextCursor = offset + page.length < total ? page.at(-1).integrity.seq : null;
     return [200, { entries: page, total, nextCursor }];
   }),
+  'GET /api/admin/audit-log/export.csv': admin((_body, _req, _params, query) => {
+    const rows = auditLog
+      .filter(auditFilter(query))
+      .reverse()
+      .map((entry) => csvLine(AUDIT_CSV_COLUMNS.map(([, cell]) => cell(entry))));
+    const header = csvLine(AUDIT_CSV_COLUMNS.map(([label]) => label));
+    const stamp = new Date().toISOString().slice(0, 10);
+    return [
+      200,
+      [CSV_BOM, header, ...rows].join(''),
+      {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="audit-log-${stamp}.csv"`,
+        'Cache-Control': 'no-store',
+      },
+    ];
+  }),
 };
 
 /** A percent-decoded path segment, or `null` when it is malformed. */
@@ -584,12 +644,18 @@ const server = createServer(async (req, res) => {
 
   let status = 404;
   let body = { error: 'not found' };
+  let headers;
 
   if (matched) {
     const reqBody = req.method === 'GET' ? {} : await parseBody(req);
-    [status, body] = matched.handler(reqBody, req, matched.params, url.searchParams);
+    [status, body, headers] = matched.handler(reqBody, req, matched.params, url.searchParams);
   }
 
+  if (headers) {
+    res.writeHead(status, headers);
+    res.end(body);
+    return;
+  }
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
 });

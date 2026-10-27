@@ -1,13 +1,19 @@
 import { test as base, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
+import {
+  createGroup,
+  createRole,
+  deleteFromList,
+  grantReadUsage,
+  grantsRow,
+  renameRole,
+  searchField,
+  uniqueName,
+} from './access';
 import { LIVE, MOCK_FIXTURES_SKIP_REASON } from './live';
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
-
-function uniqueName(prefix: string) {
-  return `${prefix} ${Date.now()}`;
-}
 
 async function hideTanStackDevtools(page: Page) {
   await page.evaluate(() => {
@@ -15,29 +21,6 @@ async function hideTanStackDevtools(page: Page) {
       .querySelector<HTMLElement>('button[aria-label="Open TanStack Devtools"]')
       ?.style.setProperty('display', 'none');
   });
-}
-
-/** The tab's search field: click-ui's SearchField renders a textbox, not a searchbox. */
-const searchField = (page: Page) => page.getByRole('textbox', { name: /^search/i });
-
-/** Deletes a role or group with its row's Delete button, so a live run leaves none behind. */
-async function deleteFromList(page: Page, tab: 'roles' | 'groups', name: string) {
-  await page.goto(`/access?tab=${tab}`);
-  await searchField(page).fill(name);
-  await page.getByRole('button', { name: `Delete ${name}` }).click();
-  const confirmDialog = page.getByRole('dialog');
-  await confirmDialog.getByRole('button', { name: /delete/i }).click();
-  await expect(confirmDialog).not.toBeVisible({ timeout: 5000 });
-}
-
-/** Creates a group with the Create Group dialog, as a live run stages the groups a test lists. */
-async function createGroup(page: Page, name: string) {
-  await page.goto('/access?tab=groups');
-  await page.getByRole('button', { name: /create group/i }).click();
-  const dialog = page.getByRole('dialog');
-  await page.locator('#create-group-name').fill(name);
-  await dialog.getByRole('button', { name: /create group/i }).click();
-  await expect(dialog).not.toBeVisible({ timeout: 5000 });
 }
 
 /**
@@ -328,5 +311,38 @@ test.describe('Access page delete', () => {
     await expect(confirmDialog).not.toBeVisible({ timeout: 5000 });
     await expect(page.getByText(name, { exact: true })).not.toBeVisible({ timeout: 5000 });
     created = undefined;
+  });
+});
+
+/**
+ * LibreChat keys system grants by role name and its role rename (`renameRole`
+ * in `packages/api/src/admin/roles.ts`) moves only the role's users, so the
+ * grants stay under the old name: the renamed role holds none until a role
+ * takes the old name again.
+ */
+test.describe('Access page role rename', () => {
+  let created: string | undefined;
+
+  test.afterEach(async ({ page }) => {
+    if (!created) return;
+    await deleteFromList(page, 'roles', created);
+    created = undefined;
+  });
+
+  test('a renamed role leaves its grants under its old name', async ({ page }) => {
+    const original = uniqueName('E2E Usage Role');
+    const renamed = uniqueName('E2E Renamed Role');
+    await createRole(page, original);
+    created = original;
+    await grantReadUsage(page, original);
+    await expect(await grantsRow(page, original)).toContainText('1 capabilities');
+
+    await renameRole(page, original, renamed);
+    created = renamed;
+    await expect(await grantsRow(page, renamed)).toContainText('No capabilities');
+
+    await renameRole(page, renamed, original);
+    created = original;
+    await expect(await grantsRow(page, original)).toContainText('1 capabilities');
   });
 });

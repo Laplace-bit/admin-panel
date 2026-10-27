@@ -1,6 +1,8 @@
+import { readFile } from 'node:fs/promises';
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
+import { createRole, deleteFromList, grantReadUsage, searchField, uniqueName } from './access';
 import { LIVE, MOCK_FIXTURES_SKIP_REASON } from './live';
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
@@ -13,8 +15,53 @@ async function hideTanStackDevtools(page: Page) {
   });
 }
 
-/** The tab's search field: click-ui's SearchField renders a textbox, not a searchbox. */
-const searchField = (page: Page) => page.getByRole('textbox', { name: /^search/i });
+/** LibreChat's audit-log CSV columns, in order: `CSV_COLUMNS` in its admin `auditLog.ts`. */
+const AUDIT_CSV_COLUMNS = [
+  'Timestamp',
+  'Category',
+  'Action',
+  'Outcome',
+  'Severity',
+  'Actor type',
+  'Actor',
+  'Actor ID',
+  'Target type',
+  'Target',
+  'Target ID',
+  'Capability',
+  'Details',
+  'IP',
+  'Request ID',
+  'Seq',
+  'Hash',
+];
+
+/**
+ * Exports the audit log and returns the CSV's rows keyed by column, after
+ * checking the download, the response headers, the BOM and the header row.
+ * None of the rows checked here quotes a comma, so a plain split reads them.
+ */
+async function exportAuditRows(page: Page) {
+  const [download, response] = await Promise.all([
+    page.waitForEvent('download'),
+    page.waitForResponse(
+      (res) => res.url().includes('/_serverFn/') && res.request().method() === 'POST',
+    ),
+    page.getByRole('button', { name: /export all matching/i }).click(),
+  ]);
+  const filename = download.suggestedFilename();
+  expect(filename).toMatch(/^audit-log-\d{4}-\d{2}-\d{2}\.csv$/);
+  expect(response.headers()['content-type']).toBe('text/csv; charset=utf-8');
+  expect(response.headers()['content-disposition']).toBe(`attachment; filename="${filename}"`);
+  const [header, ...lines] = (await readFile(await download.path(), 'utf8')).split('\r\n');
+  expect(header).toBe(`\uFEFF${AUDIT_CSV_COLUMNS.join(',')}`);
+  expect(lines.pop()).toBe('');
+  return lines.map((line) => {
+    const cells = line.split(',');
+    expect(cells).toHaveLength(AUDIT_CSV_COLUMNS.length);
+    return Object.fromEntries(AUDIT_CSV_COLUMNS.map((column, i) => [column, cells[i]]));
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Management tab (default)
@@ -127,7 +174,7 @@ test.describe('Grants page - Audit Log tab', () => {
     const count = await rows.count();
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) {
-      await expect(rows.nth(i).getByText('Granted')).toBeVisible();
+      await expect(rows.nth(i).getByText('Granted', { exact: true })).toBeVisible();
     }
   });
 
@@ -139,7 +186,7 @@ test.describe('Grants page - Audit Log tab', () => {
     const count = await rows.count();
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) {
-      await expect(rows.nth(i).getByText('Revoked')).toBeVisible();
+      await expect(rows.nth(i).getByText('Revoked', { exact: true })).toBeVisible();
     }
   });
 
@@ -156,9 +203,33 @@ test.describe('Grants page - Audit Log tab', () => {
     }
   });
 
-  test('export button is present', async ({ page }) => {
-    const exportBtn = page.getByRole('button', { name: /export all matching/i });
-    await expect(exportBtn).toBeVisible();
+  test('Export writes the seeded entry the filters match', async ({ page }) => {
+    test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
+    await searchField(page).fill('Alice');
+    await page.getByRole('button', { name: /^Revoked$/i }).click();
+    await expect(page.locator('tbody tr')).toHaveCount(1);
+
+    expect(await exportAuditRows(page)).toEqual([
+      {
+        Timestamp: '2026-01-05T16:00:00.000Z',
+        Category: 'grant',
+        Action: 'grant.removed',
+        Outcome: 'success',
+        Severity: 'warning',
+        'Actor type': 'user',
+        Actor: 'Alice Chen',
+        'Actor ID': expect.stringMatching(/^[0-9a-f]{24}$/),
+        'Target type': 'role',
+        Target: 'USER',
+        'Target ID': 'USER',
+        Capability: 'read:agents',
+        Details: '"{""capability"":""read:agents""}"',
+        IP: '',
+        'Request ID': '',
+        Seq: '7',
+        Hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
+    ]);
   });
 
   test('empty state when no entries match filters', async ({ page }) => {
@@ -173,6 +244,40 @@ test.describe('Grants page - Audit Log tab', () => {
     await expect(firstCapCell).toBeVisible();
     const text = await firstCapCell.textContent();
     expect(text).toContain(':');
+  });
+});
+
+test.describe('Grants page - Audit Log export', () => {
+  let created: string | undefined;
+
+  test.afterEach(async ({ page }) => {
+    if (!created) return;
+    await deleteFromList(page, 'roles', created);
+    created = undefined;
+  });
+
+  test('Export downloads only the entries the filters match, as CSV', async ({ page }) => {
+    const role = uniqueName('E2E Audited Role');
+    await createRole(page, role);
+    created = role;
+    await grantReadUsage(page, role);
+    await page.goto('/grants?tab=audit-log');
+    await searchField(page).fill(role);
+    await expect(page.locator('tbody tr')).toHaveCount(1);
+
+    expect(await exportAuditRows(page)).toEqual([
+      expect.objectContaining({
+        Category: 'grant',
+        Action: 'grant.assigned',
+        Outcome: 'success',
+        'Actor type': 'user',
+        'Target type': 'role',
+        Target: role,
+        'Target ID': role,
+        Capability: 'read:usage',
+        Details: '"{""capability"":""read:usage""}"',
+      }),
+    ]);
   });
 });
 
