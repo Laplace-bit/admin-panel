@@ -1,5 +1,6 @@
 import { createFileRoute, notFound, redirect } from '@tanstack/react-router';
 import {
+  withBasePath,
   toSafeRedirect,
   isSsoProviderId,
   resolveSsoCallback,
@@ -17,7 +18,10 @@ export const Route = createFileRoute('/auth/$provider/callback')({
     const result = await resolveSsoCallback(deps, (code) =>
       oauthExchangeFn({ data: { code, provider } }),
     );
-    if (!result.error) throw redirect({ href: toSafeRedirect(result.redirectTo) });
+    if (!result.error) {
+      const path = toSafeRedirect(result.redirectTo);
+      throw redirect({ href: withBasePath(path, import.meta.env.VITE_BASE_PATH) });
+    }
     return { code: result.code };
   },
   component: SsoCallback,
