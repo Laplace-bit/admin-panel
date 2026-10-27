@@ -220,18 +220,34 @@ test.describe('2FA verification flow', () => {
 });
 
 test.describe('SSO availability', () => {
-  test('shows SSO button when OpenID is available', async ({ page }) => {
+  test('shows the OpenID button, named as LibreChat names it, when OpenID is available', async ({
+    page,
+  }) => {
     await page.goto('/login');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByRole('button', { name: /sso/i })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: /continue with openid/i })).toBeVisible({
+      timeout: 10_000,
+    });
   });
 
-  test('has zero WCAG 2.1 AA violations with SSO button visible', async ({ page }) => {
+  test('shows a Google button next to OpenID when LibreChat has Google admin sign-in', async ({
+    page,
+  }) => {
     await page.goto('/login');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByRole('button', { name: /sso/i })).toBeVisible({ timeout: 10_000 });
+    const buttons = page.getByRole('button', { name: /^continue with (openid|google)$/i });
+    await expect(buttons).toHaveText([/openid/i, /google/i], { timeout: 10_000 });
+  });
+
+  test('has zero WCAG 2.1 AA violations with SSO buttons visible', async ({ page }) => {
+    await page.goto('/login');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByRole('button', { name: /continue with google/i })).toBeVisible({
+      timeout: 10_000,
+    });
 
     const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
 
@@ -338,5 +354,39 @@ test.describe('OpenID callback errors', () => {
     expect(
       await page.evaluate(() => (window as Window & { __xss?: number }).__xss),
     ).toBeUndefined();
+  });
+});
+
+test.describe('SSO through each provider', () => {
+  test('words a failed Google sign-in on its callback instead of a 404', async ({ page }) => {
+    await page.goto(
+      '/auth/google/callback?error=auth_failed&error_description=Authentication+failed',
+    );
+
+    await expect(page.getByText(/identity provider did not complete/i).first()).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.getByText(/page not found/i)).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /back to login/i })).toBeVisible();
+  });
+
+  test('answers the callback of a provider the panel does not offer with not found', async ({
+    page,
+  }) => {
+    await page.goto(`/auth/evil/callback?code=${'a'.repeat(64)}`);
+
+    await expect(page.getByText(/page not found/i).first()).toBeVisible({ timeout: 5000 });
+  });
+
+  test('returns to the deep link sign-in started from after signing in with Google', async ({
+    page,
+  }) => {
+    await page.goto('/grants');
+    await page.waitForURL(/\/login\?redirect=/, { timeout: 15_000 });
+    await page.waitForLoadState('networkidle');
+
+    await page.getByRole('button', { name: /continue with google/i }).click();
+
+    await page.waitForURL((url) => url.pathname === '/grants', { timeout: 15_000 });
   });
 });

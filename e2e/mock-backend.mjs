@@ -1,7 +1,9 @@
 import { createServer } from 'node:http';
+import { createHash, randomBytes } from 'node:crypto';
 
 const parsedPort = parseInt(process.env.MOCK_BACKEND_PORT || '3081', 10);
 const PORT = Number.isNaN(parsedPort) ? 3081 : parsedPort;
+const ADMIN_PANEL_URL = process.env.MOCK_ADMIN_PANEL_URL || 'http://localhost:3000';
 
 function parseBody(req) {
   return new Promise((resolve) => {
@@ -19,6 +21,22 @@ function parseBody(req) {
 }
 
 const VALID_TEMP_TOKEN = 'valid-2fa-temp-token-for-testing';
+
+/** The PKCE challenge each one-time exchange code was issued for, as LibreChat binds them. */
+const exchangeChallenges = new Map();
+
+/**
+ * LibreChat's admin OAuth start route, with the identity provider signing the
+ * admin in at once: back to the panel's callback with a one-time code.
+ */
+function startAdminOAuth(provider) {
+  return (_body, req) => {
+    const challenge = new URL(req.url, 'http://mock').searchParams.get('code_challenge');
+    const code = randomBytes(32).toString('hex');
+    exchangeChallenges.set(code, challenge);
+    return [302, {}, { Location: `${ADMIN_PANEL_URL}/auth/${provider}/callback?code=${code}` }];
+  };
+}
 
 const FEDERATED_LOGIN_BLOCKED = [
   403,
@@ -94,6 +112,41 @@ const handlers = {
     ];
   },
   'GET /api/admin/oauth/openid/check': () => [200, { message: 'OpenID check successful' }],
+  'GET /api/config': () => [
+    200,
+    {
+      socialLoginEnabled: true,
+      socialLogins: ['google', 'openid', 'saml'],
+      googleLoginEnabled: true,
+      openidLoginEnabled: true,
+      openidLabel: 'Continue with OpenID',
+      samlLoginEnabled: false,
+    },
+  ],
+  'GET /api/admin/oauth/openid': startAdminOAuth('openid'),
+  'GET /api/admin/oauth/google': startAdminOAuth('google'),
+  'POST /api/admin/oauth/exchange': (body) => {
+    const challenge = exchangeChallenges.get(body.code);
+    exchangeChallenges.delete(body.code);
+    const verified =
+      typeof challenge === 'string' &&
+      typeof body.code_verifier === 'string' &&
+      createHash('sha256').update(body.code_verifier).digest('hex') === challenge;
+    if (!verified)
+      return [
+        401,
+        { error: 'Invalid or expired authorization code', error_code: 'INVALID_OR_EXPIRED_CODE' },
+      ];
+    return [
+      200,
+      {
+        token: 'test-admin-token',
+        refreshToken: 'test-refresh-token',
+        expiresAt: Date.now() + 15 * 60 * 1000,
+        user: { id: 'u_test', email: 'admin@test.com', name: 'Test Admin', role: 'ADMIN' },
+      },
+    ];
+  },
 };
 
 const server = createServer(async (req, res) => {
@@ -103,13 +156,14 @@ const server = createServer(async (req, res) => {
 
   let status = 404;
   let body = { error: 'not found' };
+  let headers = {};
 
   if (handler) {
     const reqBody = req.method === 'POST' ? await parseBody(req) : {};
-    [status, body] = handler(reqBody, req);
+    [status, body, headers = {}] = handler(reqBody, req);
   }
 
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.writeHead(status, { 'Content-Type': 'application/json', ...headers });
   res.end(JSON.stringify(body));
 });
 

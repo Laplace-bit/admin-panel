@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type * as t from '@/types';
-import { adminLoginFn, adminVerify2FAFn, openidLoginFn } from '@/server';
+import { adminLoginFn, adminVerify2FAFn, ssoStartFn } from '@/server';
 import { localizeEn } from '@/test/coverage';
 import { AuthCard } from '../AuthCard';
 
@@ -26,19 +26,24 @@ vi.mock('@tanstack/react-router', async (importOriginal) => ({
 vi.mock('@/server', () => ({
   adminLoginFn: vi.fn(),
   adminVerify2FAFn: vi.fn(),
-  openidLoginFn: vi.fn(),
-  openIdCheckOptions: { queryKey: ['openIdCheck'], queryFn: vi.fn() },
+  ssoStartFn: vi.fn(),
 }));
 
 const loginFn = vi.mocked(adminLoginFn);
 const verify2FAFn = vi.mocked(adminVerify2FAFn);
-const ssoStartFn = vi.mocked(openidLoginFn);
+const startFn = vi.mocked(ssoStartFn);
+
+const OPENID: t.SsoProviderOption[] = [{ id: 'openid' }];
+const OPENID_AND_GOOGLE: t.SsoProviderOption[] = [
+  { id: 'openid', label: 'Sign in with Okta' },
+  { id: 'google' },
+];
 
 function renderCard(props: t.AuthCardProps = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <AuthCard ssoAvailable={false} {...props} />
+      <AuthCard {...props} />
     </QueryClientProvider>,
   );
 }
@@ -62,8 +67,9 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   loginFn.mockReset();
   verify2FAFn.mockReset();
-  ssoStartFn.mockReset();
+  startFn.mockReset();
   navigate.mockReset();
+  window.location.hash = '';
 });
 
 afterEach(() => {
@@ -114,7 +120,7 @@ describe('AuthCard sign-in failures', () => {
   it('tells an account its identity provider owns that a password cannot sign it in', async () => {
     loginFn.mockResolvedValue({ error: true, code: 'federated_login' });
 
-    renderCard({ ssoAvailable: true });
+    renderCard({ providers: OPENID });
     signIn();
 
     expect(await screen.findByText(localizeEn('com_auth_error_federated_login'))).toBeVisible();
@@ -143,7 +149,7 @@ describe('AuthCard sign-in failures', () => {
     loginFn.mockResolvedValue({ error: false, requires2FA: true, tempToken: 'temp-token' });
     verify2FAFn.mockResolvedValue({ error: true, code: 'federated_login' });
 
-    renderCard({ ssoAvailable: true });
+    renderCard({ providers: OPENID });
     signIn();
     const otp = await screen.findByLabelText(localizeEn('com_auth_2fa_code_label'));
     fireEvent.change(otp, { target: { value: '123456' } });
@@ -182,11 +188,88 @@ describe('AuthCard sign-in failures', () => {
   });
 
   it('words a failed SSO start', async () => {
-    ssoStartFn.mockResolvedValue({ error: true, code: 'sso_start_failed' });
+    startFn.mockResolvedValue({ error: true, code: 'sso_start_failed' });
 
-    renderCard({ ssoAvailable: true });
+    renderCard({ providers: OPENID });
     fireEvent.click(screen.getByRole('button', { name: localizeEn('com_auth_sso_sign_in') }));
 
     expect(await screen.findByText(localizeEn('com_auth_sso_redirect_failed'))).toBeVisible();
+  });
+});
+
+/** The password form's email field, if the card shows the form. */
+function emailField() {
+  return screen.queryByPlaceholderText(localizeEn('com_auth_email_placeholder'));
+}
+
+describe('AuthCard SSO providers', () => {
+  it('offers one button per provider, in order, named as the deployer named them', () => {
+    renderCard({ providers: OPENID_AND_GOOGLE });
+
+    const names = screen.getAllByRole('button').map((button) => button.textContent);
+    expect(names).toEqual([
+      localizeEn('com_auth_sign_in'),
+      'Sign in with Okta',
+      localizeEn('com_auth_sso_google'),
+    ]);
+  });
+
+  it('starts the provider clicked, carrying the page sign-in started from', async () => {
+    startFn.mockResolvedValue({ error: false, authUrl: '#google-consent' });
+
+    renderCard({ providers: OPENID_AND_GOOGLE, redirectTo: '/grants?tab=audit' });
+    fireEvent.click(screen.getByRole('button', { name: localizeEn('com_auth_sso_google') }));
+
+    await waitFor(() => expect(window.location.hash).toBe('#google-consent'));
+    expect(startFn).toHaveBeenCalledWith({
+      data: { provider: 'google', redirectTo: '/grants?tab=audit' },
+    });
+  });
+
+  it('sends an SSO-only page with one provider straight to it, with the page to return to', async () => {
+    startFn.mockResolvedValue({ error: false, authUrl: '#saml-idp' });
+
+    renderCard({ providers: [{ id: 'saml' }], ssoOnly: true, redirectTo: '/access' });
+
+    expect(screen.getByText(localizeEn('com_auth_sso_redirecting_auto'))).toBeVisible();
+    await waitFor(() => expect(window.location.hash).toBe('#saml-idp'));
+    expect(startFn).toHaveBeenCalledTimes(1);
+    expect(startFn).toHaveBeenCalledWith({ data: { provider: 'saml', redirectTo: '/access' } });
+  });
+
+  it('lets an SSO-only page with several providers choose, with no password form', () => {
+    renderCard({ providers: OPENID_AND_GOOGLE, ssoOnly: true });
+
+    expect(startFn).not.toHaveBeenCalled();
+    expect(emailField()).toBeNull();
+    expect(screen.queryByRole('button', { name: localizeEn('com_auth_sign_in') })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Sign in with Okta' })).toBeVisible();
+    expect(screen.getByRole('button', { name: localizeEn('com_auth_sso_google') })).toBeVisible();
+  });
+
+  it('keeps the password form of an SSO-only page no provider resolved for', () => {
+    renderCard({ providers: [], ssoOnly: true });
+
+    expect(startFn).not.toHaveBeenCalled();
+    expect(emailField()).toBeVisible();
+  });
+
+  it('brings the password form back when the automatic redirect fails', async () => {
+    startFn.mockResolvedValue({ error: true, code: 'sso_start_failed' });
+
+    renderCard({ providers: OPENID, ssoOnly: true });
+
+    expect(await screen.findByText(localizeEn('com_auth_sso_redirect_failed'))).toBeVisible();
+    expect(emailField()).toBeVisible();
+  });
+
+  it('brings the password form of an SSO-only page back when a provider cannot start', async () => {
+    startFn.mockRejectedValue(new Error('network'));
+
+    renderCard({ providers: OPENID_AND_GOOGLE, ssoOnly: true });
+    fireEvent.click(screen.getByRole('button', { name: localizeEn('com_auth_sso_google') }));
+
+    expect(await screen.findByText(localizeEn('com_auth_sso_redirect_failed'))).toBeVisible();
+    expect(emailField()).toBeVisible();
   });
 });

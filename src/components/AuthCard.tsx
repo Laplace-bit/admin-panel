@@ -1,21 +1,22 @@
 import { z } from 'zod';
 import { REGEXP_ONLY_DIGITS } from 'input-otp';
-import { useQuery } from '@tanstack/react-query';
 import { useRouter } from '@tanstack/react-router';
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Alert, Title, Panel, Button, Separator, TextField, Container } from '@clickhouse/click-ui';
 import type * as t from '@/types';
-import { adminLoginFn, adminVerify2FAFn, openIdCheckOptions, openidLoginFn } from '@/server';
+import { AUTH_ERROR_KEYS, SSO_PROVIDERS, TWO_FACTOR_RESTART_CODES } from '@/constants';
 import { InputOTP, InputOTPGroup, InputOTPSlot, InputOTPSeparator } from './InputOTP';
-import { AUTH_ERROR_KEYS, TWO_FACTOR_RESTART_CODES } from '@/constants';
+import { adminLoginFn, adminVerify2FAFn, ssoStartFn } from '@/server';
 import { PasswordInput } from './PasswordInput';
 import { toSafeRedirect } from '@/utils';
 import { useLocalize } from '@/hooks';
 
+const NO_SSO_PROVIDERS: readonly t.SsoProviderOption[] = [];
+
 export function AuthCard({
   redirectTo = '/',
-  autoRedirectSso = false,
-  ssoAvailable: ssoAvailableProp,
+  providers = NO_SSO_PROVIDERS,
+  ssoOnly = false,
 }: t.AuthCardProps) {
   const router = useRouter();
   const localize = useLocalize();
@@ -26,20 +27,16 @@ export function AuthCard({
   const [errors, setErrors] = useState<t.FieldErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [announcement, setAnnouncement] = useState('');
-  const [ssoLoading, setSsoLoading] = useState(false);
-  const [autoRedirectFailed, setAutoRedirectFailed] = useState(false);
+  const [ssoStarting, setSsoStarting] = useState<t.SsoProviderId | null>(null);
+  const [ssoFailed, setSsoFailed] = useState(false);
   const autoRedirectAttempted = useRef(false);
 
   const [tempToken, setTempToken] = useState('');
   const [totpCode, setTotpCode] = useState('');
 
-  const { data: openIdData } = useQuery({
-    ...openIdCheckOptions,
-    enabled: ssoAvailableProp === undefined,
-  });
-  const ssoAvailable = ssoAvailableProp ?? openIdData?.available ?? false;
-
-  const showAutoRedirect = autoRedirectSso && !autoRedirectFailed;
+  const autoRedirectProvider = ssoOnly && providers.length === 1 ? providers[0].id : undefined;
+  const showAutoRedirect = autoRedirectProvider !== undefined && !ssoFailed;
+  const showPasswordForm = !ssoOnly || providers.length === 0 || ssoFailed;
 
   useEffect(() => {
     const messages = [generalError, errors.email, errors.password].filter(Boolean);
@@ -52,30 +49,36 @@ export function AuthCard({
     return () => clearTimeout(timeout);
   }, [generalError, errors.email, errors.password]);
 
-  useEffect(() => {
-    if (!autoRedirectSso || autoRedirectAttempted.current) return;
-    autoRedirectAttempted.current = true;
-
-    setSsoLoading(true);
-    openidLoginFn()
-      .then((result) => {
+  /**
+   * Sends the browser to the provider, with the page to return to kept in the
+   * admin session. A failure brings the password form back, even SSO-only.
+   */
+  const startSso = useCallback(
+    async (provider: t.SsoProviderId) => {
+      setSsoStarting(provider);
+      try {
+        const result = await ssoStartFn({ data: { provider, redirectTo } });
         if (result.error) {
-          setAutoRedirectFailed(true);
+          setSsoFailed(true);
           setGeneralError(localize(AUTH_ERROR_KEYS[result.code]));
           return;
         }
-        const authUrl = new URL(result.authUrl);
-        if (redirectTo && redirectTo !== '/') {
-          authUrl.searchParams.set('redirectTo', redirectTo);
-        }
-        window.location.href = authUrl.toString();
-      })
-      .catch(() => {
-        setAutoRedirectFailed(true);
+        window.location.href = result.authUrl;
+      } catch {
+        setSsoFailed(true);
         setGeneralError(localize('com_auth_sso_redirect_failed'));
-      })
-      .finally(() => setSsoLoading(false));
-  }, [autoRedirectSso, localize, redirectTo]);
+      } finally {
+        setSsoStarting(null);
+      }
+    },
+    [localize, redirectTo],
+  );
+
+  useEffect(() => {
+    if (!autoRedirectProvider || autoRedirectAttempted.current) return;
+    autoRedirectAttempted.current = true;
+    startSso(autoRedirectProvider);
+  }, [autoRedirectProvider, startSso]);
 
   const emailSchema = useMemo(
     () => z.string().email(localize('com_auth_email_invalid')),
@@ -190,23 +193,6 @@ export function AuthCard({
     if (e.key === 'Enter') handleLogin();
   };
 
-  const handleSsoLogin = async () => {
-    if (ssoLoading) return;
-    setSsoLoading(true);
-    try {
-      const result = await openidLoginFn();
-      if (result.error) {
-        setGeneralError(localize(AUTH_ERROR_KEYS[result.code]));
-        return;
-      }
-      window.location.href = result.authUrl;
-    } catch {
-      setGeneralError(localize('com_auth_unable_connect'));
-    } finally {
-      setSsoLoading(false);
-    }
-  };
-
   if (showAutoRedirect) {
     return (
       <Panel
@@ -289,53 +275,64 @@ export function AuthCard({
           </>
         ) : (
           <>
-            <TextField
-              label={localize('com_auth_email_label')}
-              placeholder={localize('com_auth_email_placeholder')}
-              value={email}
-              onChange={(value) => {
-                setEmail(value);
-                if (errors.email) setErrors((prev) => ({ ...prev, email: undefined }));
-              }}
-              onKeyDown={handleKeyDown}
-              error={errors.email}
-            />
-
-            <PasswordInput
-              label={localize('com_auth_password_label')}
-              placeholder={localize('com_auth_password_placeholder')}
-              value={password}
-              onChange={(value) => {
-                setPassword(value);
-                if (errors.password) setErrors((prev) => ({ ...prev, password: undefined }));
-              }}
-              onKeyDown={handleKeyDown}
-              error={errors.password}
-            />
-
-            <Button
-              htmlType="button"
-              label={isSubmitting ? localize('com_auth_signing_in') : localize('com_auth_sign_in')}
-              type="primary"
-              onClick={handleLogin}
-              disabled={isSubmitting}
-            />
-
-            {ssoAvailable && (
+            {showPasswordForm && (
               <>
-                <Separator size="sm" />
+                <TextField
+                  label={localize('com_auth_email_label')}
+                  placeholder={localize('com_auth_email_placeholder')}
+                  value={email}
+                  onChange={(value) => {
+                    setEmail(value);
+                    if (errors.email) setErrors((prev) => ({ ...prev, email: undefined }));
+                  }}
+                  onKeyDown={handleKeyDown}
+                  error={errors.email}
+                />
+
+                <PasswordInput
+                  label={localize('com_auth_password_label')}
+                  placeholder={localize('com_auth_password_placeholder')}
+                  value={password}
+                  onChange={(value) => {
+                    setPassword(value);
+                    if (errors.password) setErrors((prev) => ({ ...prev, password: undefined }));
+                  }}
+                  onKeyDown={handleKeyDown}
+                  error={errors.password}
+                />
+
                 <Button
                   htmlType="button"
                   label={
-                    ssoLoading
-                      ? localize('com_auth_sso_redirecting')
-                      : localize('com_auth_sso_sign_in')
+                    isSubmitting ? localize('com_auth_signing_in') : localize('com_auth_sign_in')
                   }
-                  type="secondary"
-                  onClick={handleSsoLogin}
-                  disabled={ssoLoading}
+                  type="primary"
+                  onClick={handleLogin}
+                  disabled={isSubmitting}
                 />
+
+                {providers.length > 0 && <Separator size="sm" />}
               </>
+            )}
+
+            {providers.length > 0 && (
+              <Container orientation="vertical" gap="sm" fillWidth>
+                {providers.map(({ id, label }) => (
+                  <Button
+                    key={id}
+                    htmlType="button"
+                    label={
+                      ssoStarting === id
+                        ? localize('com_auth_sso_redirecting')
+                        : (label ?? localize(SSO_PROVIDERS[id].labelKey))
+                    }
+                    type="secondary"
+                    onClick={() => startSso(id)}
+                    disabled={ssoStarting !== null}
+                    fillWidth
+                  />
+                ))}
+              </Container>
             )}
           </>
         )}
