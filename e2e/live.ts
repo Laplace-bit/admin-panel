@@ -10,6 +10,17 @@ export const LIVE = process.env.E2E_LIVE === '1';
 export const LIVE_SKIP_REASON =
   'Needs a live LibreChat backend: set E2E_LIVE=1 and E2E_BASE_URL to a running admin panel';
 
+/**
+ * Some access and grants tests read fixtures only the mock backend serves: the
+ * Engineering group's members, five or more roles and the grant history. A
+ * fresh LibreChat seeds only the ADMIN and USER roles and none of the rest,
+ * and its admin API can neither create users nor delete audit entries, so a
+ * live run cannot stage the members or the history without leaving data
+ * behind. Those tests run against the mock only.
+ */
+export const MOCK_FIXTURES_SKIP_REASON =
+  "Reads e2e/mock-backend.mjs's fixtures, which a live LibreChat does not have";
+
 export const CONFIG_TABS = [
   'providers',
   'custom',

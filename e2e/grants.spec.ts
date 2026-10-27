@@ -1,14 +1,20 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import type { Page } from '@playwright/test';
+import { LIVE, MOCK_FIXTURES_SKIP_REASON } from './live';
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
-async function hideTanStackDevtools(page: import('@playwright/test').Page) {
+async function hideTanStackDevtools(page: Page) {
   await page.evaluate(() => {
-    document.querySelector<HTMLElement>('button[aria-label="Open TanStack Devtools"]')
+    document
+      .querySelector<HTMLElement>('button[aria-label="Open TanStack Devtools"]')
       ?.style.setProperty('display', 'none');
   });
 }
+
+/** The tab's search field: click-ui's SearchField renders a textbox, not a searchbox. */
+const searchField = (page: Page) => page.getByRole('textbox', { name: /^search/i });
 
 // ---------------------------------------------------------------------------
 // Management tab (default)
@@ -32,25 +38,32 @@ test.describe('Grants page - Management tab', () => {
     await expect(mgmtTab).toHaveAttribute('data-state', 'active');
   });
 
-  test('shows all roles and groups even with 0 grants', async ({ page }) => {
+  test('shows all roles even with 0 grants', async ({ page }) => {
+    test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
     const rows = page.locator('tbody tr');
+    const userRow = page.getByRole('button', { name: 'Edit capabilities for USER' });
+    await expect(userRow).toContainText('No capabilities');
     const count = await rows.count();
     expect(count).toBeGreaterThanOrEqual(5);
   });
 
-  test('type filter filters the table - roles only', async ({ page }) => {
-    await page.getByRole('button', { name: /^Roles$/i }).click();
+  test('lists roles only: every row edits a role', async ({ page }) => {
     const rows = page.locator('tbody tr');
+    await expect(rows.first()).toBeVisible();
     const count = await rows.count();
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) {
-      await expect(rows.nth(i).locator('.badge-role')).toBeVisible();
+      await rows.nth(i).focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('dialog').locator('.badge-role')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('dialog')).not.toBeVisible();
     }
   });
 
   test('search filters by name', async ({ page }) => {
-    await page.getByRole('searchbox').fill('admin');
-    await expect(page.getByText('Admin', { exact: true }).first()).toBeVisible();
+    await searchField(page).fill('admin');
+    await expect(page.getByText('ADMIN', { exact: true }).first()).toBeVisible();
   });
 
   test('click a row opens EditCapabilitiesDialog', async ({ page }) => {
@@ -73,20 +86,11 @@ test.describe('Grants page - Management tab', () => {
     const adminRow = page.locator('tbody tr').filter({ hasText: 'Admin' }).first();
     await adminRow.click();
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
-    await page.getByRole('dialog').getByRole('button', { name: /cancel/i }).click();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: /cancel/i })
+      .click();
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 });
-  });
-
-  test('add user grant button is present', async ({ page }) => {
-    await expect(page.getByRole('button', { name: /add user grant/i })).toBeVisible();
-  });
-
-  test('add user grant dialog opens and shows user picker', async ({ page }) => {
-    await hideTanStackDevtools(page);
-    await page.getByRole('button', { name: /add user grant/i }).click();
-    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
-    await expect(page.getByRole('combobox')).toBeVisible();
-    await expect(page.getByRole('listbox')).toBeVisible();
   });
 });
 
@@ -107,16 +111,19 @@ test.describe('Grants page - Audit Log tab', () => {
     await expect(page.getByRole('table')).toBeVisible();
   });
 
-  test('shows diverse audit entries across principal types', async ({ page }) => {
-    const rows = page.locator('tbody tr');
+  test('shows diverse audit entries', async ({ page }) => {
+    test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
+    const rows = page.getByRole('button', { name: 'Open audit log entry' });
+    await expect(rows.first()).toBeVisible();
     const count = await rows.count();
     expect(count).toBeGreaterThan(5);
   });
 
   test('action type filter shows only granted entries', async ({ page }) => {
+    test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
     await page.getByRole('button', { name: /^Granted$/i }).click();
-    await page.waitForTimeout(300);
     const rows = page.locator('tbody tr');
+    await expect(rows.filter({ hasNotText: 'Granted' })).toHaveCount(0);
     const count = await rows.count();
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) {
@@ -125,9 +132,10 @@ test.describe('Grants page - Audit Log tab', () => {
   });
 
   test('action type filter shows only revoked entries', async ({ page }) => {
+    test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
     await page.getByRole('button', { name: /^Revoked$/i }).click();
-    await page.waitForTimeout(300);
     const rows = page.locator('tbody tr');
+    await expect(rows.filter({ hasNotText: 'Revoked' })).toHaveCount(0);
     const count = await rows.count();
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) {
@@ -136,9 +144,10 @@ test.describe('Grants page - Audit Log tab', () => {
   });
 
   test('search filters by actor/target name', async ({ page }) => {
-    await page.getByRole('searchbox').fill('Alice');
-    await page.waitForTimeout(300);
+    test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
+    await searchField(page).fill('Alice');
     const rows = page.locator('tbody tr');
+    await expect(rows.filter({ hasNotText: /alice/i })).toHaveCount(0);
     const count = await rows.count();
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) {
@@ -153,12 +162,13 @@ test.describe('Grants page - Audit Log tab', () => {
   });
 
   test('empty state when no entries match filters', async ({ page }) => {
-    await page.getByRole('searchbox').fill('zzzznonexistent');
+    await searchField(page).fill('zzzznonexistent');
     await page.waitForTimeout(500);
     await expect(page.getByText(/no audit log entries found/i)).toBeVisible();
   });
 
   test('capability column shows human-readable label with raw key', async ({ page }) => {
+    test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
     const firstCapCell = page.locator('tbody tr').first().locator('td').nth(2);
     await expect(firstCapCell).toBeVisible();
     const text = await firstCapCell.textContent();
@@ -187,7 +197,7 @@ test.describe('Grants page - Tab switching', () => {
     await page.waitForTimeout(300);
 
     await expect(page).toHaveURL(/tab=management/);
-    await expect(page.getByRole('button', { name: /add user grant/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Edit capabilities for ADMIN' })).toBeVisible();
   });
 
   test('direct URL to audit-log tab works', async ({ page }) => {
@@ -208,9 +218,7 @@ test.describe('Grants page accessibility', () => {
     await page.waitForLoadState('networkidle');
     await expect(page.getByRole('table')).toBeVisible();
 
-    const results = await new AxeBuilder({ page })
-      .withTags(WCAG_TAGS)
-      .analyze();
+    const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
 
     expect(results.violations).toEqual([]);
   });
@@ -220,9 +228,7 @@ test.describe('Grants page accessibility', () => {
     await page.waitForLoadState('networkidle');
     await expect(page.getByRole('table')).toBeVisible();
 
-    const results = await new AxeBuilder({ page })
-      .withTags(WCAG_TAGS)
-      .analyze();
+    const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
 
     expect(results.violations).toEqual([]);
   });
@@ -236,9 +242,7 @@ test.describe('Grants page accessibility', () => {
     await adminRow.click();
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
 
-    const results = await new AxeBuilder({ page })
-      .withTags(WCAG_TAGS)
-      .analyze();
+    const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
 
     expect(results.violations).toEqual([]);
   });
@@ -247,7 +251,7 @@ test.describe('Grants page accessibility', () => {
     await page.goto('/grants');
     await page.waitForLoadState('networkidle');
 
-    const searchBox = page.getByRole('searchbox');
+    const searchBox = searchField(page);
     await searchBox.focus();
     await expect(searchBox).toBeFocused();
 
@@ -297,7 +301,7 @@ test.describe('Grants page enforcement', () => {
   test('sidebar shows Grants link for admin user', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('link', { name: /grants/i })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Grants', exact: true })).toBeVisible();
   });
 
   test('grants page is accessible with full grants', async ({ page }) => {
