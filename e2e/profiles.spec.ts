@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { LIVE, LIVE_SKIP_REASON } from './live';
 
 /**
@@ -11,6 +11,8 @@ const USER_EMAIL = process.env.E2E_PROFILE_USER ?? '';
 
 const unsavedBar = (page: Page) => page.getByRole('region', { name: 'Unsaved changes' });
 const contextBar = (page: Page) => page.getByRole('region', { name: 'Profile being edited' });
+const background = (locator: Locator) =>
+  locator.evaluate((element) => getComputedStyle(element).backgroundColor);
 
 async function openSelector(page: Page) {
   await page.getByRole('button', { name: /^Select scope:/ }).click();
@@ -85,6 +87,70 @@ test.describe('Configuration: profile lifecycle', () => {
     });
     await page.getByRole('button', { name: 'Delete configuration' }).click();
     await expect(page.getByRole('option', { name: new RegExp(`^${name}`) })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(contextBar(page)).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: 'Select scope: Base configuration' }),
+    ).toBeVisible();
+  });
+
+  test('create, keep and delete a user profile with the keyboard alone', async ({ page }) => {
+    await page.goto('/configuration?tab=system');
+    await page.waitForLoadState('networkidle');
+    const highlighted = page.getByRole('option', { selected: true });
+    const createSearch = page.getByPlaceholder('Search roles, groups and users…');
+
+    const search = await openSelector(page);
+    await expect(search).toBeFocused();
+    await expect(highlighted).toHaveAccessibleName(/^Base configuration/);
+    await page.getByRole('button', { name: 'Create' }).press('Enter');
+    await expect(createSearch).toBeFocused();
+    await page.getByRole('button', { name: 'Back to profiles' }).press('Enter');
+    await expect(search).toBeFocused();
+    await expect(highlighted).toHaveAccessibleName(/^Base configuration/);
+
+    await page.getByRole('button', { name: 'Create' }).press('Enter');
+    await createSearch.fill(USER_EMAIL);
+    await expect(page.getByRole('option', { name: new RegExp(USER_EMAIL) })).toBeVisible();
+    await createSearch.press('ArrowDown');
+    await expect(highlighted).toHaveAccessibleName(new RegExp(USER_EMAIL));
+    await createSearch.press('Enter');
+    const bar = contextBar(page);
+    await expect(bar).toContainText(`(${USER_EMAIL})`);
+    const name = (await bar.locator('strong').innerText()).replace(/^User: /, '').split(' (')[0];
+
+    await openSelector(page);
+    await expect(highlighted).toHaveAccessibleName(new RegExp(`^${name}`));
+    const profile = page.getByRole('option', { name: new RegExp(`^${name}`) });
+    const highlightBackground = await background(profile);
+    await page.keyboard.press('Home');
+    await expect(highlighted).toHaveAccessibleName(/^Base configuration/);
+    expect(await background(highlighted)).toBe(highlightBackground);
+    expect(await background(profile)).not.toBe(highlightBackground);
+    await page.keyboard.press('Escape');
+    await openSelector(page);
+    await expect(highlighted).toHaveAccessibleName(new RegExp(`^${name}`));
+    await page.getByRole('button', { name: 'Create' }).press('Enter');
+    await page.getByRole('button', { name: 'Back to profiles' }).press('Enter');
+    await expect(highlighted).toHaveAccessibleName(new RegExp(`^${name}`));
+    await page.keyboard.press('Enter');
+    await expect(bar).toContainText(`(${USER_EMAIL})`);
+
+    await openSelector(page);
+    const trash = page.getByRole('option', { name: new RegExp(`^Delete profile ${name}`) });
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await expect(trash).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(trash).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Delete configuration' })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('option', { name: new RegExp(`^${name}`) })).toHaveCount(0);
+    await expect(highlighted).toHaveAccessibleName(/^Base configuration/);
     await page.keyboard.press('Escape');
     await expect(contextBar(page)).toHaveCount(0);
     await expect(
