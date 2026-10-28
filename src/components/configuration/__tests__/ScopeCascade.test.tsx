@@ -1,14 +1,16 @@
+import { useMemo, useState } from 'react';
 import { PrincipalType } from 'librechat-data-provider';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider, queryOptions } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import { availableScopesOptions, fieldProfileValuesOptions } from '@/server';
+import { DIALOG_CLOSERS, expectFocusBack, openFrom } from '@/test/focus';
 import { ConfigContractContext } from '@/contexts/ContractContext';
 import { ScopeActionsProvider } from '@/contexts/ScopeContext';
-import { createServerContract } from '@/test/fixtures';
 import { ScopeOverridesDialog } from '../ScopeOverridesDialog';
+import { createServerContract } from '@/test/fixtures';
 import { ConfigRow } from '../ConfigRow';
 
 const navigate = vi.fn();
@@ -102,6 +104,36 @@ const parametersRow = (
   </ConfigRow>
 );
 
+/**
+ * The configuration page in Base, with its open tab. A profile switch lands
+ * a moment later, as the router's does, and takes the cascade link away.
+ */
+function PageInBase() {
+  const [editingScope, setEditingScope] = useState<t.ConfigScope>();
+  const actions = useMemo<t.ScopeActions>(
+    () => ({
+      selectScope: (selection) => {
+        setTimeout(
+          () => setEditingScope(selection.type === 'SCOPE' ? selection.scope : undefined),
+          50,
+        );
+      },
+      editingScope,
+    }),
+    [editingScope],
+  );
+  return (
+    <ScopeActionsProvider value={actions}>
+      <div role="tablist">
+        <button type="button" role="tab" data-state="active">
+          General
+        </button>
+      </div>
+      {parametersRow}
+    </ScopeActionsProvider>
+  );
+}
+
 describe('field cascade on a settings row', () => {
   it('in Base, says which profiles override the field and opens one', async () => {
     const { selectScope } = renderPage(parametersRow);
@@ -114,6 +146,36 @@ describe('field cascade on a settings row', () => {
     await waitFor(() => expect(screen.getByText('false')).toBeInTheDocument());
     fireEvent.click(screen.getAllByRole('button', { name: 'com_scope_cascade_open' })[0]);
     expect(selectScope).toHaveBeenCalledWith({ type: 'SCOPE', scope: role });
+  });
+
+  it.each(DIALOG_CLOSERS)(
+    'gives focus back to the link that opened the cascade on %s',
+    async (_, close) => {
+      renderPage(parametersRow);
+      const link = await screen.findByRole('button', {
+        name: 'com_scope_overridden_many(count=2)',
+      });
+      close(await openFrom(link));
+      await expectFocusBack(link);
+    },
+  );
+
+  it('puts focus on the open tab once Open profile has removed the link', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PageInBase />
+      </QueryClientProvider>,
+    );
+    const link = await screen.findByRole('button', {
+      name: 'com_scope_overridden_many(count=2)',
+    });
+    const dialog = await openFrom(link);
+    await waitFor(() => expect(within(dialog).getByText('false')).toBeInTheDocument());
+    fireEvent.click(within(dialog).getAllByRole('button', { name: 'com_scope_cascade_open' })[0]);
+    await waitFor(() => expect(link).not.toBeInTheDocument());
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'General' })).toHaveFocus());
   });
 
   it('shows nothing for a field no profile overrides', async () => {

@@ -12,6 +12,15 @@ export function toSafeRedirect(value: string | undefined): string {
   return value;
 }
 
+/**
+ * An in-app path as the browser sees it under the panel's base path
+ * (`VITE_BASE_PATH`). The router adds the base path to a `to`, but sends a
+ * `redirect({ href })` as it is.
+ */
+export function withBasePath(path: string, basePath: string | undefined): string {
+  return `${(basePath ?? '').replace(/\/$/, '')}${path}`;
+}
+
 const PRINCIPAL_TYPES: ReadonlySet<string> = new Set([
   PrincipalType.ROLE,
   PrincipalType.GROUP,

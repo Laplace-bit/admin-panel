@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type * as t from '@/types';
 import { readTenantHeader, tenantHeaders } from './tenant';
+import { SSO_PROVIDERS } from '@/constants';
 import { useAppSession } from '../session';
 import { getServerApiUrl } from './url';
 
@@ -26,9 +27,50 @@ function extractRefreshTokenCookie(response: Response): string | undefined {
 }
 
 /**
+ * Renews an SSO session through LibreChat's body-based
+ * `POST /api/admin/oauth/refresh`, which returns the rotated refresh token
+ * (Google rotates them) for the caller to keep.
+ */
+async function refreshSsoSession(
+  refreshToken: string,
+  provider: t.SsoProviderId,
+  userId: string | undefined,
+): Promise<RefreshedTokenset | undefined> {
+  if (!userId) {
+    console.warn(`[refreshAdminToken] ${provider} refresh requires user id; aborting`);
+    return undefined;
+  }
+  const response = await fetch(`${getServerApiUrl()}/api/admin/oauth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...tenantHeaders() },
+    body: JSON.stringify({ refresh_token: refreshToken, user_id: userId, provider }),
+  });
+  if (!response.ok) return undefined;
+  const parsed = refreshResponseSchema.safeParse(await response.json());
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** Renews a password session through LibreChat's cookie-based `POST /api/auth/refresh`. */
+async function refreshPasswordSession(
+  refreshToken: string,
+): Promise<RefreshedTokenset | undefined> {
+  const response = await fetch(`${getServerApiUrl()}/api/auth/refresh`, {
+    method: 'POST',
+    headers: { Cookie: `refreshToken=${refreshToken}`, ...tenantHeaders() },
+  });
+  if (!response.ok) return undefined;
+  const parsed = refreshResponseSchema.safeParse(await response.json());
+  if (!parsed.success) return undefined;
+  return { token: parsed.data.token, refreshToken: extractRefreshTokenCookie(response) };
+}
+
+/**
  * Calls the LibreChat refresh endpoint matching the session's token provider.
  *
- * - `openid` sessions hit `/api/admin/oauth/refresh` (body-based).
+ * - SSO providers LibreChat renews (`SSO_PROVIDERS[id].refreshable`: OpenID,
+ *   Google) hit `/api/admin/oauth/refresh` (body-based, with `provider`).
+ * - Other SSO providers (SAML) have no refresh path: the session ends with
+ *   its bearer, never on the password route.
  * - `librechat` sessions hit the cookie-based `/api/auth/refresh`.
  *
  * Both forward the deployment's `X-Tenant-Id` header (`tenantHeaders`) so the
@@ -43,37 +85,11 @@ export async function refreshAdminToken(
   userId: string | undefined,
 ): Promise<RefreshedTokenset | undefined> {
   try {
-    if (tokenProvider === 'openid') {
-      if (!userId) {
-        console.warn('[refreshAdminToken] openid refresh requires user id; aborting');
-        return undefined;
-      }
-      const response = await fetch(`${getServerApiUrl()}/api/admin/oauth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...tenantHeaders() },
-        body: JSON.stringify({ refresh_token: refreshToken, user_id: userId }),
-      });
-      if (!response.ok) return undefined;
-      const parsed = refreshResponseSchema.safeParse(await response.json());
-      if (!parsed.success) return undefined;
-      return {
-        token: parsed.data.token,
-        refreshToken: parsed.data.refreshToken,
-        expiresAt: parsed.data.expiresAt,
-      };
+    if (!tokenProvider || tokenProvider === 'librechat') {
+      return await refreshPasswordSession(refreshToken);
     }
-
-    const response = await fetch(`${getServerApiUrl()}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { Cookie: `refreshToken=${refreshToken}`, ...tenantHeaders() },
-    });
-    if (!response.ok) return undefined;
-    const parsed = refreshResponseSchema.safeParse(await response.json());
-    if (!parsed.success) return undefined;
-    return {
-      token: parsed.data.token,
-      refreshToken: extractRefreshTokenCookie(response),
-    };
+    if (!SSO_PROVIDERS[tokenProvider].refreshable) return undefined;
+    return await refreshSsoSession(refreshToken, tokenProvider, userId);
   } catch (error) {
     console.warn('[refreshAdminToken] Token refresh request failed:', error);
     return undefined;

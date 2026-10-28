@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Icon, Dropdown } from '@clickhouse/click-ui';
 import { Link, useRouter } from '@tanstack/react-router';
 import type * as t from '@/types';
@@ -57,6 +58,7 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
   const currentPath = router.state.location.pathname;
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const userMenuRef = useStripAriaExpanded<HTMLButtonElement>();
+  const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const visibleItems = navItems.filter((item) => {
@@ -83,6 +85,17 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
     } finally {
       setIsLoggingOut(false);
     }
+  };
+
+  /**
+   * Closes the user menu and puts focus on its button before Settings opens,
+   * as KebabMenu does: the menu's focus trap is gone before the dialog takes
+   * focus, and the dialog gives focus back to that button when it closes.
+   */
+  const openSettings = () => {
+    flushSync(() => setMenuOpen(false));
+    userMenuRef.current?.focus();
+    setSettingsOpen(true);
   };
 
   const initials = getUserInitials(user);
@@ -152,7 +165,7 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
             <div
               className={cn('flex min-w-0 items-center px-0.5', collapsed ? RAIL_ROW : 'gap-2.5')}
             >
-              <Dropdown>
+              <Dropdown open={menuOpen} onOpenChange={setMenuOpen}>
                 <Dropdown.Trigger>
                   <button
                     ref={userMenuRef}
@@ -185,7 +198,7 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
                       </div>
                     )}
                     <div className="border-t border-(--cui-color-stroke-default)" />
-                    <Dropdown.Item icon="settings" onClick={() => setSettingsOpen(true)}>
+                    <Dropdown.Item icon="settings" onSelect={openSettings}>
                       {localize('com_ui_settings')}
                     </Dropdown.Item>
                     <Dropdown.Item icon="slide-out" onClick={handleLogout} disabled={isLoggingOut}>
