@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
-import { LIVE, LIVE_SKIP_REASON, openConfigTab } from '../live';
+import { LIVE, THEMES, SELECTS, LIVE_SKIP_REASON } from '../live';
 
 /**
  * click-ui rings the keyboard-highlighted option of its Select and Dropdown
@@ -9,27 +9,6 @@ import { LIVE, LIVE_SKIP_REASON, openConfigTab } from '../live';
  * wider than the popover's clip box. Needs a live backend (see ../live.ts).
  */
 test.skip(!LIVE, LIVE_SKIP_REASON);
-
-const THEMES = ['light', 'dark'] as const;
-
-const SELECTS = [
-  {
-    name: 'the audit log Target type filter',
-    open: async (page: Page) => {
-      await page.goto('/grants?tab=audit-log');
-      await page.waitForLoadState('networkidle');
-      return page.getByRole('button', { name: 'Target type' });
-    },
-  },
-  {
-    name: 'the configuration Jump to list',
-    open: async (page: Page) => {
-      await page.setViewportSize({ width: 1024, height: 800 });
-      await openConfigTab(page, 'system');
-      return page.getByRole('button', { name: 'Jump to…' });
-    },
-  },
-] as const;
 
 /** The option's ring style and color, the app's focus color, and the ring sides that the option's clipping ancestors cut off. */
 function readRing(item: Element) {
