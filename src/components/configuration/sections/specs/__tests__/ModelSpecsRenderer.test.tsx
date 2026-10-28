@@ -105,6 +105,34 @@ function renderSpecs(
   return { onChange, ...render(wrap(ui)) };
 }
 
+/** The renderer over a spec list it keeps in state, as the configuration page does. */
+function StatefulSpecs() {
+  const [list, setList] = useState<t.ConfigValue>(SPECS);
+  return (
+    <ConfigValuesProvider value={valuesDataFixture(baseLayersFixture())}>
+      <ModelSpecsRenderer
+        fields={specFields}
+        parentPath="modelSpecs"
+        parentValue={{ list }}
+        getValue={(path, fallback) => (path === 'modelSpecs.list' ? list : fallback)}
+        onChange={(path, value) => {
+          if (path === 'modelSpecs.list') setList(value);
+        }}
+        onResetField={vi.fn()}
+        onDiscardField={vi.fn()}
+        permissions={{ canView: true, canEdit: true, canAssign: true }}
+      />
+    </ConfigValuesProvider>
+  );
+}
+
+/** The Basics and Model group headers of a spec card, in the order it shows them. */
+function basicsAndModelOrder(card: HTMLElement): string[] {
+  return [...card.querySelectorAll('button[aria-expanded]')]
+    .map((button) => button.textContent ?? '')
+    .filter((text) => /com_config_specs_group_(basics|model)$/.test(text));
+}
+
 describe('ModelSpecsRenderer', () => {
   it('lists each spec by label with its badges and endpoint · model', () => {
     renderSpecs({ list: SPECS });
@@ -124,6 +152,18 @@ describe('ModelSpecsRenderer', () => {
     const { onChange } = renderSpecs({ list: SPECS });
     fireEvent.click(screen.getByRole('button', { name: 'com_config_specs_add' }));
     expect(onChange).toHaveBeenCalledWith('modelSpecs.list', [...SPECS, {}]);
+  });
+
+  it('opens a new spec on its Label, with Basics before Model as on a saved spec', async () => {
+    render(<StatefulSpecs />);
+    fireEvent.click(screen.getByRole('button', { name: 'com_config_specs_add' }));
+    const card = document.querySelectorAll<HTMLElement>('[data-entry-card]')[SPECS.length];
+    expect(basicsAndModelOrder(card)).toEqual([
+      'com_config_specs_group_basics',
+      'com_config_specs_group_model',
+    ]);
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(document.getElementById(`modelSpecs-list-${SPECS.length}-label`)).toHaveFocus();
   });
 
   it('shows the endpoint as a choice of configured endpoints and the model as text', () => {
@@ -162,10 +202,10 @@ describe('ModelSpecsRenderer', () => {
     );
     const card = document.querySelectorAll<HTMLElement>('[data-entry-card]')[1];
     fireEvent.click(card.querySelector<HTMLButtonElement>('button[aria-expanded]')!);
-    const groups = [...card.querySelectorAll('button[aria-expanded]')]
-      .map((button) => button.textContent ?? '')
-      .filter((text) => /com_config_specs_group_(basics|model)$/.test(text));
-    expect(groups).toEqual(['com_config_specs_group_basics', 'com_config_specs_group_model']);
+    expect(basicsAndModelOrder(card)).toEqual([
+      'com_config_specs_group_basics',
+      'com_config_specs_group_model',
+    ]);
     const label = document.getElementById('modelSpecs-list-1-label') as HTMLInputElement;
     fireEvent.change(label, { target: { value: 'Claude V2' } });
     fireEvent.blur(label);
@@ -476,26 +516,7 @@ describe('ModelSpecsRenderer', () => {
   });
 
   it('keeps an expanded spec open on the spec itself when it is moved', () => {
-    function Stateful() {
-      const [list, setList] = useState<t.ConfigValue>(SPECS);
-      return (
-        <ConfigValuesProvider value={valuesDataFixture(baseLayersFixture())}>
-          <ModelSpecsRenderer
-            fields={specFields}
-            parentPath="modelSpecs"
-            parentValue={{ list }}
-            getValue={(path, fallback) => (path === 'modelSpecs.list' ? list : fallback)}
-            onChange={(path, value) => {
-              if (path === 'modelSpecs.list') setList(value);
-            }}
-            onResetField={vi.fn()}
-            onDiscardField={vi.fn()}
-            permissions={{ canView: true, canEdit: true, canAssign: true }}
-          />
-        </ConfigValuesProvider>
-      );
-    }
-    render(<Stateful />);
+    render(<StatefulSpecs />);
     const toggle = (index: number) =>
       document
         .querySelectorAll<HTMLElement>('[data-entry-card]')
