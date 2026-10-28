@@ -1,10 +1,11 @@
 import { useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Dialog, Icon } from '@clickhouse/click-ui';
 import type * as t from '@/types';
+import { useLocalize, useReturnFocus, useScopeActions } from '@/hooks';
 import { FieldProfilePopover } from './FieldProfilePopover';
-import { useLocalize, useScopeActions } from '@/hooks';
+import { activeConfigTab, formatScopeName } from '@/utils';
 import { getScopeTypeConfig } from '@/constants';
-import { formatScopeName } from '@/utils';
 
 /**
  * "Overridden for USER" / "Overridden in 3 profiles" on a settings row in
@@ -15,14 +16,21 @@ export function ProfileIndicator({ fieldPath, fieldLabel, profiles }: t.ScopeCas
   const localize = useLocalize();
   const actions = useScopeActions();
   const [open, setOpen] = useState(false);
+  const returnFocus = useReturnFocus(open, activeConfigTab);
   const types = [...new Set(profiles.map((scope) => scope.principalType))];
   const label =
     profiles.length === 1
       ? localize('com_scope_overridden_one', { name: formatScopeName(profiles[0]) })
       : localize('com_scope_overridden_many', { count: profiles.length });
 
+  /**
+   * Opening a profile leaves Base, which takes this link away once the switch
+   * lands, so focus goes to the open tab before it: the dialog closes first,
+   * as its focus trap would keep focus inside.
+   */
   const openProfile = (scope: t.ConfigScope) => {
-    setOpen(false);
+    flushSync(() => setOpen(false));
+    activeConfigTab()?.focus();
     actions?.selectScope({ type: 'SCOPE', scope });
   };
 
@@ -54,6 +62,7 @@ export function ProfileIndicator({ fieldPath, fieldLabel, profiles }: t.ScopeCas
           title={localize('com_scope_cascade_heading', { field: fieldLabel })}
           showClose
           onClose={() => setOpen(false)}
+          onCloseAutoFocus={returnFocus}
           className="modal-frost"
         >
           <FieldProfilePopover

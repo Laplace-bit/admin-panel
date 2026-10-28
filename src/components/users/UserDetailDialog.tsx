@@ -17,9 +17,9 @@ import {
   roleAssignmentsQueryOptions,
   allRolesQueryOptions,
 } from '@/server';
+import { useLocalize, useReturnFocus, useRefreshScopes } from '@/hooks';
 import { cn, errorText, notifySuccess, notifyError } from '@/utils';
 import { Avatar, TrashButton } from '@/components/shared';
-import { useLocalize, useRefreshScopes } from '@/hooks';
 import { ConfirmDialog } from '@/components/access';
 
 const CONFIRM_TITLE_KEYS: Record<t.RemoveTarget['kind'], string> = {
@@ -46,6 +46,7 @@ export function UserDetailDialog({
   const localize = useLocalize();
   const queryClient = useQueryClient();
   const refreshScopes = useRefreshScopes();
+  const returnFocus = useReturnFocus(!!user);
 
   const [view, setView] = useState<'main' | 'add'>('main');
   const [removeTarget, setRemoveTarget] = useState<t.RemoveTarget | null>(null);
@@ -213,6 +214,7 @@ export function UserDetailDialog({
           title={dialogTitle}
           showClose
           onClose={handleClose}
+          onCloseAutoFocus={returnFocus}
           className="modal-frost max-w-lg!"
         >
           {user && view === 'main' && (

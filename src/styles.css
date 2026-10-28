@@ -471,6 +471,12 @@ select:focus-visible {
   border-radius: var(--cui-radii-sm) !important;
 }
 
+/* The sidebar's collapse toggle sits flush with the panel's clipped edges and
+   the bottom of the viewport: ring it inside so the whole ring shows. */
+.sidebar-toggle:focus-visible {
+  outline-offset: calc(-1 * var(--focus-ring-width)) !important;
+}
+
 .scope-selector-dialog {
   width: min(640px, calc(100vw - 2rem));
 }
@@ -485,14 +491,14 @@ select:focus-visible {
   text-decoration: none;
 }
 
-/* The highlighted option's secondary text reads in the default color: muted text on the active background is below 4.5:1. */
+.scope-item[data-active='true'] {
+  background: var(--cui-color-background-hover);
+}
+
+/* Comes after the open-profile rule so the highlight still shows on the open profile; muted text on the active background is below 4.5:1, so it reads in the default color. */
 .scope-item[aria-selected='true'] {
   --cui-color-text-muted: var(--cui-color-text-default);
   background: var(--cui-color-background-active);
-}
-
-.scope-item[data-active='true'] {
-  background: var(--cui-color-background-hover);
 }
 
 .scope-action {

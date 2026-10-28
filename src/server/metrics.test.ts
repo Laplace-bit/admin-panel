@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { SSO_PROVIDER_IDS } from '@/constants';
 import { normalizeMetricsPath } from './metrics';
+import { ssoCallbackPath } from '@/utils';
 
 describe('normalizeMetricsPath', () => {
   it.each([
@@ -9,6 +11,18 @@ describe('normalizeMetricsPath', () => {
     ['/auth/openid/callback', '/auth/openid/callback'],
   ])('keeps known app route %s bounded as %s', (input, expected) => {
     expect(normalizeMetricsPath(input)).toBe(expected);
+  });
+
+  it.each(SSO_PROVIDER_IDS.map(ssoCallbackPath))(
+    'keeps the SSO callback %s of every provider as its own route',
+    (path) => {
+      expect(normalizeMetricsPath(path)).toBe(path);
+      expect(normalizeMetricsPath(`${path}/`)).toBe(path);
+    },
+  );
+
+  it('buckets the callback of a provider the panel does not offer as unknown', () => {
+    expect(normalizeMetricsPath('/auth/evil/callback')).toBe('unknown');
   });
 
   it.each([
