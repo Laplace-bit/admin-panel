@@ -48,6 +48,8 @@ export const CONFIG_TABS = [
   'system',
 ] as const;
 
+export const THEMES = ['light', 'dark'] as const;
+
 /** Opens a configuration tab and waits until its form has rendered real fields. */
 export async function openConfigTab(page: Page, tab: string) {
   await page.goto(`/configuration?tab=${tab}`);
@@ -55,3 +57,23 @@ export async function openConfigTab(page: Page, tab: string) {
   await expect(form).toBeVisible({ timeout: 30_000 });
   await page.waitForLoadState('networkidle');
 }
+
+/** click-ui Selects for the a11y specs: each `open` loads the Select's page and returns its trigger. */
+export const SELECTS = [
+  {
+    name: 'the audit log Target type filter',
+    open: async (page: Page) => {
+      await page.goto('/grants?tab=audit-log');
+      await page.waitForLoadState('networkidle');
+      return page.getByRole('button', { name: 'Target type' });
+    },
+  },
+  {
+    name: 'the configuration Jump to list',
+    open: async (page: Page) => {
+      await page.setViewportSize({ width: 1024, height: 800 });
+      await openConfigTab(page, 'system');
+      return page.getByRole('button', { name: 'Jump to…' });
+    },
+  },
+] as const;

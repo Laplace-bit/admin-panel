@@ -406,6 +406,13 @@ select:focus-visible {
   outline-offset: 1px !important;
 }
 
+/* An open click-ui Select keeps focus in its search input, which has zero
+   height unless the Select shows its search: ringed, it drew a line across
+   the first option. The highlighted option already shows the user's place. */
+[data-testid='select-search-input']:not([class*='search-bar_show-search']):focus-visible {
+  outline: none !important;
+}
+
 /* CUI input components draw their border on a wrapper: ring the wrapper
    instead of the bare input so the ring follows the visible field. */
 .cui-field input:focus-visible,
