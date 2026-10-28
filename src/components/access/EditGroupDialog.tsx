@@ -18,7 +18,7 @@ import {
   TrashButton,
   UserSearchInline,
 } from '@/components/shared';
-import { useLocalize, useRefreshScopes } from '@/hooks';
+import { useLocalize, useReturnFocus, useRefreshScopes } from '@/hooks';
 import { cn, notifySuccess, notifyError } from '@/utils';
 
 type EditGroupTab = 'details' | 'members';
@@ -27,6 +27,7 @@ export function EditGroupDialog({ group, canManage, onClose }: t.EditGroupDialog
   const localize = useLocalize();
   const queryClient = useQueryClient();
   const refreshScopes = useRefreshScopes();
+  const returnFocus = useReturnFocus(!!group);
   const [activeTab, setActiveTab] = useState<EditGroupTab>('details');
   const [name, setName] = useState(group?.name ?? '');
   const [description, setDescription] = useState(group?.description ?? '');
@@ -138,6 +139,7 @@ export function EditGroupDialog({ group, canManage, onClose }: t.EditGroupDialog
         title={localize('com_access_edit_group')}
         showClose
         onClose={onClose}
+        onCloseAutoFocus={returnFocus}
         className="modal-frost max-w-2xl!"
       >
         <form onSubmit={handleSubmit} className="flex flex-col gap-5">

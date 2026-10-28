@@ -1,3 +1,4 @@
+import type { DialogContentProps } from '@radix-ui/react-dialog';
 import type { ReactNode } from 'react';
 import type {
   ConfigValue,
@@ -479,6 +480,21 @@ export interface ScopeSelectorProps {
   onError?: (message: string) => void;
   /** Unsaved edits: the open profile can't be deleted until they are saved or discarded. */
   isDirty?: boolean;
+}
+
+/** The scope selector's dialog, which stays open while its views swap inside it. */
+export interface ScopeDialogProps
+  extends
+    Pick<ScopeSelectorProps, 'open' | 'onOpenChange'>,
+    Pick<DialogContentProps, 'onCloseAutoFocus'> {
+  title: string;
+  description: string;
+  /** Names the view's cmdk menu (each view mounts its own); omitted when the view has none. */
+  menu?: string;
+  /** The menu's highlighted option, when the view controls it. */
+  value?: string;
+  onValueChange?: (value: string) => void;
+  children: ReactNode;
 }
 
 export interface ScopeTriggerButtonProps {
