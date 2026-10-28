@@ -1,4 +1,5 @@
 import type { TUser } from 'librechat-data-provider';
+import type { SsoProviderId } from './auth';
 
 export type SerializableUser = Pick<TUser, 'id' | 'email' | 'name' | 'role'>;
 
@@ -6,12 +7,17 @@ export interface SessionData {
   user?: SerializableUser;
   token?: string;
   refreshToken?: string;
-  tokenProvider?: 'librechat' | 'openid';
+  /** How the admin signed in: a password (`librechat`), or the SSO provider. */
+  tokenProvider?: 'librechat' | SsoProviderId;
   /** Absolute expiry of `token` (ms epoch). Drives proactive refresh. */
   expiresAt?: number;
   lastVerified?: number;
   lastActivity?: number;
   codeVerifier?: string;
+  /** The provider an SSO sign-in started with, which its callback's session belongs to. */
+  ssoProvider?: SsoProviderId;
+  /** The in-app path an SSO sign-in started from, for its callback to return to. */
+  ssoRedirect?: string;
 }
 
 /** What the `admin-session` cookie seals: the envelope TanStack Start's former `useSession` (h3) wrote. */
@@ -76,3 +82,45 @@ export interface ListPage<T> {
   items: T[];
   total: number;
 }
+
+/** Whether a request is logged, and how many requests the current window has turned away. */
+export interface FloodGuardDecision {
+  admitted: boolean;
+  /** Requests turned away in the window that just closed; reported once, when the next one opens. */
+  suppressedInPriorWindow: number;
+}
+
+/** Caps how many requests are logged per window so a request flood does not become a log flood. */
+export interface FloodGuard {
+  admit: (nowMs: number) => FloodGuardDecision;
+}
+
+export interface MemoryWatermark {
+  /** Returns the highest threshold (in MiB) newly crossed upward, or null. */
+  check: (rssBytes: number) => number | null;
+}
+
+/** How a streamed response body settled: drained, failed, or abandoned by the client. */
+export type BodyOutcome = 'complete' | 'error' | 'aborted';
+
+/** Writes a request's `[req]` completion line with the status it was recorded under. */
+export type CompleteRequest = (statusCode: string, outcome?: BodyOutcome) => void;
+
+export interface RequestObserverOptions {
+  /** Log `[req]` arrival and completion lines (`ADMIN_PANEL_REQUEST_LOG`); metrics are recorded either way. */
+  logRequests: boolean;
+  floodGuard?: FloodGuard;
+}
+
+export interface ObserveOptions {
+  /** False leaves the body untouched, e.g. a `Bun.file` body Bun sends with sendfile and its own Content-Length. */
+  monitorBody?: boolean;
+}
+
+/** Answers a request through `getResponse`, recording it in the HTTP metrics and the request log. */
+export type ObserveRequest = (
+  req: Request,
+  pathname: string,
+  getResponse: () => Response | Promise<Response>,
+  options?: ObserveOptions,
+) => Promise<Response>;

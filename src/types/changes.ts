@@ -205,6 +205,11 @@ export interface ConfigIssue {
   entryPath?: string;
   /** Values interpolated into the localized message for `code`. */
   params?: Record<string, string | number>;
+  /**
+   * The value an enum refused (`invalid_enum_value`, outside a union's
+   * branches): text there is a member the bundled schema may not know yet.
+   */
+  received?: SchemaIssue['received'];
 }
 
 /** A location in a config document as the admin API reports it. */

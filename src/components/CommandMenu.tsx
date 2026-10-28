@@ -6,8 +6,9 @@ import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Title as DialogTitle, Description as DialogDescription } from '@radix-ui/react-dialog';
 import type * as t from '@/types';
 import { matchesQuery, searchConfigIndex } from './configuration/search';
+import { useSearchIndex, useLocalize, useReturnFocus } from '@/hooks';
 import { CONFIG_TABS } from './configuration/configMeta';
-import { useSearchIndex, useLocalize } from '@/hooks';
+import { CommandDialog } from '@/components/shared';
 import { useTheme } from '@/contexts/ThemeContext';
 
 const MAX_SETTING_HITS = 30;
@@ -20,6 +21,8 @@ export function CommandMenu({ open, onOpenChange }: t.CommandMenuProps) {
 
   const [search, setSearch] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
+  const returnFocus = useReturnFocus(open);
+  const navigatedRef = useRef(false);
 
   const handleSearchChange = useCallback((value: string) => {
     setSearch(value);
@@ -38,18 +41,37 @@ export function CommandMenu({ open, onOpenChange }: t.CommandMenuProps) {
 
   const close = useCallback(() => handleOpenChange(false), [handleOpenChange]);
 
+  /** Closes for a command that opens a page: where focus goes is then up to that page. */
+  const closeToNavigate = useCallback(() => {
+    navigatedRef.current = true;
+    close();
+  }, [close]);
+
+  /** Gives focus back to the opener, unless a command opened a page. */
+  const handleCloseAutoFocus = useCallback(
+    (event: Event) => {
+      if (navigatedRef.current) {
+        navigatedRef.current = false;
+        event.preventDefault();
+        return;
+      }
+      returnFocus(event);
+    },
+    [returnFocus],
+  );
+
   const navigateTo = useCallback(
     (path: string, searchParams?: Record<string, string>) => {
-      close();
+      closeToNavigate();
       router.navigate({ to: path, search: searchParams });
     },
-    [close, router],
+    [closeToNavigate, router],
   );
 
   /** Opens a setting on the configuration page (revealed and focused there), keeping the open profile. */
   const openSetting = useCallback(
     (item: t.ConfigSearchItem) => {
-      close();
+      closeToNavigate();
       const { pathname, search: current } = router.state.location;
       const scope =
         pathname.startsWith('/configuration') && typeof current.scope === 'string'
@@ -60,7 +82,7 @@ export function CommandMenu({ open, onOpenChange }: t.CommandMenuProps) {
         search: { tab: item.tab, field: item.path, ...(scope && { scope }) },
       });
     },
-    [close, router],
+    [closeToNavigate, router],
   );
 
   const selectTheme = useCallback(
@@ -180,9 +202,10 @@ export function CommandMenu({ open, onOpenChange }: t.CommandMenuProps) {
     staticGroups.every((group) => group.commands.length === 0);
 
   return (
-    <Command.Dialog
+    <CommandDialog
       open={open}
       onOpenChange={handleOpenChange}
+      onCloseAutoFocus={handleCloseAutoFocus}
       label={localize('com_cmdk_label')}
       shouldFilter={false}
       overlayClassName="cmdk-overlay"
@@ -252,7 +275,7 @@ export function CommandMenu({ open, onOpenChange }: t.CommandMenuProps) {
           </Command.Group>
         )}
       </Command.List>
-    </Command.Dialog>
+    </CommandDialog>
   );
 }
 

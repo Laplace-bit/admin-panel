@@ -762,6 +762,41 @@ describe('applyConfigChanges — write reports, structured issues and codes', ()
     ]);
   });
 
+  it('writes an enum value the bundled schema does not list, and shows LibreChat refusing one on its field', async () => {
+    const accepted = await applyConfigChanges(base, [
+      { op: 'set', path: 'interface.retentionMode', value: 'someday' },
+    ]);
+    expect(accepted).toMatchObject({ applied: 1, failed: [], issues: [] });
+    expect(api.current!.stored()).toEqual({ interface: { retentionMode: 'someday' } });
+
+    const refusal = { path: 'interface.retentionMode', code: 'invalid_enum_value' };
+    const refuse = (params?: t.ReportedIssueParams) => (request: { method: string }) =>
+      request.method === 'PATCH'
+        ? {
+            status: 400,
+            body: { code: 'CONFIG_OVERRIDE_INVALID', issues: [{ ...refusal, params }] },
+          }
+        : undefined;
+    const save = () =>
+      applyConfigChanges(base, [{ op: 'set', path: 'interface.retentionMode', value: 'forever' }]);
+    api.current!.setOverride(refuse());
+    const unworded = await save();
+    expect(unworded.issues).toEqual([]);
+    expect(unworded.failed).toEqual([{ ...refusal, message: 'is not one of the allowed values' }]);
+
+    api.current!.reportMeta({ features: { issueParams: true } });
+    api.current!.setOverride(refuse({ options: ['all', 'temporary'] }));
+    const worded = await save();
+    expect(worded.failed).toEqual([
+      {
+        ...refusal,
+        message: 'must be one of "all", "temporary"',
+        params: { options: '"all", "temporary"' },
+      },
+    ]);
+    expect(api.current!.stored()).toEqual({ interface: { retentionMode: 'someday' } });
+  });
+
   it('locates an issue by its segments: a dotted record key stays one key', async () => {
     const profiles = { 'us.anthropic.claude-sonnet-4-6': 'arn' };
     api.current!.reportMeta({ features: { dottedKeys: true, issueParams: true } });

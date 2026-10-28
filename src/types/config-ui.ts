@@ -1,3 +1,4 @@
+import type { DialogContentProps } from '@radix-ui/react-dialog';
 import type { ReactNode } from 'react';
 import type {
   ConfigValue,
@@ -422,6 +423,14 @@ export interface ImportValidationError {
   message: string;
 }
 
+/** A text value an enum of the bundled schema doesn't list, kept on import and named in the review. */
+export interface ImportEnumValue {
+  path: string;
+  value: string;
+  /** The values the bundled schema lists there. */
+  options: Array<string | number>;
+}
+
 export interface ImportParseResult {
   success: boolean;
   error?: string;
@@ -430,6 +439,8 @@ export interface ImportParseResult {
   appConfig: ConfigRecord | null;
   /** Leaf paths the panel's bundled schema does not describe (kept on import). */
   unknownPaths: string[];
+  /** Enum values the bundled schema doesn't list (a newer LibreChat's members, or typos), kept. */
+  unknownEnumValues: ImportEnumValue[];
   /** 1-based line and column of a YAML syntax error. */
   mark?: { line: number; column: number };
 }
@@ -469,6 +480,21 @@ export interface ScopeSelectorProps {
   onError?: (message: string) => void;
   /** Unsaved edits: the open profile can't be deleted until they are saved or discarded. */
   isDirty?: boolean;
+}
+
+/** The scope selector's dialog, which stays open while its views swap inside it. */
+export interface ScopeDialogProps
+  extends
+    Pick<ScopeSelectorProps, 'open' | 'onOpenChange'>,
+    Pick<DialogContentProps, 'onCloseAutoFocus'> {
+  title: string;
+  description: string;
+  /** Names the view's cmdk menu (each view mounts its own); omitted when the view has none. */
+  menu?: string;
+  /** The menu's highlighted option, when the view controls it. */
+  value?: string;
+  onValueChange?: (value: string) => void;
+  children: ReactNode;
 }
 
 export interface ScopeTriggerButtonProps {

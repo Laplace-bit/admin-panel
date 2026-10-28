@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { CONFIG_TABS, LIVE, LIVE_SKIP_REASON, openConfigTab } from '../live';
+import { CONFIG_TABS, LIVE, LIVE_SKIP_REASON, THEMES, openConfigTab } from '../live';
 
 /**
  * Accessibility and visual-system guardrails for the configuration page (VS-12):
@@ -15,7 +15,6 @@ const VIEWPORTS = [
   { label: '1440', width: 1440, height: 900 },
   { label: '390', width: 390, height: 844 },
 ] as const;
-const THEMES = ['light', 'dark'] as const;
 const BLOCKING_IMPACTS = new Set(['serious', 'critical']);
 const MAX_EXPAND_CLICKS = 250;
 
