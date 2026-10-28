@@ -461,6 +461,12 @@ select:focus-visible {
   border-radius: var(--cui-radii-sm) !important;
 }
 
+/* The sidebar's collapse toggle sits flush with the panel's clipped edges and
+   the bottom of the viewport: ring it inside so the whole ring shows. */
+.sidebar-toggle:focus-visible {
+  outline-offset: calc(-1 * var(--focus-ring-width)) !important;
+}
+
 .scope-selector-dialog {
   width: min(640px, calc(100vw - 2rem));
 }
