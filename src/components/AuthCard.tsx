@@ -15,7 +15,8 @@ const NO_SSO_PROVIDERS: readonly t.SsoProviderOption[] = [];
 
 /**
  * The card's width comes from Panel's `fillWidth`, not `w-full`: click-ui's
- * unlayered `.panel` width rule outranks Tailwind's layered utilities.
+ * `.panel` width rule sits in its `clickui` layer, after Tailwind's
+ * `utilities`, so it outranks `w-full`.
  */
 const AUTH_CARD_CLASS = 'auth-card max-w-md';
 

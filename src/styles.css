@@ -432,14 +432,13 @@ select:focus-visible {
   outline-offset: 1px !important;
 }
 
-/* click-ui rings the keyboard-highlighted option of a Select or Dropdown in
-   its accent (near-black in the light theme), 2px inside the option. A
-   Select's option list is as wide as its trigger, 2px wider than the
-   popover's clip box, so that ring loses its right edge. Draw it in the app
-   focus color, 4px inside. */
+/* click-ui rings the keyboard-highlighted option of a Select or Dropdown 2px
+   inside the option. A Select's option list is as wide as its trigger, 2px
+   wider than the popover's clip box, so that ring loses its right edge. Draw
+   it 4px inside. (Its color already comes from the app's focus color: this
+   unlayered sheet outranks click-ui's `clickui` layer.) */
 [data-input-modality='keyboard'] [data-highlighted] {
-  outline-color: var(--focus-ring-color) !important;
-  outline-offset: -4px !important;
+  outline-offset: -4px;
 }
 
 .auth-card {
