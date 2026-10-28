@@ -5,7 +5,9 @@ import { useLocalize } from '@/hooks';
 /**
  * Page header: title and page actions (portaled into `#header-actions-portal`).
  * When the actions don't fit beside the title they wrap onto a second row,
- * and the title truncates instead of being overlapped.
+ * and the title truncates instead of being overlapped. The search button is
+ * named by what it shows ("Search Ctrl+K"; on phones, where only its icon
+ * shows, by its screen-reader-only "Search"), so its name holds its label.
  */
 export function Header({ title, onSearchClick, children }: t.HeaderProps) {
   const localize = useLocalize();
@@ -35,14 +37,12 @@ export function Header({ title, onSearchClick, children }: t.HeaderProps) {
             <button
               type="button"
               onClick={onSearchClick}
-              aria-label={localize('com_cmdk_label')}
-              title={`${localize('com_ui_search')} (${shortcut})`}
               className="flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border border-(--cui-color-stroke-default) bg-transparent px-2.5 py-1.5 text-sm text-(--cui-color-text-muted) transition-colors hover:border-(--cui-color-stroke-intense) hover:text-(--cui-color-text-default) sm:px-3"
             >
               <span aria-hidden="true" className="flex sm:hidden">
                 <Icon name="search" size="sm" />
               </span>
-              <span className="hidden sm:inline">{localize('com_ui_search')}</span>
+              <span className="sr-only sm:not-sr-only">{localize('com_ui_search')}</span>
               <kbd className="hidden rounded border border-(--cui-color-stroke-default) bg-(--cui-color-background-secondary) px-1.5 py-0.5 text-xs font-medium text-(--cui-color-text-default) sm:inline">
                 {shortcut}
               </kbd>

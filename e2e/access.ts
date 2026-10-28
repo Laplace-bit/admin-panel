@@ -84,11 +84,15 @@ export async function renameRole(page: Page, from: string, to: string) {
   await expect(dialog).not.toBeVisible({ timeout: 5000 });
 }
 
-/** Opens the Grants page on the role's row, which reads "No capabilities" or "N capabilities". */
+/**
+ * Opens the Grants page on the role's row, which reads "No capabilities" or
+ * "N capabilities"; a click anywhere on it presses its Edit capabilities button.
+ */
 export async function grantsRow(page: Page, role: string) {
   await page.goto('/grants');
   await searchField(page).fill(role);
-  return page.getByRole('button', { name: `Edit capabilities for ${role}`, exact: true });
+  const edit = page.getByRole('button', { name: `Edit capabilities for ${role}`, exact: true });
+  return page.getByRole('row').filter({ has: edit });
 }
 
 /** Grants the role Read usage on the Grants page. */

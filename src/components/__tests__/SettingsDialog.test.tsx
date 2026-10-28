@@ -43,7 +43,7 @@ async function openSettings(): Promise<{ userMenu: HTMLElement; dialog: HTMLElem
       />
     </ThemeProvider>,
   );
-  const userMenu = screen.getByRole('button', { name: /^com_nav_user_menu/ });
+  const userMenu = screen.getByRole('button', { name: 'com_nav_user_menu_label' });
   userMenu.focus();
   fireEvent.keyDown(userMenu, { key: 'ArrowDown' });
   const item = await screen.findByRole('menuitem', { name: /com_ui_settings/ });

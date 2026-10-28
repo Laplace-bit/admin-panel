@@ -94,7 +94,9 @@ test.describe('Grants page - Management tab', () => {
   test('shows all roles even with 0 grants', async ({ page }) => {
     test.skip(LIVE, MOCK_FIXTURES_SKIP_REASON);
     const rows = page.locator('tbody tr');
-    const userRow = page.getByRole('button', { name: 'Edit capabilities for USER' });
+    const userRow = rows.filter({
+      has: page.getByRole('button', { name: 'Edit capabilities for USER' }),
+    });
     await expect(userRow).toContainText('No capabilities');
     const count = await rows.count();
     expect(count).toBeGreaterThanOrEqual(5);
@@ -106,7 +108,7 @@ test.describe('Grants page - Management tab', () => {
     const count = await rows.count();
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) {
-      await rows.nth(i).focus();
+      await rows.nth(i).getByRole('button').focus();
       await page.keyboard.press('Enter');
       await expect(page.getByRole('dialog').locator('.badge-role')).toBeVisible();
       await page.keyboard.press('Escape');
@@ -393,7 +395,9 @@ test.describe('Grants page accessibility', () => {
     expect(results.violations).toEqual([]);
   });
 
-  test('keyboard: Tab through filters and rows, Enter opens dialog', async ({ page }) => {
+  test('keyboard: Tab from the search field to the first row, Enter opens dialog', async ({
+    page,
+  }) => {
     await page.goto('/grants');
     await page.waitForLoadState('networkidle');
 
@@ -401,8 +405,8 @@ test.describe('Grants page accessibility', () => {
     await searchBox.focus();
     await expect(searchBox).toBeFocused();
 
-    const firstRow = page.locator('tbody tr').first();
-    await firstRow.focus();
+    const firstRow = page.locator('tbody tr').first().getByRole('button');
+    await page.keyboard.press('Tab');
     await expect(firstRow).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
@@ -420,22 +424,23 @@ test.describe('Grants page accessibility', () => {
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 });
 
-    await expect(firstRow).toBeFocused({ timeout: 3000 });
+    await expect(firstRow.getByRole('button')).toBeFocused({ timeout: 3000 });
   });
 
-  test('date inputs have associated labels', async ({ page }) => {
+  test('date pickers are named by their labels', async ({ page }) => {
     await page.goto('/grants?tab=audit-log');
     await page.waitForLoadState('networkidle');
 
-    const fromInput = page.locator('#audit-date-from');
-    await expect(fromInput).toBeVisible();
-    const fromLabel = page.locator('label[for="audit-date-from"]');
-    await expect(fromLabel).toBeVisible();
-
-    const toInput = page.locator('#audit-date-to');
-    await expect(toInput).toBeVisible();
-    const toLabel = page.locator('label[for="audit-date-to"]');
-    await expect(toLabel).toBeVisible();
+    for (const [id, label] of [
+      ['audit-date-from', 'From'],
+      ['audit-date-to', 'To'],
+    ]) {
+      await expect(page.locator(`label[for="${id}"]`)).toBeVisible();
+      await expect(page.getByRole('button', { name: label, exact: true })).toHaveAttribute(
+        'id',
+        id,
+      );
+    }
   });
 });
 

@@ -1,6 +1,6 @@
 import type { PrincipalType, ResourceType } from 'librechat-data-provider';
 import type { AdminAuditLogEntry } from '@librechat/data-schemas';
-import type { KeyboardEvent } from 'react';
+import type { Ref } from 'react';
 
 export interface AuditLogEntryWithDiff extends AdminAuditLogEntry {
   before?: readonly string[];
@@ -52,7 +52,25 @@ export interface GrantsPageProps {
 export interface GrantTableRowProps {
   row: PrincipalRow;
   isLast: boolean;
-  onClick: () => void;
-  onKeyDown: (e: KeyboardEvent<HTMLTableRowElement>) => void;
-  rowRef: (el: HTMLTableRowElement | null) => void;
+  /** Opens the row's Edit capabilities dialog. */
+  onOpen: () => void;
+  /** The row's button, which takes focus back when the dialog closes. */
+  buttonRef: Ref<HTMLButtonElement>;
+}
+
+export interface AuditLogTableRowProps {
+  entry: AuditLogEntryWithDiff;
+  isLast: boolean;
+  /** Opens the entry's detail drawer. */
+  onOpen: () => void;
+}
+
+export interface DateFilterProps {
+  /** The id of the picker's trigger button, which the label names. */
+  id: string;
+  label: string;
+  date?: Date;
+  /** Changes when the filters are cleared, so the picker remounts without its own selection. */
+  resetKey: number;
+  onSelectDate: (date: Date) => void;
 }

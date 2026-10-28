@@ -1,40 +1,36 @@
 import { useNavigate, useSearch } from '@tanstack/react-router';
+import { Button, Select, TextField } from '@clickhouse/click-ui';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { PrincipalType, ResourceType } from 'librechat-data-provider';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Badge, Button, DatePicker, Select, TextField } from '@clickhouse/click-ui';
 import type { AuditAction } from '@librechat/data-schemas';
 import type { AuditFilters } from '@/server';
 import type * as t from '@/types';
 import {
-  ACTION_BADGE_STATE,
   ACTION_LABEL_KEY,
-  auditSubject,
-  auditTargetConfig,
   buildEntryPermalink,
   dateToIsoDate,
-  formatTimestamp,
   isoDateToDate,
   localDayBoundaryIso,
 } from './auditLogUtils';
-import {
-  DecorativeIcon,
-  EmptyState,
-  LoadingState,
-  Pagination,
-  ScreenReaderAnnouncer,
-  SearchInput,
-} from '@/components/shared';
 import {
   AUDIT_LOG_PAGE_SIZE,
   auditLogEntryQueryOptions,
   auditLogQueryOptions,
   exportAuditLogServerFn,
 } from '@/server';
+import {
+  EmptyState,
+  LoadingState,
+  Pagination,
+  ScreenReaderAnnouncer,
+  SearchInput,
+} from '@/components/shared';
 import { useAnnouncement, useDebouncedFilter, useLocalize } from '@/hooks';
 import { AuditLogDetailDrawer } from './AuditLogDetailDrawer';
 import { AUDIT_ACTIONS, isAuditEntryId } from '@/constants';
-import { cn } from '@/utils';
+import { AuditLogTableRow } from './AuditLogTableRow';
+import { DateFilter } from './DateFilter';
 
 const TARGET_TYPE_OPTIONS: readonly t.AuditTargetType[] = [
   PrincipalType.USER,
@@ -45,49 +41,6 @@ const TARGET_TYPE_OPTIONS: readonly t.AuditTargetType[] = [
 /** Radix `Select.Item` cannot use `value=""` (Radix reserves empty string for
  * "no selection"). Use a non-empty sentinel and translate to `''` in state. */
 const TARGET_TYPE_ALL = '__all__';
-
-/**
- * Wraps a click-ui DatePicker so only the trigger button is tab-focusable.
- * click-ui renders both a PopoverTrigger button AND an inner readonly input,
- * which produces two stops in the tab order. The input has no exposed `tabIndex`
- * prop, so we reach for the DOM node and set it to -1. The class hooks the
- * CSS rule that rounds the trigger's focus outline to match the wrapper border.
- *
- * `resetKey` is the caller's signal that the inner DatePicker has been keyed
- * to remount (e.g. the Clear button bumping a nonce): the inner `<input>` is
- * replaced and the previous patch is lost, so the effect must re-run and
- * re-apply `tabIndex = -1` against the fresh DOM node.
- */
-function DatePickerCell({
-  children,
-  resetKey,
-  inputId,
-}: {
-  children: React.ReactNode;
-  resetKey?: unknown;
-  /**
-   * Stamps the click-ui-rendered `<input>` with an `id` so an external
-   * `<label htmlFor={...}>` (and the e2e WCAG check) can target it. click-ui
-   * has no `id` prop, so we apply it via DOM ref in the same effect that
-   * removes the input from the tab order.
-   */
-  inputId?: string;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    const input = node.querySelector('input');
-    if (!input) return;
-    input.tabIndex = -1;
-    if (inputId) input.id = inputId;
-  }, [resetKey, inputId]);
-  return (
-    <div ref={ref} className="audit-date-cell contents">
-      {children}
-    </div>
-  );
-}
 
 function downloadBlob(blob: Blob): void {
   const url = URL.createObjectURL(blob);
@@ -331,16 +284,6 @@ export function AuditLogTab() {
     [announce, localize],
   );
 
-  const handleRowKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTableRowElement>, id: string) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        openEntry(id);
-      }
-    },
-    [openEntry],
-  );
-
   const [exporting, setExporting] = useState(false);
 
   // Always export via the backend: the client only holds the current page (≤50
@@ -430,38 +373,26 @@ export function AuditLogTab() {
             })}
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <label htmlFor="audit-date-from" className="text-xs text-(--cui-color-text-muted)">
-              {localize('com_audit_date_from')}
-            </label>
-            <DatePickerCell resetKey={dateResetNonce} inputId="audit-date-from">
-              <DatePicker
-                key={`from-${dateResetNonce}`}
-                date={isoDateToDate(dateFrom)}
-                onSelectDate={(d) => {
-                  setDateFrom(d ? dateToIsoDate(d) : '');
-                  resetToFirstPage();
-                }}
-                placeholder={localize('com_audit_date_from')}
-              />
-            </DatePickerCell>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label htmlFor="audit-date-to" className="text-xs text-(--cui-color-text-muted)">
-              {localize('com_audit_date_to')}
-            </label>
-            <DatePickerCell resetKey={dateResetNonce} inputId="audit-date-to">
-              <DatePicker
-                key={`to-${dateResetNonce}`}
-                date={isoDateToDate(dateTo)}
-                onSelectDate={(d) => {
-                  setDateTo(d ? dateToIsoDate(d) : '');
-                  resetToFirstPage();
-                }}
-                placeholder={localize('com_audit_date_to')}
-              />
-            </DatePickerCell>
-          </div>
+          <DateFilter
+            id="audit-date-from"
+            label={localize('com_audit_date_from')}
+            date={isoDateToDate(dateFrom)}
+            resetKey={dateResetNonce}
+            onSelectDate={(d) => {
+              setDateFrom(d ? dateToIsoDate(d) : '');
+              resetToFirstPage();
+            }}
+          />
+          <DateFilter
+            id="audit-date-to"
+            label={localize('com_audit_date_to')}
+            date={isoDateToDate(dateTo)}
+            resetKey={dateResetNonce}
+            onSelectDate={(d) => {
+              setDateTo(d ? dateToIsoDate(d) : '');
+              resetToFirstPage();
+            }}
+          />
           {(dateFrom || dateTo) && (
             <Button
               htmlType="button"
@@ -585,9 +516,7 @@ export function AuditLogTab() {
                   key={entry.id}
                   entry={entry}
                   isLast={i === pageEntries.length - 1}
-                  onActivate={() => openEntry(entry.id)}
-                  onKeyDown={(e) => handleRowKeyDown(e, entry.id)}
-                  localize={localize}
+                  onOpen={() => openEntry(entry.id)}
                 />
               ))}
             {!showLoading && !isError && pageEntries.length === 0 && (
@@ -655,72 +584,5 @@ export function AuditLogTab() {
         onCopyFailed={() => announce(localize('com_a11y_copy_failed'))}
       />
     </div>
-  );
-}
-
-function AuditLogTableRow({
-  entry,
-  isLast,
-  onActivate,
-  onKeyDown,
-  localize,
-}: {
-  entry: t.AuditLogEntryWithDiff;
-  isLast: boolean;
-  onActivate: () => void;
-  onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => void;
-  localize: ReturnType<typeof useLocalize>;
-}) {
-  const targetConfig = auditTargetConfig(entry.target.type);
-  const subject = auditSubject(entry, localize);
-  return (
-    <tr
-      role="button"
-      tabIndex={0}
-      aria-label={localize('com_a11y_audit_row_open')}
-      onClick={onActivate}
-      onKeyDown={onKeyDown}
-      className={cn(
-        'cursor-pointer bg-(--cui-color-background-panel) outline-none hover:bg-(--cui-color-background-hover) focus-visible:bg-(--cui-color-background-hover) focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--cui-color-outline) focus-visible:outline-solid',
-        !isLast && 'border-b border-(--cui-color-stroke-default)',
-      )}
-    >
-      <td className="px-4 py-3">
-        <Badge
-          size="sm"
-          state={ACTION_BADGE_STATE[entry.action]}
-          text={localize(ACTION_LABEL_KEY[entry.action])}
-        />
-      </td>
-      <td className="px-4 py-3">
-        <span className="flex items-center gap-2">
-          <Badge
-            size="sm"
-            state="neutral"
-            text={
-              <span className="inline-flex items-center gap-1">
-                <DecorativeIcon name={targetConfig.icon} size="xs" />
-                {localize(targetConfig.labelKey)}
-              </span>
-            }
-          />
-          <span className="text-(--cui-color-text-default)">
-            {entry.target.name ?? entry.target.id}
-          </span>
-        </span>
-      </td>
-      <td className="px-4 py-3">
-        <div className="flex flex-col">
-          <span className="text-(--cui-color-text-default)">{subject.label}</span>
-          <span aria-hidden="true" className="text-[10px] text-(--cui-color-text-muted)">
-            {subject.value}
-          </span>
-        </div>
-      </td>
-      <td className="px-4 py-3 font-medium text-(--cui-color-text-default)">{entry.actor.name}</td>
-      <td className="px-4 py-3 text-xs whitespace-nowrap text-(--cui-color-text-muted)">
-        <time dateTime={entry.timestamp}>{formatTimestamp(entry.timestamp)}</time>
-      </td>
-    </tr>
   );
 }

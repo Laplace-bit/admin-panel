@@ -472,9 +472,12 @@ select:focus-visible {
   border-radius: var(--cui-radii-sm) !important;
 }
 
-/* The sidebar's collapse toggle sits flush with the panel's clipped edges and
-   the bottom of the viewport: ring it inside so the whole ring shows. */
-.sidebar-toggle:focus-visible {
+/* Ring these inside so the whole ring shows: the sidebar's collapse toggle
+   sits flush with the panel's clipped edges and the bottom of the viewport,
+   and a switch group's disclosure button fills its card's header beside the
+   "Select all" switch (ringed inside the card, not across its border). */
+.sidebar-toggle:focus-visible,
+.select-all-toggle:focus-visible {
   outline-offset: calc(-1 * var(--focus-ring-width)) !important;
 }
 
@@ -1156,10 +1159,14 @@ body > div:has(+ .modal-frost) {
 }
 
 /* click-ui switch: the off track meets 3:1 against the page in both themes
-   (#cccfd3 / #606060 did not). Unlayered so it wins over click-ui's sheet. */
+   (#cccfd3 / #606060 did not). The success badge (Active, Granted) takes the
+   settings success green: click-ui's light #008a0b on its tint is 4.32:1 at
+   the badge's 10px, short of AA's 4.5:1. Unlayered so it wins over
+   click-ui's sheet. */
 :root[data-cui-theme] {
   --click-switch-color-background-default: var(--settings-switch-off);
   --click-switch-color-stroke-default: var(--settings-switch-off);
+  --click-badge-opaque-color-text-success: var(--settings-success-fg);
 }
 
 /* One accent in both themes (VS-1, VS-9): click-ui's dark theme paints the

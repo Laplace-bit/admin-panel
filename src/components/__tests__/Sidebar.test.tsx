@@ -1,5 +1,3 @@
-import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -12,12 +10,12 @@ import {
 } from '@tanstack/react-router';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { localizeEn } from '@/test/coverage';
+import { ruleBody } from '@/test/styles';
 import { Sidebar } from '../Sidebar';
 
 const USER = { id: 'u1', name: 'Test Admin', email: 'admin@test.local' };
-const STYLES = join(__dirname, '..', '..', 'styles.css');
 const CLIPS = /^(truncate|overflow(-[xy])?-(hidden|clip|auto|scroll))$/;
-const AVATAR = new RegExp(`^${localizeEn('com_nav_user_menu')}`);
+const AVATAR = localizeEn('com_nav_user_menu_label', { initials: 'TA', name: USER.name });
 
 /** jsdom has no matchMedia; the theme provider (for the settings dialog) reads the system scheme with it. */
 window.matchMedia ??= (media: string): MediaQueryList => ({
@@ -87,17 +85,6 @@ function clippingAncestors(el: HTMLElement, stop: HTMLElement): string[] {
   return found;
 }
 
-/**
- * The declarations of one top-level rule of styles.css, as written: jsdom can
- * neither parse the Tailwind file nor keep `!important` on `outline-offset`.
- */
-function ruleBody(selector: string): string | undefined {
-  const source = readFileSync(STYLES, 'utf8');
-  const start = source.indexOf(`\n${selector} {`);
-  if (start < 0) return undefined;
-  return source.slice(source.indexOf('{', start) + 1, source.indexOf('}', start)).trim();
-}
-
 describe('Sidebar', () => {
   it('centers the logo, nav icons and avatar alone in rail-width rows when collapsed', async () => {
     const rows = railRows(await renderSidebar(true));
@@ -128,6 +115,17 @@ describe('Sidebar', () => {
 
       expect(clippingAncestors(avatar, aside)).toEqual([]);
       expect(avatar.parentElement?.parentElement).toHaveClass('min-w-0');
+    },
+  );
+
+  it.each([true, false])(
+    'names the avatar with the initials it shows, then whose menu it opens (collapsed: %s)',
+    async (collapsed) => {
+      await renderSidebar(collapsed);
+      const avatar = screen.getByRole('button', { name: AVATAR });
+
+      expect(AVATAR).toBe('TA, user menu for Test Admin');
+      expect(avatar).toHaveTextContent(/^TA$/);
     },
   );
 

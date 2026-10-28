@@ -98,7 +98,9 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
     setSettingsOpen(true);
   };
 
+  /** The avatar shows the initials, so its name starts with them (WCAG 2.5.3, label in name). */
   const initials = getUserInitials(user);
+  const userName = user?.name || user?.email || '';
 
   return (
     <>
@@ -171,9 +173,9 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
                     ref={userMenuRef}
                     type="button"
                     className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) transition-colors hover:border-(--cui-color-stroke-intense) hover:bg-(--cui-color-background-hover)"
-                    aria-label={`${localize('com_nav_user_menu')}, ${user?.name || user?.email || ''}`}
+                    aria-label={localize('com_nav_user_menu_label', { initials, name: userName })}
                     aria-haspopup="true"
-                    title={user?.name || user?.email || ''}
+                    title={userName}
                   >
                     <span
                       aria-hidden="true"
