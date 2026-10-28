@@ -693,7 +693,7 @@ describe('ListField', () => {
     render(
       <ListField id="l" values={['\n\nHuman:', 'STOP']} onChange={onChange} onClear={vi.fn()} />,
     );
-    expect((document.querySelector('textarea') as HTMLTextAreaElement).value).toBe('\n\nHuman:');
+    expect(screen.getByRole('textbox', { name: 'com_ui_item 1' })).toHaveValue('\n\nHuman:');
     fireEvent.click(screen.getByRole('button', { name: /com_ui_add_item/ }));
     expect(onChange).not.toHaveBeenCalled();
     const draft = screen.getByRole('textbox', { name: 'com_ui_item 3' });
@@ -726,8 +726,8 @@ describe('ListField', () => {
         keepsWhitespace
       />,
     );
-    const stop = document.querySelector('textarea') as HTMLTextAreaElement;
-    expect(stop.value).toBe('\n');
+    const stop = screen.getByRole('textbox', { name: 'com_ui_item 1' });
+    expect(stop).toHaveValue('\n');
     fireEvent.change(stop, { target: { value: '\n\n' } });
     fireEvent.blur(stop);
     expect(onChange).toHaveBeenLastCalledWith(['\n\n', 'STOP']);

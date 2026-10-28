@@ -1,15 +1,15 @@
-import path from 'node:path'
-import { defineConfig } from 'vite'
-import { devtools } from '@tanstack/devtools-vite'
-import { tanstackStart } from '@tanstack/react-start/plugin/vite'
+import path from 'node:path';
+import { defineConfig } from 'vite';
+import { devtools } from '@tanstack/devtools-vite';
+import { tanstackStart } from '@tanstack/react-start/plugin/vite';
 
-import viteReact from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
+import viteReact from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 const config = defineConfig({
   base: process.env.VITE_BASE_PATH || '/',
   plugins: [
-    devtools(),
+    devtools({ consolePiping: { enabled: false } }),
     tailwindcss(),
     ...(process.env.VITEST ? [] : [tanstackStart()]),
     viteReact(),
@@ -29,7 +29,6 @@ const config = defineConfig({
       'react/jsx-dev-runtime',
       'react-dom/client',
       'react-dom/server',
-      'styled-components',
       'dayjs',
       'dayjs/plugin/advancedFormat.js',
       'dayjs/plugin/duration.js',
@@ -95,6 +94,6 @@ const config = defineConfig({
     external: ['@playwright/test', 'playwright-core', 'playwright', '@axe-core/playwright'],
     noExternal: ['@clickhouse/click-ui'],
   },
-})
+});
 
-export default config
+export default config;
