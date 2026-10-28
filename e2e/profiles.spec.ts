@@ -50,9 +50,9 @@ test.describe('Configuration: profile lifecycle', () => {
     await expect(page.getByRole('option', { name: new RegExp(`^${name}`) })).toBeVisible();
     await page.keyboard.press('Escape');
 
-    await expect(page.locator('#section-registration [role=note]')).toContainText(
-      'applies to everyone',
-    );
+    await expect(
+      page.locator('#section-registration [role=note][data-read-only=scope]'),
+    ).toContainText('applies to everyone');
     await expect(page.locator('#section-registration input:not([disabled])')).toHaveCount(0);
 
     const startBalance = page.locator('#balance-startBalance');
