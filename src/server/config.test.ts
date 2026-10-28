@@ -1321,12 +1321,122 @@ describe('parseConfigYaml (import)', () => {
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/line \d+, column \d+/);
     expect(result.mark).toEqual({ line: expect.any(Number), column: expect.any(Number) });
+    expect(result.unknownEnumValues).toEqual([]);
   });
 
   it('reports schema validation errors', () => {
     const result = parseConfigYaml('balance:\n  startBalance: lots\n');
     expect(result.success).toBe(false);
     expect(result.validationErrors?.[0].path).toBe('balance.startBalance');
+  });
+
+  describe('enum values the bundled schema does not list (#72)', () => {
+    /** Issue #72's librechat.yaml, with a capability and a retention mode this panel's schema doesn't list. */
+    const issue72 = [
+      'version: 1.3.12',
+      'endpoints:',
+      '  bedrock:',
+      '    disabled: false',
+      '  agents:',
+      '    disableBuilder: false',
+      '    allowedProviders:',
+      '      - "bedrock"',
+      '    capabilities:',
+      "      - 'execute_code'",
+      "      - 'file_search'",
+      "      - 'web_search'",
+      "      - 'artifacts'",
+      "      - 'subagents'",
+      "      - 'actions'",
+      "      - 'context'",
+      "      - 'skills'",
+      "      - 'teleport'",
+      "      - 'tools'",
+      "      - 'chain'",
+      "      - 'ocr'",
+      'interface:',
+      '  retentionMode: someday',
+      '',
+    ].join('\n');
+
+    it('imports them as written and names each with its path and the values the panel lists', () => {
+      const result = parseConfigYaml(issue72);
+      expect(result.success).toBe(true);
+      expect(result.validationErrors).toBeUndefined();
+      const agents = (result.appConfig?.endpoints as t.ConfigRecord).agents as t.ConfigRecord;
+      expect(agents.capabilities).toEqual([
+        'execute_code',
+        'file_search',
+        'web_search',
+        'artifacts',
+        'subagents',
+        'actions',
+        'context',
+        'skills',
+        'teleport',
+        'tools',
+        'chain',
+        'ocr',
+      ]);
+      expect(result.appConfig?.interface).toEqual({ retentionMode: 'someday' });
+      expect(result.unknownEnumValues).toEqual(
+        expect.arrayContaining([
+          {
+            path: 'endpoints.agents.capabilities.8',
+            value: 'teleport',
+            options: expect.arrayContaining(['subagents', 'skills', 'tools']),
+          },
+          { path: 'interface.retentionMode', value: 'someday', options: ['all', 'temporary'] },
+        ]),
+      );
+      expect(result.unknownEnumValues).toHaveLength(2);
+    });
+
+    it('still fails on a wrong type where an enum list belongs', () => {
+      const result = parseConfigYaml('endpoints:\n  agents:\n    capabilities: tools\n');
+      expect(result.success).toBe(false);
+      expect(result.validationErrors).toEqual([
+        { path: 'endpoints.agents.capabilities', message: expect.stringMatching(/Expected array/) },
+      ]);
+    });
+
+    it('still fails on a value that is not text', () => {
+      const result = parseConfigYaml(
+        'endpoints:\n  agents:\n    capabilities:\n      - tools\n      - 5\n',
+      );
+      expect(result.success).toBe(false);
+      expect(result.validationErrors?.map((error) => error.path)).toEqual([
+        'endpoints.agents.capabilities.1',
+      ]);
+      expect(result.unknownEnumValues).toEqual([]);
+    });
+
+    it('still fails on a union none of whose branches fits, an enum branch included', () => {
+      const result = parseConfigYaml(
+        'speech:\n  speechTab:\n    speechToText:\n      engineSTT: whisper2\n',
+      );
+      expect(result.success).toBe(false);
+      expect(result.validationErrors?.map((error) => error.path)).toEqual([
+        'speech.speechTab.speechToText',
+      ]);
+    });
+
+    it('still fails when another error comes with them, naming only the other error', () => {
+      const result = parseConfigYaml(
+        'interface:\n  retentionMode: someday\nbalance:\n  startBalance: lots\n',
+      );
+      expect(result.success).toBe(false);
+      expect(result.appConfig).toBeNull();
+      expect(result.validationErrors?.map((error) => error.path)).toEqual(['balance.startBalance']);
+    });
+
+    it('still fails on an MCP block of the wrong shape beside them', () => {
+      const result = parseConfigYaml('interface:\n  retentionMode: someday\nmcpServers:\n  - a\n');
+      expect(result.success).toBe(false);
+      expect(result.validationErrors).toEqual([
+        { path: 'mcpServers', message: 'Expected object, received array' },
+      ]);
+    });
   });
 });
 

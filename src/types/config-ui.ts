@@ -423,6 +423,14 @@ export interface ImportValidationError {
   message: string;
 }
 
+/** A text value an enum of the bundled schema doesn't list, kept on import and named in the review. */
+export interface ImportEnumValue {
+  path: string;
+  value: string;
+  /** The values the bundled schema lists there. */
+  options: Array<string | number>;
+}
+
 export interface ImportParseResult {
   success: boolean;
   error?: string;
@@ -431,6 +439,8 @@ export interface ImportParseResult {
   appConfig: ConfigRecord | null;
   /** Leaf paths the panel's bundled schema does not describe (kept on import). */
   unknownPaths: string[];
+  /** Enum values the bundled schema doesn't list (a newer LibreChat's members, or typos), kept. */
+  unknownEnumValues: ImportEnumValue[];
   /** 1-based line and column of a YAML syntax error. */
   mark?: { line: number; column: number };
 }

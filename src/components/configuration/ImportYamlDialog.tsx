@@ -40,6 +40,7 @@ export function ImportYamlDialog({
   const [errorMark, setErrorMark] = useState<{ line: number; column: number }>();
   const [validationErrors, setValidationErrors] = useState<t.ImportValidationError[]>();
   const [appConfig, setAppConfig] = useState<t.ConfigRecord | null>(null);
+  const [unknownEnumValues, setUnknownEnumValues] = useState<t.ImportEnumValue[]>([]);
 
   const defaultMode: t.TargetMode = currentScope ? 'current' : 'base';
   const [mode, setMode] = useState<t.TargetMode>(defaultMode);
@@ -90,6 +91,7 @@ export function ImportYamlDialog({
     setErrorMark(undefined);
     setValidationErrors(undefined);
     setAppConfig(null);
+    setUnknownEnumValues([]);
     setMode(defaultMode);
     setKind(PrincipalType.ROLE);
     setSelected(null);
@@ -140,6 +142,7 @@ export function ImportYamlDialog({
         return;
       }
       setAppConfig(result.appConfig);
+      setUnknownEnumValues(result.unknownEnumValues);
       setStep('target');
     } catch (err) {
       setError(errorText(err, localize('com_config_import_error'), localize));
@@ -279,6 +282,7 @@ export function ImportYamlDialog({
                 isScope={target?.type !== 'base'}
                 included={selection}
                 onToggle={toggle}
+                unknownEnumValues={unknownEnumValues}
               />
             )}
           </div>
