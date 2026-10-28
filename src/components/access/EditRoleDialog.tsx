@@ -23,7 +23,7 @@ import {
   TrashButton,
   UserSearchInline,
 } from '@/components/shared';
-import { useLocalize, useRefreshScopes, useConfigFeatures } from '@/hooks';
+import { useLocalize, useReturnFocus, useRefreshScopes, useConfigFeatures } from '@/hooks';
 import { RolePermissionsPanel } from './RolePermissionsPanel';
 import { cn, notifySuccess, notifyError } from '@/utils';
 
@@ -33,6 +33,7 @@ export function EditRoleDialog({ role, canManage, onClose }: t.EditRoleDialogPro
   const localize = useLocalize();
   const queryClient = useQueryClient();
   const refreshScopes = useRefreshScopes();
+  const returnFocus = useReturnFocus(!!role);
   const [activeTab, setActiveTab] = useState<EditRoleTab>('details');
   const [name, setName] = useState(role?.name ?? '');
   const [description, setDescription] = useState(role?.description ?? '');
@@ -190,6 +191,7 @@ export function EditRoleDialog({ role, canManage, onClose }: t.EditRoleDialogPro
         title={localize('com_access_edit_role')}
         showClose
         onClose={onClose}
+        onCloseAutoFocus={returnFocus}
         className="modal-frost max-w-2xl!"
       >
         <form onSubmit={handleSubmit} className="flex flex-col gap-5">

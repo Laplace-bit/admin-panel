@@ -13,6 +13,34 @@ export const LIVE = process.env.E2E_LIVE === '1';
 export const LIVE_SKIP_REASON =
   'Needs a live LibreChat backend: set E2E_LIVE=1 and E2E_BASE_URL to a running admin panel';
 
+/**
+ * Some access and grants tests read fixtures only the mock backend serves: the
+ * Engineering group's members, five or more roles and the grant history. A
+ * fresh LibreChat seeds only the ADMIN and USER roles and none of the rest,
+ * and its admin API can neither create users nor delete audit entries, so a
+ * live run cannot stage the members or the history without leaving data
+ * behind. Those tests run against the mock only.
+ */
+export const MOCK_FIXTURES_SKIP_REASON =
+  "Reads e2e/mock-backend.mjs's fixtures, which a live LibreChat does not have";
+
+/**
+ * A live LibreChat appends an audit entry for every role, group and grant
+ * write (`role.created`, `grant.assigned`, `group.deleted`, ...) and for every
+ * audit-log export, and its admin API cannot delete audit entries. A test whose
+ * purpose is one of those writes would add history named after its role or
+ * group on every live run, so it runs against the mock only. Two kinds of live
+ * entries remain: the Groups-tab tests create and delete two groups once per
+ * run, because a fresh LibreChat has no groups to list, and every read of the
+ * audit log appends an `audit.read` entry, which names no role or group.
+ */
+export const AUDITED_WRITES_SKIP_REASON =
+  'Writes roles, groups or grants, which a live LibreChat records in an audit log its admin API cannot delete';
+
+/** The mock backend playwright.config.ts starts, and the admin token it accepts. */
+export const MOCK_BACKEND_URL = 'http://localhost:3081';
+export const MOCK_ADMIN_HEADERS = { Authorization: 'Bearer test-admin-token' };
+
 export const CONFIG_TABS = [
   'providers',
   'custom',
@@ -22,6 +50,8 @@ export const CONFIG_TABS = [
   'files',
   'system',
 ] as const;
+
+export const THEMES = ['light', 'dark'] as const;
 
 /** Opens a configuration tab and waits until its form has rendered real fields. */
 export async function openConfigTab(page: Page, tab: string) {
@@ -156,3 +186,23 @@ export function lockUserProfile(cleanup?: (page: Page) => Promise<void>) {
     }
   });
 }
+
+/** click-ui Selects for the a11y specs: each `open` loads the Select's page and returns its trigger. */
+export const SELECTS = [
+  {
+    name: 'the audit log Target type filter',
+    open: async (page: Page) => {
+      await page.goto('/grants?tab=audit-log');
+      await page.waitForLoadState('networkidle');
+      return page.getByRole('button', { name: 'Target type' });
+    },
+  },
+  {
+    name: 'the configuration Jump to list',
+    open: async (page: Page) => {
+      await page.setViewportSize({ width: 1024, height: 800 });
+      await openConfigTab(page, 'system');
+      return page.getByRole('button', { name: 'Jump to…' });
+    },
+  },
+] as const;

@@ -57,3 +57,36 @@ export const TWO_FACTOR_RESTART_CODES: ReadonlySet<t.AuthErrorCode> = new Set([
 
 /** The shape of the one-time code LibreChat's admin OAuth callback hands the panel. */
 export const EXCHANGE_CODE_PATTERN = /^[a-f0-9]{64}$/;
+
+/** The providers the panel offers, in the order of their buttons. */
+export const SSO_PROVIDER_IDS = [
+  'openid',
+  'google',
+  'saml',
+] as const satisfies readonly t.SsoProviderId[];
+
+/**
+ * How each provider is offered, started and renewed. LibreChat starts every
+ * one at `/api/admin/oauth/<id>` (`ssoStartPath`) and sends the admin back to
+ * the panel's `/auth/<id>/callback`. GitHub, Discord, Facebook and Apple have
+ * admin routes in LibreChat too, each one entry away.
+ */
+export const SSO_PROVIDERS: Readonly<Record<t.SsoProviderId, t.SsoProvider>> = {
+  openid: {
+    labelKey: 'com_auth_sso_sign_in',
+    configLabel: 'openidLabel',
+    availability: 'check',
+    refreshable: true,
+  },
+  google: {
+    labelKey: 'com_auth_sso_google',
+    availability: 'googleLoginEnabled',
+    refreshable: true,
+  },
+  saml: {
+    labelKey: 'com_auth_sso_saml',
+    configLabel: 'samlLabel',
+    availability: 'samlLoginEnabled',
+    refreshable: false,
+  },
+};
