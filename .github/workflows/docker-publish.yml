@@ -28,6 +28,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -45,8 +47,13 @@ jobs:
       - name: Check whether main's head still builds this image
         id: head
         run: |
-          git fetch --quiet --depth=1 origin main
-          if [ "$GITHUB_REF" = refs/heads/main ] && git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- . ':(exclude)e2e' ':(exclude)scripts' ':(exclude,glob)*.md' ':(exclude).env.example'; then latest=true; else latest=false; fi
+          git fetch --quiet origin main
+          context=(. ':(exclude)e2e' ':(exclude)scripts' ':(exclude,glob)*.md' ':(exclude).env.example')
+          latest=false
+          if [ "$GITHUB_REF" = refs/heads/main ] && git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            changed=$(git log --full-history --format=%H "$GITHUB_SHA..FETCH_HEAD" -- "${context[@]}") || changed=unknown
+            if [ -z "$changed" ]; then latest=true; fi
+          fi
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
 
       - name: Docker metadata
