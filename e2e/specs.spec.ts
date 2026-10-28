@@ -46,16 +46,20 @@ async function revertList(page: Page) {
   await saveAndWait(page);
 }
 
-/** Adds a spec with the four required fields (it opens on Endpoint, then Model), and returns its card. */
+/**
+ * Adds a spec with the four required fields, and returns its card. A new spec
+ * opens on Label, with Basics before the open Model group (Endpoint, Model),
+ * the order a saved spec shows.
+ */
 async function addSpec(page: Page, label: string, endpoint: string, model: string) {
   await page.getByRole('button', { name: 'Add spec' }).click();
   const card = cards(page).last();
-  await expect(card.getByLabel(/^Endpoint\*?$/)).toBeFocused();
+  await expect(card.getByLabel(/^Label\*?$/)).toBeFocused();
+  await card.getByLabel(/^Label\*?$/).fill(label);
+  await card.getByLabel(/^Label\*?$/).press('Tab');
   await card.getByLabel(/^Endpoint\*?$/).selectOption(endpoint);
   await card.getByRole('combobox', { name: /^Model\*?$/ }).fill(model);
   await card.getByRole('combobox', { name: /^Model\*?$/ }).press('Tab');
-  await card.getByLabel(/^Label\*?$/).fill(label);
-  await card.getByLabel(/^Label\*?$/).press('Tab');
   return card;
 }
 
@@ -85,7 +89,7 @@ test.describe('Model specs', () => {
     await page.waitForLoadState('networkidle');
     await expect(cards(page)).toHaveCount(before + 1);
     await expect(cards(page).last()).toContainText('E2E Spec');
-    await expect(cards(page).last()).toContainText('openAI · gpt-4o-mini');
+    await expect(cards(page).last()).toContainText('OpenAI · gpt-4o-mini');
     await revertList(page);
   });
 
