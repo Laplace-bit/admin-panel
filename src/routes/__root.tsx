@@ -16,6 +16,7 @@ import type * as t from '@/types';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import { useLocalize, useDialogCloseLabels } from '@/hooks';
 import appCss from '../styles.css?url';
+import { withBasePath } from '@/utils';
 
 const themeScript = `(function(){
   try {
@@ -47,7 +48,7 @@ export const Route = createRootRouteWithContext<t.RouterContext>()({
       },
       {
         rel: 'icon',
-        href: `${(import.meta.env.VITE_BASE_PATH || '').replace(/\/$/, '')}/favicon.ico`,
+        href: withBasePath('/favicon.ico', import.meta.env.VITE_BASE_PATH),
       },
     ],
   }),

@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type * as t from '@/types';
+import { DIALOG_CLOSERS, expectFocusBack, openFrom, renderWithOpener } from '@/test/focus';
+import { removeRoleMemberFn, updateRoleFn } from '@/server';
 import { BUNDLED_CONFIG_FEATURES } from '@/constants';
 import { EditRoleDialog } from '../EditRoleDialog';
-import { removeRoleMemberFn, updateRoleFn } from '@/server';
 
 const state = vi.hoisted(() => ({
   features: {} as Record<string, boolean>,
@@ -16,11 +17,14 @@ const state = vi.hoisted(() => ({
 vi.mock('@/hooks', async () => {
   const { useRefreshScopes } =
     await vi.importActual<typeof import('@/hooks/config/scope')>('@/hooks/config/scope');
+  const { useReturnFocus } =
+    await vi.importActual<typeof import('@/hooks/dialogs')>('@/hooks/dialogs');
   return {
     useLocalize: () => (key: string, options?: Record<string, string | number>) =>
       options ? `${key}(${Object.values(options).join(',')})` : key,
     useConfigFeatures: () => state.features,
     useRefreshScopes,
+    useReturnFocus,
   };
 });
 
@@ -145,4 +149,22 @@ describe('EditRoleDialog save', () => {
     );
     expect(queryClient.getQueryState(['envStatus'])?.isInvalidated).toBe(true);
   });
+});
+
+describe('EditRoleDialog focus', () => {
+  it.each(DIALOG_CLOSERS)(
+    'gives focus back to the role row that opened it on %s',
+    async (_, close) => {
+      const opener = renderWithOpener((open, onClose) => (
+        <EditRoleDialog
+          key={open ? role.id : undefined}
+          role={open ? role : null}
+          canManage
+          onClose={onClose}
+        />
+      ));
+      close(await openFrom(opener));
+      await expectFocusBack(opener);
+    },
+  );
 });

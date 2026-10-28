@@ -326,14 +326,35 @@ export function classifyReportedIssue(
   });
 }
 
-/** Config issues (stable codes, English messages) for schema issues relative to `basePath`. */
+/**
+ * Whether an issue is only a text value an enum of the bundled schema doesn't
+ * list: a member a newer LibreChat may know (`interface.retentionMode:
+ * ephemeral`), or a typo. Import keeps it (and names it) and a save writes
+ * it: LibreChat v0.8.8 and later refuse one they don't know, earlier
+ * releases store it as written. Any other issue blocks, a number in an enum
+ * and a union none of whose branches fits included.
+ */
+export function isUnknownEnumValue(issue: Pick<t.ConfigIssue, 'code' | 'received'>): boolean {
+  return issue.code === 'invalid_enum_value' && typeof issue.received === 'string';
+}
+
+/**
+ * Config issues (stable codes, English messages) for schema issues relative
+ * to `basePath`. An enum issue carries the value it refused (`received`),
+ * except inside a union's branch, which stays a union's failure.
+ */
 export function toConfigIssues(issues: t.SchemaIssue[], basePath: string): t.ConfigIssue[] {
+  const direct = new Set(issues);
   return expandUnionIssues(issues)
     .filter((issue) => issue.code !== 'unrecognized_keys')
     .map((issue) => {
       const { code, params } = classifySchemaIssue(issue);
       const path = [basePath, ...issue.path.map(String)].filter(Boolean).join('.');
-      return { path, code, params, message: describeIssueCode(code, params, issue.message) };
+      const message = describeIssueCode(code, params, issue.message);
+      if (code !== 'invalid_enum_value' || !direct.has(issue)) {
+        return { path, code, params, message };
+      }
+      return { path, code, params, message, received: issue.received };
     });
 }
 

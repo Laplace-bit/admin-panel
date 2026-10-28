@@ -29,10 +29,12 @@ vi.mock('@/server/utils/api', () => ({
 
 vi.mock('@/server', () => vi.importActual('@/server/groups'));
 
-vi.mock('@/hooks', () => ({
+vi.mock('@/hooks', async () => ({
   useLocalize: () => (key: string) => key,
   useCapabilities: () => ({ hasCapability: () => true }),
   useRefreshScopes: () => vi.fn(),
+  useReturnFocus: (await vi.importActual<typeof import('@/hooks/dialogs')>('@/hooks/dialogs'))
+    .useReturnFocus,
 }));
 
 /** The `search` of every groups list request sent so far. */

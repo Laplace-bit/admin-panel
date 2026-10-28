@@ -3,7 +3,7 @@ import type * as t from '@/types';
 import { AUTH_ERROR_KEYS } from '@/constants';
 import { useLocalize } from '@/hooks';
 
-/** The OpenID callback's failure: the panel's own wording of `code`, and the way back to sign-in. */
+/** An SSO callback's failure: the panel's own wording of `code`, and the way back to sign-in. */
 export function SsoError({ code }: t.SsoErrorProps) {
   const localize = useLocalize();
 
