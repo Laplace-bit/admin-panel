@@ -1,12 +1,6 @@
 /** JSON-compatible value for config entries — replaces bare `unknown` in config contexts. */
 export type ConfigValue =
-  | string
-  | number
-  | boolean
-  | null
-  | undefined
-  | ConfigValue[]
-  | { [key: string]: ConfigValue };
+  string | number | boolean | null | undefined | ConfigValue[] | { [key: string]: ConfigValue };
 
 /** Flattened config: dot-path keys to leaf values. Produced by `flattenObject()`. */
 export type FlatConfigMap = Record<string, ConfigValue>;
@@ -261,12 +255,7 @@ export interface FieldMetaGroup {
  * `allowedProviders`, a memory agent's `provider`).
  */
 export type OptionSource =
-  | 'endpoints'
-  | 'providers'
-  | `models:${string}`
-  | 'mcpServers'
-  | 'specGroups'
-  | 'tools';
+  'endpoints' | 'providers' | `models:${string}` | 'mcpServers' | 'specGroups' | 'tools';
 
 /** Options of an `OptionSource` (WS9). */
 export interface OptionSourceResult {

@@ -1699,9 +1699,12 @@ export function carryChanges(
 export function restateChanges(
   restates: Readonly<Record<string, t.CredentialRef>>,
 ): t.ConfigChange[] {
-  return Object.values(restates).map(
-    ({ path, entry, secret }): t.ConfigChange => ({ op: 'restate', path, entry, secret }),
-  );
+  return Object.values(restates).map(({ path, entry, secret }): t.ConfigChange => ({
+    op: 'restate',
+    path,
+    entry,
+    secret,
+  }));
 }
 
 /** Entries a plan gives the secrets of the entry they come from, in the record at `path`. */
@@ -1786,9 +1789,12 @@ export function toBatchOps(plan: t.WritePlan): t.ConfigBatchOp[] {
   return [
     ...unhides.map(toUnsetOp),
     ...early.map(toTombstoneOp),
-    ...plan.renames.map(
-      ({ path, from, to }): t.ConfigBatchOp => ({ op: 'rename', fieldPath: path, from, to }),
-    ),
+    ...plan.renames.map(({ path, from, to }): t.ConfigBatchOp => ({
+      op: 'rename',
+      fieldPath: path,
+      from,
+      to,
+    })),
     ...plan.sets.map(({ fieldPath, value }): t.ConfigBatchOp => ({ op: 'set', fieldPath, value })),
     ...resets.map(toUnsetOp),
     ...late.map(toTombstoneOp),

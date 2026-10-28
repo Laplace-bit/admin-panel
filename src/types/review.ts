@@ -358,12 +358,7 @@ export interface ReviewDetailValueProps {
 
 /** Why an imported key is left out (WS7). */
 export type ImportSkipReason =
-  | SkippedChange['reason']
-  | 'unsafeKey'
-  | 'reservedKey'
-  | 'dottedKey'
-  | 'dottedName'
-  | 'processMcp';
+  SkippedChange['reason'] | 'unsafeKey' | 'reservedKey' | 'dottedKey' | 'dottedName' | 'processMcp';
 
 /**
  * An imported secret an import never writes (WS7): the value is the mask

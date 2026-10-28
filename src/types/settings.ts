@@ -16,14 +16,7 @@ export interface DecorativeIconProps {
  * pending change set.
  */
 export type StateChipKind =
-  | 'default'
-  | 'yaml'
-  | 'override'
-  | 'scope'
-  | 'inherited'
-  | 'edited'
-  | 'pendingRevert'
-  | 'error';
+  'default' | 'yaml' | 'override' | 'scope' | 'inherited' | 'edited' | 'pendingRevert' | 'error';
 
 export interface StateChipProps {
   kind: StateChipKind;

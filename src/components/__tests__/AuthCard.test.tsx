@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type * as t from '@/types';
 import { adminLoginFn, adminVerify2FAFn, ssoStartFn } from '@/server';
@@ -59,22 +59,12 @@ function signIn() {
   fireEvent.click(screen.getByRole('button', { name: localizeEn('com_auth_sign_in') }));
 }
 
-/**
- * input-otp re-syncs the selection on timers it never clears (0, 10 and 50 ms
- * after each change of the code). On the fake clock they end with the test,
- * instead of firing into the torn-down jsdom of a finished file.
- */
 beforeEach(() => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
   loginFn.mockReset();
   verify2FAFn.mockReset();
   startFn.mockReset();
   navigate.mockReset();
   window.location.hash = '';
-});
-
-afterEach(() => {
-  vi.useRealTimers();
 });
 
 /** Turns of the event loop React's scheduler (on `setImmediate`) may still need for work queued before the test ends. */
@@ -173,6 +163,7 @@ describe('AuthCard sign-in failures', () => {
     expect(screen.getByLabelText(localizeEn('com_auth_2fa_code_label'))).toBeVisible();
   });
 
+  /** input-otp re-syncs the selection 0, 10 and 50 ms after each change of the code and clears those timers on unmount. */
   it('leaves no timer of the 2FA step to fire once jsdom is torn down', async () => {
     loginFn.mockResolvedValue({ error: false, requires2FA: true, tempToken: 'temp-token' });
     verify2FAFn.mockResolvedValue({ error: true, code: 'totp_invalid' });
@@ -183,7 +174,6 @@ describe('AuthCard sign-in failures', () => {
     fireEvent.change(otp, { target: { value: '123456' } });
     expect(await screen.findByText(localizeEn('com_auth_2fa_invalid_code'))).toBeVisible();
     cleanup();
-    vi.useRealTimers();
 
     await idleWithoutWindow(100);
   });

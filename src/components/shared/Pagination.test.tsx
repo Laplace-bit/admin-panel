@@ -3,7 +3,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { getPageNumbers, Pagination } from './Pagination';
 
 vi.mock('@clickhouse/click-ui', () => ({
-  Pagination: ({ currentPage, totalPages, onChange }: {
+  Pagination: ({
+    currentPage,
+    totalPages,
+    onChange,
+  }: {
     currentPage: number;
     totalPages: number;
     onChange: (page: number) => void;

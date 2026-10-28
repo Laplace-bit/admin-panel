@@ -9,10 +9,7 @@ export interface AuditLogEntryWithDiff extends AdminAuditLogEntry {
 
 /** `target.type` values the audit log can filter on: principals for grants, agents for Insights. */
 export type AuditTargetType =
-  | PrincipalType.USER
-  | PrincipalType.GROUP
-  | PrincipalType.ROLE
-  | ResourceType.AGENT;
+  PrincipalType.USER | PrincipalType.GROUP | PrincipalType.ROLE | ResourceType.AGENT;
 
 /** What an audit entry changed: a system capability, or an agent-level permission. */
 export interface AuditSubject {

@@ -52,15 +52,13 @@ function renderPreview(
 
 /** A preview of one row per imported path, and the keys it leaves out. */
 function rowsOf(paths: string[], skipped: t.ReviewSkippedRow[] = []): t.ImportPreviewState {
-  const rows = paths.map(
-    (fieldPath): t.ImportPreviewRow => ({
-      fieldPath,
-      label: fieldPath,
-      rows: [],
-      unchanged: false,
-      unknown: false,
-    }),
-  );
+  const rows = paths.map((fieldPath): t.ImportPreviewRow => ({
+    fieldPath,
+    label: fieldPath,
+    rows: [],
+    unchanged: false,
+    unknown: false,
+  }));
   return { ...previewOf(), groups: [{ key: 'all', title: 'All', rows }], skipped };
 }
 
