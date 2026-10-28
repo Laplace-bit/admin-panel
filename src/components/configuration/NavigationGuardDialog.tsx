@@ -1,6 +1,7 @@
 import { Button, Dialog } from '@clickhouse/click-ui';
 import type * as t from '@/types';
 import { useReturnFocus, useLocalize } from '@/hooks';
+import { activeConfigTab } from '@/utils';
 
 /**
  * Themed unsaved-changes prompt for leaving the page or switching profile
@@ -15,7 +16,7 @@ export function NavigationGuardDialog({
   onCancel,
 }: t.NavigationGuardDialogProps) {
   const localize = useLocalize();
-  const returnFocus = useReturnFocus(open);
+  const returnFocus = useReturnFocus(open, activeConfigTab);
 
   const title = (() => {
     if (intent.kind === 'scope') {
