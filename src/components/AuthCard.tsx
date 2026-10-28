@@ -13,6 +13,12 @@ import { useLocalize } from '@/hooks';
 
 const NO_SSO_PROVIDERS: readonly t.SsoProviderOption[] = [];
 
+/**
+ * The card's width comes from Panel's `fillWidth`, not `w-full`: click-ui's
+ * unlayered `.panel` width rule outranks Tailwind's layered utilities.
+ */
+const AUTH_CARD_CLASS = 'auth-card max-w-md';
+
 export function AuthCard({
   redirectTo = '/',
   providers = NO_SSO_PROVIDERS,
@@ -27,15 +33,18 @@ export function AuthCard({
   const [errors, setErrors] = useState<t.FieldErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [announcement, setAnnouncement] = useState('');
-  const [ssoStarting, setSsoStarting] = useState<t.SsoProviderId | null>(null);
+  const autoRedirectProvider = ssoOnly && providers.length === 1 ? providers[0].id : undefined;
+  const [ssoStarting, setSsoStarting] = useState<t.SsoProviderId | null>(
+    autoRedirectProvider ?? null,
+  );
   const [ssoFailed, setSsoFailed] = useState(false);
   const autoRedirectAttempted = useRef(false);
 
   const [tempToken, setTempToken] = useState('');
   const [totpCode, setTotpCode] = useState('');
 
-  const autoRedirectProvider = ssoOnly && providers.length === 1 ? providers[0].id : undefined;
-  const showAutoRedirect = autoRedirectProvider !== undefined && !ssoFailed;
+  const showAutoRedirect =
+    autoRedirectProvider !== undefined && ssoStarting === autoRedirectProvider && !ssoFailed;
   const showPasswordForm = !ssoOnly || providers.length === 0 || ssoFailed;
 
   useEffect(() => {
@@ -49,9 +58,17 @@ export function AuthCard({
     return () => clearTimeout(timeout);
   }, [generalError, errors.email, errors.password]);
 
+  /** A sign-in that cannot reach its provider: the password form comes back, even SSO-only. */
+  const failSso = useCallback((message: string) => {
+    setSsoStarting(null);
+    setSsoFailed(true);
+    setGeneralError(message);
+  }, []);
+
   /**
    * Sends the browser to the provider, with the page to return to kept in the
-   * admin session. A failure brings the password form back, even SSO-only.
+   * admin session. The button stays busy until the provider's page replaces
+   * this one; only a start that fails gives it back.
    */
   const startSso = useCallback(
     async (provider: t.SsoProviderId) => {
@@ -59,20 +76,29 @@ export function AuthCard({
       try {
         const result = await ssoStartFn({ data: { provider, redirectTo } });
         if (result.error) {
-          setSsoFailed(true);
-          setGeneralError(localize(AUTH_ERROR_KEYS[result.code]));
+          failSso(localize(AUTH_ERROR_KEYS[result.code]));
+          return;
+        }
+        if (!result.authUrl) {
+          failSso(localize('com_auth_sso_redirect_failed'));
           return;
         }
         window.location.href = result.authUrl;
       } catch {
-        setSsoFailed(true);
-        setGeneralError(localize('com_auth_sso_redirect_failed'));
-      } finally {
-        setSsoStarting(null);
+        failSso(localize('com_auth_sso_redirect_failed'));
       }
     },
-    [localize, redirectTo],
+    [failSso, localize, redirectTo],
   );
+
+  /** Back from the provider, the browser can restore this page as it left it, still starting SSO. */
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) setSsoStarting(null);
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
 
   useEffect(() => {
     if (!autoRedirectProvider || autoRedirectAttempted.current) return;
@@ -196,7 +222,8 @@ export function AuthCard({
   if (showAutoRedirect) {
     return (
       <Panel
-        className="auth-card w-full max-w-md"
+        className={AUTH_CARD_CLASS}
+        fillWidth
         padding="xl"
         radii="lg"
         hasBorder
@@ -216,7 +243,8 @@ export function AuthCard({
 
   return (
     <Panel
-      className="auth-card w-full max-w-md"
+      className={AUTH_CARD_CLASS}
+      fillWidth
       padding="xl"
       radii="lg"
       hasBorder
@@ -328,6 +356,7 @@ export function AuthCard({
                     }
                     type="secondary"
                     onClick={() => startSso(id)}
+                    loading={ssoStarting === id}
                     disabled={ssoStarting !== null}
                     fillWidth
                   />

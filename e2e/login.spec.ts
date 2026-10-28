@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import type { Page, Route } from '@playwright/test';
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
@@ -261,6 +262,77 @@ test.describe('SSO availability', () => {
     await expect(page.getByRole('button', { name: /^sign in$/i })).toBeVisible();
     await expect(page.locator('input:not([type="password"])')).toBeVisible();
     await expect(page.locator('input[type="password"]')).toBeVisible();
+  });
+});
+
+test.describe('Sign-in card width', () => {
+  for (const { width, card } of [
+    { width: 1440, card: 448 },
+    { width: 375, card: 343 },
+  ]) {
+    test(`is ${card}px wide at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/login');
+      await page.waitForLoadState('networkidle');
+
+      const box = await page.locator('.auth-card').boundingBox();
+      expect(box?.width).toBe(card);
+    });
+  }
+});
+
+interface LeavingButton {
+  name: string | null;
+  busy: string | null;
+  disabled: boolean;
+}
+
+/**
+ * The sign-in card's buttons 100 ms into the page's unload. Locators and `evaluate` wait out a
+ * pending navigation, so the leaving page logs them to the console instead.
+ */
+async function buttonsWhileLeaving(page: Page): Promise<LeavingButton[]> {
+  const logged = page.waitForEvent('console', (message) => message.text().startsWith('leaving '));
+  await page.evaluate(() => {
+    window.addEventListener('beforeunload', () => {
+      setTimeout(() => {
+        const buttons = [...document.querySelectorAll<HTMLButtonElement>('.auth-card button')];
+        const states = buttons.map((button) => ({
+          name: button.textContent,
+          busy: button.getAttribute('aria-busy'),
+          disabled: button.disabled,
+        }));
+        console.log(`leaving ${JSON.stringify(states)}`);
+      }, 100);
+    });
+  });
+  return logged.then((message) => JSON.parse(message.text().slice('leaving '.length)));
+}
+
+test.describe('SSO button while the browser leaves for the provider', () => {
+  test('stays busy until the provider answers', async ({ page }) => {
+    const held: Route[] = [];
+    await page.route('http://localhost:3081/api/admin/oauth/google?*', (route) => {
+      held.push(route);
+    });
+    await page.goto('/login');
+    await page.waitForLoadState('networkidle');
+    const leaving = buttonsWhileLeaving(page);
+
+    await page.getByRole('button', { name: /continue with google/i }).click();
+
+    const buttons = await leaving;
+    expect(buttons).toHaveLength(3);
+    expect(buttons).toEqual(
+      expect.arrayContaining([
+        { name: 'Sign in', busy: null, disabled: false },
+        { name: 'Redirecting…', busy: 'true', disabled: true },
+        { name: 'Continue with OpenID', busy: null, disabled: true },
+      ]),
+    );
+    expect(held).toHaveLength(1);
+    await held[0].fulfill({ contentType: 'text/html', body: '<p>Provider page</p>' });
+    await expect(page.getByText('Provider page')).toBeVisible();
   });
 });
 
