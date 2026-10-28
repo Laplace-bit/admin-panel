@@ -5,15 +5,16 @@ import type { AdminUserSearchResult } from '@librechat/data-schemas';
 import type * as t from '@/types';
 import { addRoleMemberFn, createRoleFn, updateRolePermissionsFn } from '@/server';
 import { SelectedMemberList, UserSearchInline } from '@/components/shared';
+import { useLocalize, useReturnFocus, useRefreshScopes } from '@/hooks';
 import { RolePermissionsPanel } from './RolePermissionsPanel';
 import { cn, notifySuccess, notifyError } from '@/utils';
-import { useLocalize, useRefreshScopes } from '@/hooks';
 import { defaultPermissions } from '@/constants';
 
 export function CreateRoleDialog({ open, onClose }: t.CreateRoleDialogProps) {
   const localize = useLocalize();
   const queryClient = useQueryClient();
   const refreshScopes = useRefreshScopes();
+  const returnFocus = useReturnFocus(open);
   const [activeTab, setActiveTab] = useState<t.CreateRoleTab>('details');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -90,6 +91,7 @@ export function CreateRoleDialog({ open, onClose }: t.CreateRoleDialogProps) {
         title={localize('com_access_create_role')}
         showClose
         onClose={resetAndClose}
+        onCloseAutoFocus={returnFocus}
         className="modal-frost max-w-2xl!"
       >
         <form onSubmit={handleSubmit} className="flex flex-col gap-5">
