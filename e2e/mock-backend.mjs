@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { SystemCapabilities } from '@librechat/data-schemas/capabilities';
 
 const parsedPort = parseInt(process.env.MOCK_BACKEND_PORT || '3081', 10);
 const PORT = Number.isNaN(parsedPort) ? 3081 : parsedPort;
@@ -27,6 +28,17 @@ const FEDERATED_LOGIN_BLOCKED = [
     message: 'Sign in with your identity provider to continue.',
   },
 ];
+
+const ADMIN_TOKENS = new Set(['test-admin-token', 'test-admin-token-2fa']);
+
+/** The refusal LibreChat answers a request without a valid admin token with, or `null`. */
+function authFailure(req) {
+  const auth = req?.headers?.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return [401, { error: 'Authentication required' }];
+  if (!ADMIN_TOKENS.has(auth.slice('Bearer '.length)))
+    return [401, { error: 'Invalid or expired token' }];
+  return null;
+}
 
 const handlers = {
   'POST /api/admin/login/local': (body, req) => {
@@ -76,11 +88,8 @@ const handlers = {
     ];
   },
   'GET /api/admin/verify': (_body, req) => {
-    const auth = req?.headers?.authorization;
-    if (!auth || !auth.startsWith('Bearer ')) return [401, { error: 'Authentication required' }];
-    const token = auth.slice('Bearer '.length);
-    if (token !== 'test-admin-token' && token !== 'test-admin-token-2fa')
-      return [401, { error: 'Invalid or expired token' }];
+    const refused = authFailure(req);
+    if (refused) return refused;
     return [
       200,
       {
@@ -93,6 +102,8 @@ const handlers = {
       },
     ];
   },
+  'GET /api/admin/grants/effective': (_body, req) =>
+    authFailure(req) ?? [200, { capabilities: Object.values(SystemCapabilities) }],
   'GET /api/admin/oauth/openid/check': () => [200, { message: 'OpenID check successful' }],
 };
 
