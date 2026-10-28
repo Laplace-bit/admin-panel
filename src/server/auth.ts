@@ -1,15 +1,17 @@
 import { z } from 'zod';
 import crypto from 'crypto';
 import { redirect } from '@tanstack/react-router';
-import { queryOptions } from '@tanstack/react-query';
 import { createServerFn } from '@tanstack/react-start';
 import { getRequestHeader } from '@tanstack/react-start/server';
 import type * as t from '@/types';
 import {
+  SSO_PROVIDERS,
+  SSO_PROVIDER_IDS,
   EXCHANGE_CODE_PATTERN,
   TENANT_CONTEXT_REQUIRED_CODE,
   TWO_FACTOR_FEDERATED_LOGIN_BLOCKED_CODE,
 } from '@/constants';
+import { offeredSsoProviders, toSafeRedirect, ssoStartPath } from '@/utils';
 import { getApiBaseUrl, getServerApiUrl } from './utils/url';
 import { refreshAdminTokenDeduped } from './utils/refresh';
 import { buildOAuthExchangePayload } from './utils/oauth';
@@ -393,58 +395,125 @@ export const getCurrentUserFn = createServerFn({ method: 'GET' }).handler(async 
   }
 });
 
-/** Shared queryOptions so consumers deduplicate the OpenID availability check. */
-export const openIdCheckOptions = queryOptions({
-  queryKey: ['openIdCheck'],
-  queryFn: () => checkOpenIdFn(),
-  staleTime: 60_000,
-});
-
-export const checkOpenIdFn = createServerFn({ method: 'GET' }).handler(async () => {
-  if (process.env.ADMIN_SSO_ENABLED === 'false') {
-    return { available: false, ssoOnly: false };
+/** LibreChat's `GET /api/config`, read with the request's tenant; `undefined` when it cannot be read. */
+async function fetchSsoStartupConfig(): Promise<t.SsoStartupConfig | undefined> {
+  const configUrl = `${getServerApiUrl()}/api/config`;
+  try {
+    const response = await fetch(configUrl, { headers: tenantHeaders() });
+    if (!response.ok) {
+      console.warn('[ssoProvidersFn] Startup config request failed:', response.status, configUrl);
+      return undefined;
+    }
+    const config: t.SsoStartupConfig | null = await response.json().catch(() => null);
+    return config && typeof config === 'object' ? config : undefined;
+  } catch (error) {
+    console.warn('[ssoProvidersFn] Startup config request failed:', configUrl, error);
+    return undefined;
   }
-  const checkUrl = `${getServerApiUrl()}/api/admin/oauth/openid/check`;
+}
+
+/**
+ * Whether the provider's `/check` route answers: LibreChat's OpenID route
+ * does only once its client initialised, which `GET /api/config` cannot tell.
+ */
+async function checkSsoProvider(id: t.SsoProviderId): Promise<boolean> {
+  const checkUrl = `${getServerApiUrl()}${ssoStartPath(id)}/check`;
   try {
     const response = await fetch(checkUrl, { headers: tenantHeaders() });
     if (!response.ok) {
-      console.warn('[checkOpenIdFn] OpenID check failed:', response.status, checkUrl);
-      return { available: false, ssoOnly: false };
+      console.warn(`[ssoProvidersFn] ${id} check failed:`, response.status, checkUrl);
     }
-    const ssoOnly = process.env.ADMIN_SSO_ONLY === 'true';
-    return { available: true, ssoOnly };
+    return response.ok;
   } catch (error) {
-    console.warn('[checkOpenIdFn] OpenID check request failed:', checkUrl, error);
-    return { available: false, ssoOnly: false };
+    console.warn(`[ssoProvidersFn] ${id} check request failed:`, checkUrl, error);
+    return false;
   }
-});
+}
 
-export const openidLoginFn = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<t.SsoStartResult> => {
+const CHECKED_SSO_PROVIDERS = SSO_PROVIDER_IDS.filter(
+  (id) => SSO_PROVIDERS[id].availability === 'check',
+);
+
+/** The providers whose `/check` route answered. */
+async function checkSsoProviders(): Promise<Set<t.SsoProviderId>> {
+  const answered = await Promise.all(CHECKED_SSO_PROVIDERS.map(checkSsoProvider));
+  return new Set(CHECKED_SSO_PROVIDERS.filter((_id, index) => answered[index]));
+}
+
+/**
+ * The SSO providers LibreChat offers this request's tenant, and whether the
+ * sign-in page is SSO-only. `ADMIN_SSO_ENABLED=false` offers none and asks
+ * LibreChat nothing; `ADMIN_SSO_ONLY` holds only while one is offered, so a
+ * deployment none resolves for keeps its password form.
+ */
+export const ssoProvidersFn = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<t.SsoProviders> => {
+    if (process.env.ADMIN_SSO_ENABLED === 'false') {
+      return { providers: [], ssoOnly: false };
+    }
+    const [config, checked] = await Promise.all([fetchSsoStartupConfig(), checkSsoProviders()]);
+    const providers = offeredSsoProviders(config, checked);
+    return { providers, ssoOnly: providers.length > 0 && process.env.ADMIN_SSO_ONLY === 'true' };
+  },
+);
+
+/** The longest in-app path an SSO sign-in carries through the admin session; a longer one returns to `/`. */
+const MAX_SSO_REDIRECT_LENGTH = 2048;
+
+/** The in-app path to return to after SSO: a safe one within the length limit, else `/`. */
+function ssoRedirectOf(redirectTo: string | undefined): string {
+  return redirectTo && redirectTo.length <= MAX_SSO_REDIRECT_LENGTH
+    ? toSafeRedirect(redirectTo)
+    : '/';
+}
+
+/**
+ * Starts an SSO sign-in: the PKCE verifier and the in-app path to return to
+ * stay in the admin session, and the browser goes to LibreChat's route of the
+ * provider with only the challenge (LibreChat strips any `redirectTo`).
+ */
+export const ssoStartFn = createServerFn({ method: 'POST' })
+  .validator(
+    z.object({
+      provider: z.enum(SSO_PROVIDER_IDS),
+      redirectTo: z.string().optional(),
+    }),
+  )
+  .handler(async ({ data }): Promise<t.SsoStartResult> => {
     try {
-      const baseUrl = getApiBaseUrl();
-      const authUrl = new URL(`${baseUrl}/api/admin/oauth/openid`);
+      const authUrl = new URL(`${getApiBaseUrl()}${ssoStartPath(data.provider)}`);
 
       const codeVerifier = crypto.randomBytes(32).toString('hex');
       const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('hex');
       authUrl.searchParams.set('code_challenge', codeChallenge);
 
       const session = await useAppSession();
-      await session.update({ codeVerifier });
+      await session.update({
+        codeVerifier,
+        ssoProvider: data.provider,
+        ssoRedirect: ssoRedirectOf(data.redirectTo),
+      });
 
       return { error: false, authUrl: authUrl.toString() };
     } catch (error) {
-      console.error('OpenID login initiation error:', error);
+      console.error(`[ssoStartFn] ${data.provider} sign-in initiation error:`, error);
       return failure('sso_start_failed');
     }
-  },
-);
+  });
 
+/**
+ * Exchanges LibreChat's one-time code for an admin session. The session is the
+ * provider's that sign-in started with: the callback's `provider` stands in only
+ * for a sign-in started before the panel kept it.
+ */
 export const oauthExchangeFn = createServerFn({ method: 'POST' })
   .validator(
-    z.object({ code: z.string().regex(EXCHANGE_CODE_PATTERN, 'Invalid exchange code format') }),
+    z.object({
+      code: z.string().regex(EXCHANGE_CODE_PATTERN, 'Invalid exchange code format'),
+      provider: z.enum(SSO_PROVIDER_IDS),
+    }),
   )
-  .handler(async ({ data }): Promise<t.AuthResult> => {
+  .handler(async ({ data }): Promise<t.SsoExchangeResult> => {
     try {
       const requestOrigin = getRequestOrigin();
       const headers: Record<string, string> = {
@@ -480,19 +549,22 @@ export const oauthExchangeFn = createServerFn({ method: 'POST' })
       }
 
       const exchangeData = (await response.json()) as t.OAuthExchangeResponse;
+      const redirectTo = toSafeRedirect(session.data.ssoRedirect);
       const now = Date.now();
       await session.update({
         user: exchangeData.user,
         token: exchangeData.token,
         refreshToken: exchangeData.refreshToken ?? extractCookieValue(response, 'refreshToken'),
-        tokenProvider: 'openid',
+        tokenProvider: session.data.ssoProvider ?? data.provider,
         expiresAt: exchangeData.expiresAt,
         lastVerified: now,
         lastActivity: now,
         codeVerifier: undefined,
+        ssoProvider: undefined,
+        ssoRedirect: undefined,
       });
 
-      return { error: false, user: exchangeData.user };
+      return { error: false, user: exchangeData.user, redirectTo };
     } catch (error) {
       console.error('OAuth exchange error:', error);
       return failure('sso_exchange_failed');

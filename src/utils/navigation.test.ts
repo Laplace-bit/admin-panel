@@ -2,12 +2,26 @@ import { describe, it, expect } from 'vitest';
 import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
 import {
+  withBasePath,
   toSafeRedirect,
   scopeParamKey,
   parseScopeParam,
   findScopeByParam,
   formatScopeParam,
 } from './navigation';
+
+describe('withBasePath', () => {
+  it('puts the base path before an in-app path and its search string', () => {
+    expect(withBasePath('/grants?tab=audit', '/admin')).toBe('/admin/grants?tab=audit');
+    expect(withBasePath('/', '/admin/')).toBe('/admin/');
+  });
+
+  it('leaves the path as it is without a base path', () => {
+    for (const basePath of [undefined, '', '/']) {
+      expect(withBasePath('/configuration', basePath)).toBe('/configuration');
+    }
+  });
+});
 
 describe('toSafeRedirect', () => {
   it('keeps in-app paths with their search string', () => {

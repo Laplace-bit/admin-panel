@@ -1,10 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { PrincipalType, SystemRoles, roleDefaults } from 'librechat-data-provider';
 import { SystemCapabilities } from '@librechat/data-schemas/capabilities';
 
 const parsedPort = parseInt(process.env.MOCK_BACKEND_PORT || '3081', 10);
 const PORT = Number.isNaN(parsedPort) ? 3081 : parsedPort;
+const ADMIN_PANEL_URL = process.env.MOCK_ADMIN_PANEL_URL || 'http://localhost:3000';
 
 function parseBody(req) {
   return new Promise((resolve) => {
@@ -272,6 +273,22 @@ function auditFilter(query) {
 
 const VALID_TEMP_TOKEN = 'valid-2fa-temp-token-for-testing';
 
+/** The PKCE challenge each one-time exchange code was issued for, as LibreChat binds them. */
+const exchangeChallenges = new Map();
+
+/**
+ * LibreChat's admin OAuth start route, with the identity provider signing the
+ * admin in at once: back to the panel's callback with a one-time code.
+ */
+function startAdminOAuth(provider) {
+  return (_body, req) => {
+    const challenge = new URL(req.url, 'http://mock').searchParams.get('code_challenge');
+    const code = randomBytes(32).toString('hex');
+    exchangeChallenges.set(code, challenge);
+    return [302, {}, { Location: `${ADMIN_PANEL_URL}/auth/${provider}/callback?code=${code}` }];
+  };
+}
+
 const FEDERATED_LOGIN_BLOCKED = [
   403,
   {
@@ -301,7 +318,8 @@ const admin =
 // Keyed `METHOD /path`. A `:param` segment matches any one segment and the
 // first match in declaration order wins, so literal paths come before
 // parameterized ones. Handlers take (body, req, params, query) and return
-// [status, body] for JSON, or [status, text, headers] to send the text as is.
+// [status, body, headers?]: a text body is sent as is with those headers,
+// anything else as JSON with them (a redirect's Location, for example).
 
 const handlers = {
   'POST /api/admin/login/local': (body, req) => {
@@ -613,6 +631,41 @@ const handlers = {
     const entry = auditLog.find((candidate) => candidate.id === id);
     return entry ? [200, { entry }] : [404, { error: 'Not found' }];
   }),
+  'GET /api/config': () => [
+    200,
+    {
+      socialLoginEnabled: true,
+      socialLogins: ['google', 'openid', 'saml'],
+      googleLoginEnabled: true,
+      openidLoginEnabled: true,
+      openidLabel: 'Continue with OpenID',
+      samlLoginEnabled: false,
+    },
+  ],
+  'GET /api/admin/oauth/openid': startAdminOAuth('openid'),
+  'GET /api/admin/oauth/google': startAdminOAuth('google'),
+  'POST /api/admin/oauth/exchange': (body) => {
+    const challenge = exchangeChallenges.get(body.code);
+    exchangeChallenges.delete(body.code);
+    const verified =
+      typeof challenge === 'string' &&
+      typeof body.code_verifier === 'string' &&
+      createHash('sha256').update(body.code_verifier).digest('hex') === challenge;
+    if (!verified)
+      return [
+        401,
+        { error: 'Invalid or expired authorization code', error_code: 'INVALID_OR_EXPIRED_CODE' },
+      ];
+    return [
+      200,
+      {
+        token: 'test-admin-token',
+        refreshToken: 'test-refresh-token',
+        expiresAt: Date.now() + 15 * 60 * 1000,
+        user: { id: 'u_test', email: 'admin@test.com', name: 'Test Admin', role: 'ADMIN' },
+      },
+    ];
+  },
 };
 
 /** A percent-decoded path segment, or `null` when it is malformed. */
@@ -649,19 +702,19 @@ const server = createServer(async (req, res) => {
 
   let status = 404;
   let body = { error: 'not found' };
-  let headers;
+  let headers = {};
 
   if (matched) {
     const reqBody = req.method === 'GET' ? {} : await parseBody(req);
-    [status, body, headers] = matched.handler(reqBody, req, matched.params, url.searchParams);
+    [status, body, headers = {}] = matched.handler(reqBody, req, matched.params, url.searchParams);
   }
 
-  if (headers) {
+  if (typeof body === 'string') {
     res.writeHead(status, headers);
     res.end(body);
     return;
   }
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.writeHead(status, { 'Content-Type': 'application/json', ...headers });
   res.end(JSON.stringify(body));
 });
 
