@@ -17,7 +17,7 @@ import { Route as AppGrantsRouteImport } from './routes/_app/grants'
 import { Route as AppHelpRouteImport } from './routes/_app/help'
 import { Route as AppUsersRouteImport } from './routes/_app/users'
 import { Route as AppConfigurationIndexRouteImport } from './routes/_app/configuration/index'
-import { Route as AuthOpenidCallbackRouteImport } from './routes/auth/openid/callback'
+import { Route as AuthProviderCallbackRouteImport } from './routes/auth/$provider/callback'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -58,9 +58,9 @@ const AppConfigurationIndexRoute = AppConfigurationIndexRouteImport.update({
   path: '/configuration/',
   getParentRoute: () => AppRoute,
 } as any)
-const AuthOpenidCallbackRoute = AuthOpenidCallbackRouteImport.update({
-  id: '/auth/openid/callback',
-  path: '/auth/openid/callback',
+const AuthProviderCallbackRoute = AuthProviderCallbackRouteImport.update({
+  id: '/auth/$provider/callback',
+  path: '/auth/$provider/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -71,7 +71,7 @@ export interface FileRoutesByFullPath {
   '/grants': typeof AppGrantsRoute
   '/help': typeof AppHelpRoute
   '/users': typeof AppUsersRoute
-  '/auth/openid/callback': typeof AuthOpenidCallbackRoute
+  '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/configuration/': typeof AppConfigurationIndexRoute
 }
 export interface FileRoutesByTo {
@@ -81,7 +81,7 @@ export interface FileRoutesByTo {
   '/help': typeof AppHelpRoute
   '/users': typeof AppUsersRoute
   '/': typeof AppIndexRoute
-  '/auth/openid/callback': typeof AuthOpenidCallbackRoute
+  '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/configuration': typeof AppConfigurationIndexRoute
 }
 export interface FileRoutesById {
@@ -93,7 +93,7 @@ export interface FileRoutesById {
   '/_app/help': typeof AppHelpRoute
   '/_app/users': typeof AppUsersRoute
   '/_app/': typeof AppIndexRoute
-  '/auth/openid/callback': typeof AuthOpenidCallbackRoute
+  '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/_app/configuration/': typeof AppConfigurationIndexRoute
 }
 export interface FileRouteTypes {
@@ -105,7 +105,7 @@ export interface FileRouteTypes {
     | '/grants'
     | '/help'
     | '/users'
-    | '/auth/openid/callback'
+    | '/auth/$provider/callback'
     | '/configuration/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -115,7 +115,7 @@ export interface FileRouteTypes {
     | '/help'
     | '/users'
     | '/'
-    | '/auth/openid/callback'
+    | '/auth/$provider/callback'
     | '/configuration'
   id:
     | '__root__'
@@ -126,14 +126,14 @@ export interface FileRouteTypes {
     | '/_app/help'
     | '/_app/users'
     | '/_app/'
-    | '/auth/openid/callback'
+    | '/auth/$provider/callback'
     | '/_app/configuration/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
-  AuthOpenidCallbackRoute: typeof AuthOpenidCallbackRoute
+  AuthProviderCallbackRoute: typeof AuthProviderCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -194,11 +194,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppConfigurationIndexRouteImport
       parentRoute: typeof AppRoute
     }
-    '/auth/openid/callback': {
-      id: '/auth/openid/callback'
-      path: '/auth/openid/callback'
-      fullPath: '/auth/openid/callback'
-      preLoaderRoute: typeof AuthOpenidCallbackRouteImport
+    '/auth/$provider/callback': {
+      id: '/auth/$provider/callback'
+      path: '/auth/$provider/callback'
+      fullPath: '/auth/$provider/callback'
+      preLoaderRoute: typeof AuthProviderCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -227,7 +227,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
-  AuthOpenidCallbackRoute: AuthOpenidCallbackRoute,
+  AuthProviderCallbackRoute: AuthProviderCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
