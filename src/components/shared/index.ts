@@ -2,6 +2,7 @@ export { AccessDenied } from './AccessDenied';
 export { AddItemButton } from './AddItemButton';
 export { Avatar } from './Avatar';
 export { CloseButton } from './CloseButton';
+export { CommandDialog } from './CommandDialog';
 export { CountBadge, OverrideCount } from './CountBadge';
 export { DecorativeIcon } from './DecorativeIcon';
 export { DiscardConfirm } from './DiscardConfirm';

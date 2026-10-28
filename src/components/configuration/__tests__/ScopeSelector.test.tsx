@@ -12,10 +12,11 @@ import {
   allRolesQueryOptions,
   allGroupsQueryOptions,
 } from '@/server';
-import { ScopeSelector } from '../ScopeSelector';
+import { expectFocusBack, openFrom, pressEscape, renderWithOpener } from '@/test/focus';
 import { ConfigContractContext } from '@/contexts/ContractContext';
 import { createServerContract } from '@/test/fixtures';
 import { BUNDLED_CONFIG_CONTRACT } from '@/constants';
+import { ScopeSelector } from '../ScopeSelector';
 
 function localize(key: string, options?: Record<string, string | number>): string {
   if (!options) return key;
@@ -33,7 +34,15 @@ vi.mock('@/hooks', async () => {
     await vi.importActual<typeof import('@/hooks/config/contract')>('@/hooks/config/contract');
   const { useRefreshScopes } =
     await vi.importActual<typeof import('@/hooks/config/scope')>('@/hooks/config/scope');
-  return { useLocalize: () => localize, useDebouncedFilter, useConfigFeatures, useRefreshScopes };
+  const { useReturnFocus } =
+    await vi.importActual<typeof import('@/hooks/dialogs')>('@/hooks/dialogs');
+  return {
+    useLocalize: () => localize,
+    useDebouncedFilter,
+    useConfigFeatures,
+    useRefreshScopes,
+    useReturnFocus,
+  };
 });
 
 const scopes: t.ConfigScope[] = [
@@ -510,5 +519,54 @@ describe('ScopeSelector keyboard', () => {
     expect(deleteScopeFn).not.toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('ScopeSelector focus', () => {
+  /** The selector beside the page button that opens it, as the configuration header has it. */
+  function renderFromOpener() {
+    const onSelect = vi.fn();
+    const opener = renderWithOpener(
+      (open, close) => (
+        <ScopeSelector
+          open={open}
+          onOpenChange={(next) => {
+            if (!next) close();
+          }}
+          currentSelection={{ type: 'BASE' }}
+          onSelect={onSelect}
+          permissions={{ canView: true, canEdit: true, canAssign: true }}
+        />
+      ),
+      (node) => (
+        <ConfigContractContext.Provider value={BUNDLED_CONFIG_CONTRACT}>
+          {node}
+        </ConfigContractContext.Provider>
+      ),
+    );
+    return { opener, onSelect };
+  }
+
+  it('gives focus back to the button that opened it on Escape', async () => {
+    const { opener } = renderFromOpener();
+    pressEscape(await openFrom(opener));
+    await expectFocusBack(opener);
+  });
+
+  it('gives focus back to that button once a profile is picked', async () => {
+    const { opener, onSelect } = renderFromOpener();
+    await openFrom(opener);
+    fireEvent.click(await row(/^Engineering/));
+    expect(onSelect).toHaveBeenCalledWith({ type: 'SCOPE', scope: scopes[1] });
+    await expectFocusBack(opener);
+  });
+
+  it('keeps one dialog, and the opener to return to, across the create view', async () => {
+    const { opener } = renderFromOpener();
+    const dialog = await openFrom(opener);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'com_scope_create' }));
+    expect(await screen.findByPlaceholderText('com_scope_create_search')).toBeInTheDocument();
+    pressEscape(screen.getByRole('dialog'));
+    await expectFocusBack(opener);
   });
 });

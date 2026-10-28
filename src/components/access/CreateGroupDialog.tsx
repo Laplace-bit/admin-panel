@@ -4,14 +4,15 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { AdminUserSearchResult } from '@librechat/data-schemas';
 import type * as t from '@/types';
 import { SelectedMemberList, UserSearchInline } from '@/components/shared';
+import { useLocalize, useReturnFocus, useRefreshScopes } from '@/hooks';
 import { addGroupMemberFn, createGroupFn } from '@/server';
-import { useLocalize, useRefreshScopes } from '@/hooks';
 import { cn, notifySuccess, notifyError } from '@/utils';
 
 export function CreateGroupDialog({ open, onClose }: t.CreateGroupDialogProps) {
   const localize = useLocalize();
   const queryClient = useQueryClient();
   const refreshScopes = useRefreshScopes();
+  const returnFocus = useReturnFocus(open);
   const [activeTab, setActiveTab] = useState<t.CreateGroupTab>('details');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -87,6 +88,7 @@ export function CreateGroupDialog({ open, onClose }: t.CreateGroupDialogProps) {
         title={localize('com_access_create_group')}
         showClose
         onClose={resetAndClose}
+        onCloseAutoFocus={returnFocus}
         className="modal-frost max-w-2xl!"
       >
         <form onSubmit={handleSubmit} className="flex flex-col gap-5">

@@ -1,3 +1,4 @@
+import type { DialogContentProps } from '@radix-ui/react-dialog';
 import type { ReactNode } from 'react';
 import type {
   ConfigValue,
@@ -472,7 +473,10 @@ export interface ScopeSelectorProps {
 }
 
 /** The scope selector's dialog, which stays open while its views swap inside it. */
-export interface ScopeDialogProps extends Pick<ScopeSelectorProps, 'open' | 'onOpenChange'> {
+export interface ScopeDialogProps
+  extends
+    Pick<ScopeSelectorProps, 'open' | 'onOpenChange'>,
+    Pick<DialogContentProps, 'onCloseAutoFocus'> {
   title: string;
   description: string;
   /** Names the view's cmdk menu (each view mounts its own); omitted when the view has none. */

@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { AdminUserSearchResult } from '@librechat/data-schemas';
 import type * as t from '@/types';
+import { DIALOG_CLOSERS, expectFocusBack, openFrom, renderWithOpener } from '@/test/focus';
 import { addGroupMemberFn, createGroupFn } from '@/server';
 import { CreateGroupDialog } from '../CreateGroupDialog';
 
@@ -14,10 +15,13 @@ const USERS: AdminUserSearchResult[] = [
 vi.mock('@/hooks', async () => {
   const { useRefreshScopes } =
     await vi.importActual<typeof import('@/hooks/config/scope')>('@/hooks/config/scope');
+  const { useReturnFocus } =
+    await vi.importActual<typeof import('@/hooks/dialogs')>('@/hooks/dialogs');
   return {
     useLocalize: () => (key: string, options?: Record<string, string | number>) =>
       options ? `${key}(${Object.values(options).join(',')})` : key,
     useRefreshScopes,
+    useReturnFocus,
   };
 });
 
@@ -70,4 +74,17 @@ describe('CreateGroupDialog save', () => {
     );
     expect(queryClient.getQueryState(['groups', 'all'])?.isInvalidated).toBe(true);
   });
+});
+
+describe('CreateGroupDialog focus', () => {
+  it.each(DIALOG_CLOSERS)(
+    'gives focus back to the button that opened it on %s',
+    async (_, close) => {
+      const opener = renderWithOpener((open, onClose) => (
+        <CreateGroupDialog open={open} onClose={onClose} />
+      ));
+      close(await openFrom(opener));
+      await expectFocusBack(opener);
+    },
+  );
 });

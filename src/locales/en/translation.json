@@ -2995,6 +2995,8 @@
   "com_auth_show_password": "Show password",
   "com_auth_hide_password": "Hide password",
   "com_auth_sso_sign_in": "Sign in with SSO",
+  "com_auth_sso_google": "Continue with Google",
+  "com_auth_sso_saml": "Continue with SAML",
   "com_auth_sso_redirecting": "Redirecting…",
   "com_auth_sso_completing": "Completing sign in…",
   "com_auth_sso_error_title": "Authentication failed",

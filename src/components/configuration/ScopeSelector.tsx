@@ -28,8 +28,14 @@ import {
   allGroupsQueryOptions,
   availableScopesOptions,
 } from '@/server';
+import {
+  useLocalize,
+  useReturnFocus,
+  useRefreshScopes,
+  useConfigFeatures,
+  useDebouncedFilter,
+} from '@/hooks';
 import { getScopeTypeConfig, MIN_USER_SEARCH_LENGTH, SCOPE_PRINCIPAL_GROUPS } from '@/constants';
-import { useLocalize, useRefreshScopes, useConfigFeatures, useDebouncedFilter } from '@/hooks';
 import { DecorativeIcon } from '@/components/shared';
 
 const TYPE_LABEL_KEYS: Readonly<Record<string, string>> = {
@@ -78,6 +84,7 @@ export function ScopeSelector({
   /** The profile option the user moved to; until then the open profile is highlighted. */
   const [highlight, setHighlight] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const returnFocus = useReturnFocus(open);
   const userFilter = useDebouncedFilter('', () => undefined);
   const userQuery = userFilter.debouncedValue.trim();
 
@@ -258,7 +265,7 @@ export function ScopeSelector({
 
   if (!permissions.canView) return null;
 
-  const dialogProps = { open, onOpenChange: handleOpenChange };
+  const dialogProps = { open, onOpenChange: handleOpenChange, onCloseAutoFocus: returnFocus };
 
   if (deleteTarget) {
     const overrideCount = countScopeOverrides(deleteTarget);
@@ -536,6 +543,7 @@ export function ScopeSelector({
 function ScopeDialog({
   open,
   onOpenChange,
+  onCloseAutoFocus,
   title,
   description,
   menu,
@@ -547,7 +555,10 @@ function ScopeDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="cmdk-overlay" />
-        <Dialog.Content className="cmdk-content scope-selector-dialog">
+        <Dialog.Content
+          className="cmdk-content scope-selector-dialog"
+          onCloseAutoFocus={onCloseAutoFocus}
+        >
           <VisuallyHidden>
             <Dialog.Title>{title}</Dialog.Title>
             <Dialog.Description>{description}</Dialog.Description>
