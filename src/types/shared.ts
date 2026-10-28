@@ -125,6 +125,24 @@ export interface StatusToggleProps {
   disabled?: boolean;
 }
 
+export interface SelectAllHeaderProps {
+  /** Whether the group's switches are shown. */
+  open: boolean;
+  onToggle: () => void;
+  /** The id of the element holding the group's switches, while it is shown. */
+  controls: string;
+  label: string;
+  description?: string;
+  /** How many of the group's switches are on ("All", "2/5"). */
+  summary: string;
+  switchId: string;
+  /** The accessible name of the "Select all" switch. */
+  switchLabel: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  disabled?: boolean;
+}
+
 export interface CloseButtonProps {
   onClick: () => void;
   /** The accessible name and tooltip ("Close review"). */

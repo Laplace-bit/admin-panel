@@ -78,7 +78,7 @@ for (const theme of THEMES) {
     }) => {
       await page.goto('/');
       await page.waitForLoadState('networkidle');
-      await page.getByRole('button', { name: /^User menu/ }).focus();
+      await page.getByRole('button', { name: /, user menu for / }).focus();
       await page.keyboard.press('Enter');
       const items = page.getByRole('menu').getByRole('menuitem');
       await expect(items.first()).toBeFocused();

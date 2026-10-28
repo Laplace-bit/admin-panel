@@ -13,7 +13,7 @@ test.use({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
 const COLLAPSED_KEY = 'admin-panel:sidebar-collapsed';
 /** The sidebar controls whose focus rings sit against a clipped edge, by accessible name. */
 const RINGED = [
-  ['avatar', /^User menu/],
+  ['avatar', /, user menu for /],
   ['collapse toggle', /^(Collapse|Expand) sidebar$/],
 ] as const;
 
