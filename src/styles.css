@@ -401,6 +401,13 @@ select:focus-visible {
   outline-offset: 1px !important;
 }
 
+/* An open click-ui Select keeps focus in its search input, which has zero
+   height unless the Select shows its search: ringed, it drew a line across
+   the first option. The highlighted option already shows the user's place. */
+[data-testid='select-search-input']:not([class*='search-bar_show-search']):focus-visible {
+  outline: none !important;
+}
+
 /* CUI input components draw their border on a wrapper: ring the wrapper
    instead of the bare input so the ring follows the visible field. */
 .cui-field input:focus-visible,
@@ -423,6 +430,16 @@ select:focus-visible {
 
 .select-field-a11y button:focus-visible {
   outline-offset: 1px !important;
+}
+
+/* click-ui rings the keyboard-highlighted option of a Select or Dropdown in
+   its accent (near-black in the light theme), 2px inside the option. A
+   Select's option list is as wide as its trigger, 2px wider than the
+   popover's clip box, so that ring loses its right edge. Draw it in the app
+   focus color, 4px inside. */
+[data-input-modality='keyboard'] [data-highlighted] {
+  outline-color: var(--focus-ring-color) !important;
+  outline-offset: -4px !important;
 }
 
 .auth-card {
@@ -456,6 +473,12 @@ select:focus-visible {
   border-radius: var(--cui-radii-sm) !important;
 }
 
+/* The sidebar's collapse toggle sits flush with the panel's clipped edges and
+   the bottom of the viewport: ring it inside so the whole ring shows. */
+.sidebar-toggle:focus-visible {
+  outline-offset: calc(-1 * var(--focus-ring-width)) !important;
+}
+
 .scope-selector-dialog {
   width: min(640px, calc(100vw - 2rem));
 }
@@ -470,14 +493,14 @@ select:focus-visible {
   text-decoration: none;
 }
 
-/* The highlighted option's secondary text reads in the default color: muted text on the active background is below 4.5:1. */
+.scope-item[data-active='true'] {
+  background: var(--cui-color-background-hover);
+}
+
+/* Comes after the open-profile rule so the highlight still shows on the open profile; muted text on the active background is below 4.5:1, so it reads in the default color. */
 .scope-item[aria-selected='true'] {
   --cui-color-text-muted: var(--cui-color-text-default);
   background: var(--cui-color-background-active);
-}
-
-.scope-item[data-active='true'] {
-  background: var(--cui-color-background-hover);
 }
 
 .scope-action {

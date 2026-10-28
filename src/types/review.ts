@@ -8,7 +8,7 @@ import type {
   UnsafeConfigKey,
 } from './config';
 import type { LocalizeFn, ConfigLayers, ConfigSaveState, ConfigEditsState } from './hooks';
-import type { ImportTab, SaveEntry, TargetMode, SkippedChange } from './config-ui';
+import type { ImportTab, SaveEntry, TargetMode, SkippedChange, ImportEnumValue } from './config-ui';
 import type { ChangeSummaryItem, ChangeWarning, EntryKeyMove, VisibilityEdit } from './changes';
 import type { RevertTarget } from './values';
 import type { ConfigScope } from './scope';
@@ -506,6 +506,8 @@ export interface ImportPreviewProps {
   isScope: boolean;
   included: ReadonlySet<string>;
   onToggle: (fieldPath: string, include: boolean) => void;
+  /** Enum values of the YAML the bundled schema doesn't list; the notice names those the import writes. */
+  unknownEnumValues: ImportEnumValue[];
 }
 
 /** What the wizard asks to write (WS7). */

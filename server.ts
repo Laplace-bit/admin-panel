@@ -1,11 +1,7 @@
 import { Glob } from 'bun';
 import { join } from 'node:path';
-import {
-  metricsResponse,
-  httpRequestsTotal,
-  httpRequestDurationSeconds,
-  normalizeMetricsPath,
-} from './src/server/metrics';
+import { watchMemory, createRequestObserver, parseMemoryThresholdsMb } from './src/server/logging';
+import { metricsResponse } from './src/server/metrics';
 
 const CLIENT_DIR = join(import.meta.dir, 'dist', 'client');
 const SERVER_ENTRY = new URL('./dist/server/server.js', import.meta.url);
@@ -97,23 +93,9 @@ type Handler = { default: { fetch: (req: Request) => Promise<Response> } };
 
 const { default: handler } = (await import(SERVER_ENTRY.href)) as Handler;
 
-/** The status recorded for a request the client abandoned before it was answered (nginx's convention). */
-const CLIENT_CLOSED_REQUEST = '499';
-
-async function withHttpMetrics(
-  req: Request,
-  pathname: string,
-  getResponse: () => Response | Promise<Response>,
-): Promise<Response> {
-  const path = normalizeMetricsPath(pathname);
-  const end = httpRequestDurationSeconds.startTimer({ method: req.method, path });
-  const res = await getResponse();
-  /** TanStack Start answers an aborted server function with 500; that is the client leaving, not a server error. */
-  const statusCode = req.signal.aborted ? CLIENT_CLOSED_REQUEST : String(res.status);
-  httpRequestsTotal.inc({ method: req.method, path, status_code: statusCode });
-  end({ status_code: statusCode });
-  return res;
-}
+const observeRequest = createRequestObserver({
+  logRequests: env.ADMIN_PANEL_REQUEST_LOG !== 'false',
+});
 
 async function buildStaticRoutes(): Promise<Record<string, (req: Request) => Promise<Response>>> {
   const routes: Record<string, (req: Request) => Promise<Response>> = {};
@@ -122,11 +104,16 @@ async function buildStaticRoutes(): Promise<Record<string, (req: Request) => Pro
     const cache = getCacheHeaders(path);
     const routePath = `${BASE_PATH}/${path}`;
     routes[routePath] = (req) =>
-      withHttpMetrics(req, routePath, () => {
-        const res = new Response(file, { headers: { 'Content-Type': file.type, ...cache } });
-        applySecurityHeaders(res.headers);
-        return res;
-      });
+      observeRequest(
+        req,
+        routePath,
+        () => {
+          const res = new Response(file, { headers: { 'Content-Type': file.type, ...cache } });
+          applySecurityHeaders(res.headers);
+          return res;
+        },
+        { monitorBody: false },
+      );
   }
   return routes;
 }
@@ -144,7 +131,7 @@ const server = Bun.serve({
         BASE_PATH && url.pathname.startsWith(BASE_PATH)
           ? url.pathname.slice(BASE_PATH.length) || '/'
           : url.pathname;
-      const res = await withHttpMetrics(req, metricsPath, () => handler.fetch(req));
+      const res = await observeRequest(req, metricsPath, () => handler.fetch(req));
       const patched = new Response(res.body, res);
       for (const [k, v] of Object.entries(NO_CACHE)) {
         patched.headers.set(k, v);
@@ -154,6 +141,8 @@ const server = Bun.serve({
     },
   },
 });
+
+watchMemory(parseMemoryThresholdsMb(env.ADMIN_PANEL_MEMORY_LOG_THRESHOLDS_MB));
 
 console.log(`Admin panel listening on http://localhost:${server.port}${BASE_PATH}/`);
 

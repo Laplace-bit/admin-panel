@@ -1,3 +1,4 @@
+import type { TStartupConfig } from 'librechat-data-provider';
 import type { SerializableUser } from './server';
 import type { ApiErrorBody } from './changes';
 
@@ -10,8 +11,55 @@ export type AuthStep = 'login' | '2fa';
 
 export interface AuthCardProps {
   redirectTo?: string;
-  autoRedirectSso?: boolean;
-  ssoAvailable?: boolean;
+  /** The providers LibreChat offers, in the order of their buttons. */
+  providers?: readonly SsoProviderOption[];
+  /** `ADMIN_SSO_ONLY`: no password form, and straight to the provider when there is one. */
+  ssoOnly?: boolean;
+}
+
+/** A provider of LibreChat's admin OAuth routes the panel signs admins in through. */
+export type SsoProviderId = 'openid' | 'google' | 'saml';
+
+/** The `GET /api/config` flags that report a provider configured. */
+export type SsoConfigFlag = 'googleLoginEnabled' | 'samlLoginEnabled';
+
+/** The `GET /api/config` fields with a deployer's own name for a provider's button. */
+export type SsoConfigLabel = 'openidLabel' | 'samlLabel';
+
+/**
+ * How the panel learns LibreChat offers a provider: `check` asks the
+ * provider's `/api/admin/oauth/<id>/check` route, which answers only once its
+ * client initialised; a flag reads `GET /api/config`.
+ */
+export type SsoAvailability = 'check' | SsoConfigFlag;
+
+/** A provider of the registry (`SSO_PROVIDERS`). */
+export interface SsoProvider {
+  /** The phrase of its button when LibreChat names none. */
+  labelKey: string;
+  /** Where `GET /api/config` names its button. */
+  configLabel?: SsoConfigLabel;
+  availability: SsoAvailability;
+  /** Whether `POST /api/admin/oauth/refresh` renews its sessions. */
+  refreshable: boolean;
+}
+
+/** The fields of LibreChat's `GET /api/config` that decide which providers the sign-in page offers. */
+export type SsoStartupConfig = Partial<
+  Pick<TStartupConfig, 'socialLoginEnabled' | 'socialLogins' | SsoConfigFlag | SsoConfigLabel>
+>;
+
+/** A provider the sign-in page offers, with the deployer's name for its button when LibreChat sent one. */
+export interface SsoProviderOption {
+  id: SsoProviderId;
+  label?: string;
+}
+
+/** What `ssoProvidersFn` returns. */
+export interface SsoProviders {
+  providers: SsoProviderOption[];
+  /** `ADMIN_SSO_ONLY`, while at least one provider is offered. */
+  ssoOnly: boolean;
 }
 
 /**
@@ -70,23 +118,31 @@ export interface AuthTwoFactorPending {
   tempToken?: string;
 }
 
-/** SSO started: where the browser goes next (LibreChat's admin OpenID route). */
+/** SSO started: where the browser goes next (LibreChat's admin OAuth route of the provider). */
 export interface SsoStart {
   error: false;
   authUrl: string;
 }
 
-/** What `openidLoginFn` returns. */
+/** What `ssoStartFn` returns. */
 export type SsoStartResult = AuthFailure | SsoStart;
 
-/** What `adminVerify2FAFn` and `oauthExchangeFn` return. */
+/** An SSO sign-in the exchange completed, and the in-app path it started from. */
+export interface SsoSignedIn extends AuthSuccess {
+  redirectTo: string;
+}
+
+/** What `oauthExchangeFn` returns. */
+export type SsoExchangeResult = AuthFailure | SsoSignedIn;
+
+/** What `adminVerify2FAFn` returns. */
 export type AuthResult = AuthFailure | AuthSuccess;
 
 /** What `adminLoginFn` returns. */
 export type AdminLoginResult = AuthResult | AuthTwoFactorPending;
 
 /** Trades the callback's one-time code for the admin's session (`oauthExchangeFn`). */
-export type SsoExchange = (code: string) => Promise<AuthResult>;
+export type SsoExchange = (code: string) => Promise<SsoExchangeResult>;
 
 export interface SsoErrorProps {
   code: AuthErrorCode;

@@ -121,6 +121,93 @@ describe('validateSection / validateEntry / validateField', () => {
   });
 });
 
+describe('planConfigChanges — enum values the bundled schema does not list', () => {
+  const capabilities = 'endpoints.agents.capabilities';
+  const spec = (preset: t.ConfigRecord) => ({ name: 'fast', label: 'Fast', preset });
+
+  it('carries the value an enum refused, outside a union only', () => {
+    expect(validateField('interface.retentionMode', 'someday')).toMatchObject([
+      { path: 'interface.retentionMode', code: 'invalid_enum_value', received: 'someday' },
+    ]);
+    const [union] = validateSection('speech', {
+      speechTab: { speechToText: { engineSTT: 'whisper2' } },
+    });
+    expect(union).toMatchObject({ code: 'invalid_enum_value' });
+    expect(union).not.toHaveProperty('received');
+  });
+
+  it('writes a text value the bundled enum does not list', () => {
+    const plan = planConfigChanges(
+      [{ op: 'set', path: 'interface.retentionMode', value: 'someday' }],
+      snapshot(),
+    );
+    expect(plan.issues).toEqual([]);
+    expect(plan.sets).toEqual([{ fieldPath: 'interface.retentionMode', value: 'someday' }]);
+  });
+
+  it('writes the whole section that holds one (the section pass does not block it either)', () => {
+    const plan = planConfigChanges(
+      [{ op: 'set', path: 'interface', value: { retentionMode: 'someday', prompts: true } }],
+      snapshot(),
+    );
+    expect(plan.issues).toEqual([]);
+    expect(plan.sets).toHaveLength(1);
+  });
+
+  it('keeps a stored unknown member when another capability is toggled', () => {
+    const stored = { endpoints: { agents: { capabilities: ['tools', 'teleport'] } } };
+    const plan = planConfigChanges(
+      [{ op: 'set', path: capabilities, value: ['tools', 'teleport', 'ocr'] }],
+      snapshot(stored),
+    );
+    expect(plan.issues).toEqual([]);
+    expect(plan.sets).toEqual([{ fieldPath: capabilities, value: ['tools', 'teleport', 'ocr'] }]);
+  });
+
+  it('writes one inside a collection entry (a model spec preset)', () => {
+    const plan = planConfigChanges(
+      [
+        {
+          op: 'set',
+          path: 'modelSpecs.list',
+          value: [spec({ endpoint: 'openAI', reasoning_effort: 'ultra' })],
+        },
+      ],
+      snapshot(),
+    );
+    expect(plan.issues).toEqual([]);
+  });
+
+  it('still blocks a value that is not text, a wrong type and a union no branch fits', () => {
+    const issues = (path: string, value: t.ConfigValue) =>
+      planConfigChanges([{ op: 'set', path, value }], snapshot()).issues.map(
+        (issue) => `${issue.path}:${issue.code}`,
+      );
+    expect(issues(capabilities, ['tools', 5])).toEqual([`${capabilities}.1:invalid_enum_value`]);
+    expect(issues(capabilities, 'tools')).toEqual([`${capabilities}:invalid_type`]);
+    expect(issues('speech.speechTab.speechToText', { engineSTT: 'whisper2' })).toEqual([
+      'speech.speechTab.speechToText.engineSTT:invalid_enum_value',
+    ]);
+    expect(issues('balance.startBalance', 'lots')).toEqual(['balance.startBalance:invalid_type']);
+  });
+
+  it('still blocks a model spec preset whose enum value is not text', () => {
+    const plan = planConfigChanges(
+      [
+        {
+          op: 'set',
+          path: 'modelSpecs.list',
+          value: [spec({ endpoint: 'openAI', imageDetail: 3 })],
+        },
+      ],
+      snapshot(),
+    );
+    expect(plan.issues).toMatchObject([
+      { code: 'invalid_enum_value', entryIdentity: 'fast', entryPath: 'preset.imageDetail' },
+    ]);
+  });
+});
+
 describe('parseIndexedArrayPath', () => {
   it('recognizes items of array settings only', () => {
     expect(parseIndexedArrayPath('modelSpecs.list.2')).toEqual({

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Badge, Checkbox, Icon } from '@clickhouse/click-ui';
 import type * as t from '@/types';
 import { ChangeRow, formatReviewValue } from '@/components/configuration/review';
+import { hasPathOrAncestor } from '@/utils';
 import { useLocalize } from '@/hooks';
 
 /** The value an imported leaf sets, for keys shown without a change row (not recognized). */
@@ -99,9 +100,59 @@ function PreviewEntry({
 }
 
 /**
+ * The enum values the import writes: those in a row left checked, minus any
+ * inside a key left out of it (a list entry the target hides).
+ */
+function importedEnumValues(
+  values: t.ImportEnumValue[],
+  included: ReadonlySet<string>,
+  skipped: t.ReviewSkippedRow[],
+): t.ImportEnumValue[] {
+  if (values.length === 0) return values;
+  const leftOut = new Set(skipped.map((skip) => skip.path));
+  return values.filter(
+    ({ path }) => hasPathOrAncestor(included, path) && !hasPathOrAncestor(leftOut, path),
+  );
+}
+
+/**
+ * The enum values the bundled schema doesn't list that the import writes as
+ * written, each with its path, so a typo is named before it is stored: only
+ * LibreChat v0.8.8 and later refuse a value they don't know.
+ */
+function UnknownEnumValues({ values }: { values: t.ImportEnumValue[] }) {
+  const localize = useLocalize();
+  if (values.length === 0) return null;
+  const title = localize('com_config_review_import_enum_title', { count: values.length });
+  return (
+    <section
+      aria-label={title}
+      className="flex flex-col gap-1 rounded-lg border border-solid border-(--settings-warn-mark) bg-(--settings-warn-bg) px-3 py-2 text-xs text-(--settings-warn-fg)"
+    >
+      <p className="m-0 flex items-start gap-1 font-medium">
+        <span aria-hidden="true" className="flex pt-0.5 text-(--settings-warn-mark)">
+          <Icon name="warning" size="xs" />
+        </span>
+        {title}
+      </p>
+      <p className="m-0">{localize('com_config_review_import_enum_note')}</p>
+      <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+        {values.map(({ path, value, options }) => (
+          <li key={`${path}:${value}`} className="wrap-anywhere">
+            <code>{path}</code>: <code>{JSON.stringify(value)}</code> ·{' '}
+            {localize('com_config_review_import_enum_known', { options: options.join(', ') })}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
  * Step 3: every key of the YAML, what it changes in the target (or that it
- * already has that value), with a checkbox to leave it out, and the keys
- * that will not be imported with the reason.
+ * already has that value), with a checkbox to leave it out, the enum values
+ * this panel doesn't recognize that it imports, and the keys that will not be
+ * imported with the reason.
  */
 export function Preview({
   preview,
@@ -109,6 +160,7 @@ export function Preview({
   isScope,
   included,
   onToggle,
+  unknownEnumValues,
 }: t.ImportPreviewProps) {
   const localize = useLocalize();
   const { groups, skipped } = preview;
@@ -136,6 +188,7 @@ export function Preview({
       <p className="m-0 text-sm text-(--cui-color-text-default)">
         {localize('com_config_review_import_summary', { count, target: targetLabel })}
       </p>
+      <UnknownEnumValues values={importedEnumValues(unknownEnumValues, included, skipped)} />
       <div className="flex flex-col gap-3">
         {visible.map((group) => (
           <section key={group.key} aria-label={group.title} className="flex flex-col gap-1">

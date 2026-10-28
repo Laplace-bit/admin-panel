@@ -5,8 +5,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type * as t from '@/types';
 import { collectFieldPaths } from '@/components/configuration/counts';
+import { extractSchemaTree, parseConfigYaml } from '@/server/config';
 import { ImportYamlDialog } from '../ImportYamlDialog';
-import { extractSchemaTree } from '@/server/config';
 import { parseImportedYaml } from '@/server';
 
 const userScope: t.ConfigScope = {
@@ -111,7 +111,12 @@ async function toPreview() {
 
 describe('ImportYamlDialog wizard', () => {
   beforeEach(() => {
-    mockParse.mockResolvedValue({ success: true, appConfig: parsed, unknownPaths: [] });
+    mockParse.mockResolvedValue({
+      success: true,
+      appConfig: parsed,
+      unknownPaths: [],
+      unknownEnumValues: [],
+    });
   });
 
   it('previews exactly the snippet keys against Base and imports the selected ones', async () => {
@@ -226,6 +231,7 @@ describe('ImportYamlDialog wizard', () => {
       mark: { line: 2, column: 18 },
       appConfig: null,
       unknownPaths: [],
+      unknownEnumValues: [],
     });
     renderDialog();
     fireEvent.keyDown(screen.getByRole('tab', { name: 'Paste YAML' }), { key: 'Enter' });
@@ -235,6 +241,62 @@ describe('ImportYamlDialog wizard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByText('Line 2, column 18')).toBeInTheDocument();
     expect(screen.getByRole('alert').textContent).toContain('2 |   startBalance: [1');
+  });
+
+  it('names the enum values this panel does not list, and imports them as written', async () => {
+    mockParse.mockImplementationOnce(({ data }) =>
+      Promise.resolve(parseConfigYaml(data.yamlContent)),
+    );
+    const { onImport } = renderDialog();
+    await toTargets('interface:\n  retentionMode: someday\n');
+    await toPreview();
+    const dialog = screen.getByRole('dialog');
+    const notice = within(dialog).getByRole('region', {
+      name: "1 value this panel doesn't recognize",
+    });
+    expect(within(notice).getByText('interface.retentionMode')).toBeInTheDocument();
+    expect(within(notice).getByText('"someday"')).toBeInTheDocument();
+    expect(
+      within(notice).getByText(/LibreChat v0\.8\.8 and later check each one/),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Import 1 setting into Base/ }));
+    await waitFor(() =>
+      expect(onImport).toHaveBeenCalledWith({
+        target: { type: 'base' },
+        entries: [{ fieldPath: 'interface.retentionMode', value: 'someday' }],
+      }),
+    );
+  });
+
+  it('names only the values it imports: none in a key it leaves out or a row left unchecked', async () => {
+    mockParse.mockImplementationOnce(({ data }) =>
+      Promise.resolve(parseConfigYaml(data.yamlContent)),
+    );
+    renderDialog();
+    await toTargets(
+      'interface:\n  retentionMode: someday\nturnstile:\n  siteKey: key\n  options:\n    size: huge\n',
+    );
+    await toPreview();
+    const dialog = screen.getByRole('dialog');
+    const name = /this panel doesn't recognize/;
+    const notice = within(dialog).getByRole('region', { name });
+    expect(
+      within(notice)
+        .getAllByRole('listitem')
+        .map((item) => item.textContent),
+    ).toEqual(['interface.retentionMode: "someday" · this panel lists all, temporary']);
+    const skipped = within(dialog).getByRole('region', { name: /won't be imported/ });
+    expect(skipped.textContent).toMatch(/Size: read from librechat\.yaml only/);
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: /^Include Retention/ }));
+    expect(within(dialog).queryByRole('region', { name })).toBeNull();
+  });
+
+  it('shows no such notice for a YAML whose enum values the panel lists', async () => {
+    renderDialog();
+    await toTargets();
+    await toPreview();
+    expect(screen.queryByRole('region', { name: /this panel doesn't recognize/ })).toBeNull();
   });
 
   it('keeps the dialog open and shows the reason when the import is rejected', async () => {
