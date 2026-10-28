@@ -17,6 +17,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
+  queue: max
 
 jobs:
   build:
@@ -43,6 +44,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check whether main's head still builds this image
+        id: head
+        run: |
+          git fetch --quiet --depth=1 origin main
+          if [ "$GITHUB_REF" = refs/heads/main ] && git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- src server.ts package.json bun.lock Dockerfile .github/workflows/docker-publish.yml; then latest=true; else latest=false; fi
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -52,7 +60,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ steps.head.outputs.latest }}
             type=sha,format=long,prefix=,enable={{is_default_branch}}
 
       - name: Build and push
