@@ -45,22 +45,43 @@ async function startBalanceIn(page: Page, scope?: string) {
   return page.locator('#balance-startBalance');
 }
 
-test('imports a snippet into Base, previewing exactly its keys', async ({ page }) => {
-  const value = 100000 + (Date.now() % 100000);
-  await openWizard(
-    page,
-    `version: 1.3.3\nbalance:\n  startBalance: ${value}\ninterface:\n  prompts: false\n`,
-  );
-  await page.getByRole('radio', { name: /^Base configuration/ }).click();
-  const { dialog, apply } = await previewAndApply(page, /into Base configuration$/);
-  await expect(dialog.getByRole('checkbox')).toHaveCount(1);
-  await expect(dialog.getByText('Starting credits')).toBeVisible();
-  await expect(dialog.getByText(/Prompts: managed with role permissions/)).toBeVisible();
-  await apply.click();
-  await expect(
-    page.getByText(/Imported 1 value into the base configuration/).first(),
-  ).toBeVisible();
-  await expect(await startBalanceIn(page)).toHaveValue(value.toLocaleString('en-US'));
+/**
+ * Puts Base's Starting credits back to librechat.yaml when an import left an
+ * override there. Base otherwise keeps it after the run, and every Base
+ * override shows in the configuration page's visual baselines.
+ */
+async function revertBaseStartBalance(page: Page) {
+  await startBalanceIn(page);
+  const revert = page.getByRole('button', { name: /^Revert Starting credits to / });
+  if ((await revert.count()) === 0) return;
+  await revert.click();
+  await page.getByRole('button', { name: /^Review & save$/ }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: /^Save$/ }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(revert).toHaveCount(0);
+}
+
+test.describe('the base configuration', () => {
+  test.afterEach(({ page }) => revertBaseStartBalance(page));
+
+  test('imports a snippet into Base, previewing exactly its keys', async ({ page }) => {
+    const value = 100000 + (Date.now() % 100000);
+    await openWizard(
+      page,
+      `version: 1.3.3\nbalance:\n  startBalance: ${value}\ninterface:\n  prompts: false\n`,
+    );
+    await page.getByRole('radio', { name: /^Base configuration/ }).click();
+    const { dialog, apply } = await previewAndApply(page, /into Base configuration$/);
+    await expect(dialog.getByRole('checkbox')).toHaveCount(1);
+    await expect(dialog.getByText('Starting credits')).toBeVisible();
+    await expect(dialog.getByText(/Prompts: managed with role permissions/)).toBeVisible();
+    await apply.click();
+    await expect(
+      page.getByText(/Imported 1 value into the base configuration/).first(),
+    ).toBeVisible();
+    await expect(await startBalanceIn(page)).toHaveValue(value.toLocaleString('en-US'));
+  });
 });
 
 test.describe('the USER role profile', () => {

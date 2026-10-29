@@ -6,8 +6,10 @@ import { CONFIG_TABS, LIVE, LIVE_SKIP_REASON, THEMES, openConfigTab } from '../l
 /**
  * Accessibility and visual-system guardrails for the configuration page (VS-12):
  * axe on every tab at 1440 and 390 px in both themes, layout invariants of the
- * settings grid, and screenshot baselines. Needs a live backend (see ../live.ts);
- * refresh baselines with `--update-snapshots` after intended visual changes.
+ * settings grid, and screenshot baselines. Needs a live backend (see ../live.ts).
+ * The baselines show librechat.yaml values only: refresh them with
+ * `--update-snapshots` after intended visual changes, on a Base that stores no
+ * admin overrides.
  */
 test.skip(!LIVE, LIVE_SKIP_REASON);
 
@@ -285,11 +287,48 @@ test.describe('settings layout invariants (1440px, light)', () => {
 });
 
 const VISUAL_TABS = ['system', 'features', 'custom'] as const;
+/** How long a baseline waits for another spec's journey to revert a Base override. */
+const BASE_OVERRIDES_WAIT = 30_000;
 const VISUAL_VARIANTS = [
   { label: 'light-1440', colorScheme: 'light', width: 1440, height: 1100 },
   { label: 'dark-1440', colorScheme: 'dark', width: 1440, height: 1100 },
   { label: 'light-390', colorScheme: 'light', width: 390, height: 1100 },
 ] as const;
+
+/** Opens a tab and lists the tabs where Base stores admin overrides ("System: 1 admin override"). */
+async function overriddenTabs(page: Page, tab: string): Promise<string[]> {
+  await openConfigTab(page, tab);
+  await expect(
+    page.getByRole('tab', { selected: true }).locator('.config-tab-count').first(),
+  ).toBeVisible();
+  return page
+    .getByRole('tab')
+    .filter({ has: page.locator('.config-tab-count-override') })
+    .evaluateAll((tabs: HTMLElement[]) =>
+      tabs.map((el) => {
+        const count = el.querySelector('.config-tab-count-override')?.getAttribute('title');
+        return `${el.innerText.split('\n')[0]}: ${count}`;
+      }),
+    );
+}
+
+/**
+ * Opens a tab once Base stores no admin overrides. An override draws its tab's
+ * override count into every baseline, the header's revert action into the
+ * 1440 px ones, and its chip and section count into its own tab's. Another
+ * spec's journey holds one for a few seconds, so this reloads until Base is
+ * clean; one a failed run left behind fails here, naming its tab, before a
+ * screenshot is compared or written by `--update-snapshots`.
+ */
+async function openWithoutBaseOverrides(page: Page, tab: string) {
+  await expect
+    .poll(() => overriddenTabs(page, tab), {
+      message: 'Tabs where Base stores admin overrides, which no baseline shows',
+      timeout: BASE_OVERRIDES_WAIT,
+      intervals: [1_000, 2_000, 5_000],
+    })
+    .toEqual([]);
+}
 
 for (const variant of VISUAL_VARIANTS) {
   test.describe(`visual baseline: ${variant.label}`, () => {
@@ -297,10 +336,11 @@ for (const variant of VISUAL_VARIANTS) {
       colorScheme: variant.colorScheme,
       viewport: { width: variant.width, height: variant.height },
     });
+    test.describe.configure({ timeout: 90_000 });
 
     for (const tab of VISUAL_TABS) {
       test(`${tab}`, async ({ page }) => {
-        await openConfigTab(page, tab);
+        await openWithoutBaseOverrides(page, tab);
         await hideDevtools(page);
         await expect(page).toHaveScreenshot(`${tab}-${variant.label}.png`, {
           animations: 'disabled',
