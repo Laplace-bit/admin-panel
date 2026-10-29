@@ -47,10 +47,13 @@ function isSimpleScalar(f: t.SchemaField): boolean {
   return !f.children?.length && f.type !== 'record' && f.type !== 'object';
 }
 
+/** Why the tab shows no settings (a filter, "Set values only"): a status message screen readers hear (WCAG 4.1.3). */
 function EmptyTabState({ message, action }: { message: string; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-16 text-(--cui-color-text-muted)">
-      <span className="text-sm">{message}</span>
+      <span role="status" className="text-sm">
+        {message}
+      </span>
       {action}
     </div>
   );

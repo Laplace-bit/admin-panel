@@ -110,6 +110,26 @@ describe('DomainListField', () => {
     expect(onClear).toHaveBeenCalled();
   });
 
+  it('moves focus into the question about the last domain, and back to the input after it', () => {
+    render(<Harness initial={['example.com']} hasOwnValue />);
+    const remove = screen.getByRole('button', { name: 'Remove example.com' });
+    remove.focus();
+    fireEvent.click(remove);
+    const question = screen.getByRole('alertdialog', { name: 'Remove the restriction' });
+    expect(question).toHaveAccessibleDescription(
+      'Remove the last domain? Agent actions will then be able to call any public domain.',
+    );
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(input()).toHaveFocus();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove example.com' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove restriction' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(input()).toHaveFocus();
+  });
+
   it('says the librechat.yaml list applies again when the own list is removed', () => {
     render(<Harness initial={['mine.com']} hasOwnValue lowerValues={['a.com', 'b.com']} />);
     fireEvent.click(screen.getByRole('button', { name: 'Remove mine.com' }));

@@ -124,6 +124,7 @@ export function PreviewPicker({ target, onPick, onCancel }: t.PreviewPickerProps
         <div className="flex items-center gap-2 border-b border-(--cui-color-stroke-default) px-3">
           <DecorativeIcon name="search" size="sm" />
           <Command.Input
+            autoFocus
             value={userFilter.value}
             onValueChange={userFilter.onChange}
             placeholder={localize(

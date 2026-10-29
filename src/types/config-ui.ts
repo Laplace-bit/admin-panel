@@ -657,3 +657,18 @@ export interface UnknownSettingsProps {
   value: ConfigValue;
   path: string;
 }
+
+/** Props of one Langfuse connection key (public or secret). */
+export interface LangfuseKeyFieldProps {
+  /** The text field's id (and form name). */
+  id: string;
+  label: string;
+  /** The stored key, masked: shown as a button that opens the key for editing. Undefined while editing. */
+  preview?: string;
+  autoFocus: boolean;
+  value: string;
+  placeholder: string;
+  disabled: boolean;
+  onEdit: () => void;
+  onChange: (value: string) => void;
+}

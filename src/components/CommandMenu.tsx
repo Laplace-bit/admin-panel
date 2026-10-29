@@ -8,11 +8,18 @@ import type * as t from '@/types';
 import { matchesQuery, searchConfigIndex } from './configuration/search';
 import { useSearchIndex, useLocalize, useReturnFocus } from '@/hooks';
 import { CONFIG_TABS } from './configuration/configMeta';
+import { pageTitle, restoreFocusLater } from '@/utils';
 import { CommandDialog } from '@/components/shared';
 import { useTheme } from '@/contexts/ThemeContext';
 
 const MAX_SETTING_HITS = 30;
 
+/**
+ * The command menu (Ctrl+K): pages, tabs, settings and theme actions. "No
+ * results" is a status message beside the listbox, which may hold only
+ * options; the list stays in the DOM, hidden, as the target of the input's
+ * `aria-controls`.
+ */
 export function CommandMenu({ open, onOpenChange }: t.CommandMenuProps) {
   const localize = useLocalize();
   const router = useRouter();
@@ -22,7 +29,8 @@ export function CommandMenu({ open, onOpenChange }: t.CommandMenuProps) {
   const [search, setSearch] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const returnFocus = useReturnFocus(open);
-  const navigatedRef = useRef(false);
+  /** The navigation a command started, while its menu closes. */
+  const navigationRef = useRef<Promise<void> | null>(null);
 
   const handleSearchChange = useCallback((value: string) => {
     setSearch(value);
@@ -41,29 +49,38 @@ export function CommandMenu({ open, onOpenChange }: t.CommandMenuProps) {
 
   const close = useCallback(() => handleOpenChange(false), [handleOpenChange]);
 
-  /** Closes for a command that opens a page: where focus goes is then up to that page. */
-  const closeToNavigate = useCallback(() => {
-    navigatedRef.current = true;
-    close();
-  }, [close]);
+  /** Closes for a command that opens a page: focus then goes to that page. */
+  const closeToNavigate = useCallback(
+    (navigate: () => Promise<void>) => {
+      close();
+      navigationRef.current = navigate();
+    },
+    [close],
+  );
 
-  /** Gives focus back to the opener, unless a command opened a page. */
+  /**
+   * Gives focus back to the opener; after a command opened a page, to that
+   * page's title once it has rendered (WCAG 2.4.3), unless the page put focus
+   * somewhere itself (a setting it reveals takes it from the title).
+   */
   const handleCloseAutoFocus = useCallback(
     (event: Event) => {
-      if (navigatedRef.current) {
-        navigatedRef.current = false;
-        event.preventDefault();
+      const navigation = navigationRef.current;
+      navigationRef.current = null;
+      if (!navigation) {
+        returnFocus(event);
         return;
       }
-      returnFocus(event);
+      event.preventDefault();
+      const focusTitle = () => restoreFocusLater([pageTitle]);
+      void navigation.then(focusTitle, focusTitle);
     },
     [returnFocus],
   );
 
   const navigateTo = useCallback(
     (path: string, searchParams?: Record<string, string>) => {
-      closeToNavigate();
-      router.navigate({ to: path, search: searchParams });
+      closeToNavigate(() => router.navigate({ to: path, search: searchParams }));
     },
     [closeToNavigate, router],
   );
@@ -71,16 +88,17 @@ export function CommandMenu({ open, onOpenChange }: t.CommandMenuProps) {
   /** Opens a setting on the configuration page (revealed and focused there), keeping the open profile. */
   const openSetting = useCallback(
     (item: t.ConfigSearchItem) => {
-      closeToNavigate();
       const { pathname, search: current } = router.state.location;
       const scope =
         pathname.startsWith('/configuration') && typeof current.scope === 'string'
           ? current.scope
           : undefined;
-      router.navigate({
-        to: '/configuration',
-        search: { tab: item.tab, field: item.path, ...(scope && { scope }) },
-      });
+      closeToNavigate(() =>
+        router.navigate({
+          to: '/configuration',
+          search: { tab: item.tab, field: item.path, ...(scope && { scope }) },
+        }),
+      );
     },
     [closeToNavigate, router],
   );
@@ -221,13 +239,18 @@ export function CommandMenu({ open, onOpenChange }: t.CommandMenuProps) {
         placeholder={localize('com_cmdk_placeholder')}
         className="flex w-full border-b border-(--cui-color-stroke-default) bg-transparent px-4 py-3 text-sm text-(--cui-color-text-default) outline-none placeholder:text-(--cui-color-text-muted)"
       />
-      <Command.List ref={listRef} className="max-h-[min(28rem,60vh)] overflow-y-auto p-2">
+      <div role="status">
         {isEmpty && (
-          <div className="px-4 py-8 text-center text-sm text-(--cui-color-text-muted)">
+          <p className="m-0 px-4 py-8 text-center text-sm text-(--cui-color-text-muted)">
             {localize('com_cmdk_no_results')}
-          </div>
+          </p>
         )}
-
+      </div>
+      <Command.List
+        ref={listRef}
+        hidden={isEmpty}
+        className="max-h-[min(28rem,60vh)] overflow-y-auto p-2"
+      >
         {staticGroups.map(
           (group) =>
             group.commands.length > 0 && (

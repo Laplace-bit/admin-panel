@@ -1,13 +1,16 @@
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { createToast } from '@clickhouse/click-ui';
 import { configSchema, PrincipalType } from 'librechat-data-provider';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type * as t from '@/types';
+import { isLabelInName, visibleText } from '@/test/a11y';
 import { holdErrorToasts, notifyError } from '@/utils';
 import { summarizeChanges, applySaves } from './diff';
 import { extractSchemaTree } from '@/server/config';
 import { ChangeReview } from './ChangeReview';
 import { buildReviewModel } from './group';
+import { ChangesBar } from './ChangesBar';
 import i18n from '@/locales/i18n';
 
 vi.mock('@clickhouse/click-ui', async (importOriginal) => {
@@ -205,7 +208,9 @@ describe('ChangeReview', () => {
     const review = reviewFor([{ fieldPath: 'registration.socialLogins', value: ['openid'] }]);
     render(<ChangeReview review={review} />);
     fireEvent.click(screen.getByRole('button', { name: 'Revert Social logins' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Go to Social logins' }));
+    const goTo = screen.getByRole('button', { name: 'Go to field: Social logins' });
+    expect(isLabelInName(visibleText(goTo), goTo.getAttribute('aria-label') ?? '')).toBe(true);
+    fireEvent.click(goTo);
     expect(review.revertRow).toHaveBeenCalledTimes(1);
     expect(review.goToRow).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
@@ -404,5 +409,52 @@ describe('ChangeReview — what a change deletes with it', () => {
         'Role: USER still overrides "ghost". The override applies to this one once it is saved under that name, until it is removed there.',
       ),
     ).toBeInTheDocument();
+  });
+});
+
+describe('ChangesBar', () => {
+  const saves: t.SaveEntry[] = [{ fieldPath: 'registration.socialLogins', value: ['openid'] }];
+  /** jsdom has no ResizeObserver; the bar keeps toasts clear of itself with one. */
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+
+  it('announces how many changes are unsaved in a status message, without its buttons', () => {
+    render(<ChangesBar review={reviewFor(saves)} />);
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(/^1 unsaved change/);
+    expect(within(status).queryByRole('button')).toBeNull();
+    const bar = screen.getByRole('region', { name: 'Unsaved changes' });
+    expect(within(bar).getByRole('button', { name: 'Discard' })).toBeVisible();
+  });
+
+  it('puts focus on the open tab once Discard takes the bar away', async () => {
+    function Page() {
+      const [dirty, setDirty] = useState(true);
+      return (
+        <>
+          <div role="tablist">
+            <button type="button" role="tab" data-state="active">
+              System
+            </button>
+          </div>
+          <ChangesBar
+            review={reviewFor(saves, { isDirty: dirty, discardAll: () => setDirty(false) })}
+          />
+        </>
+      );
+    }
+    render(<Page />);
+    const discard = screen.getByRole('button', { name: 'Discard' });
+    discard.focus();
+    fireEvent.click(discard);
+    expect(screen.queryByRole('region', { name: 'Unsaved changes' })).toBeNull();
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(screen.getByRole('tab', { name: 'System' })).toHaveFocus();
   });
 });

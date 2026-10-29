@@ -201,7 +201,9 @@ describe('MemoryRenderer: memory agent', () => {
     });
     expect(screen.getByLabelText('Provider')).toHaveValue('openAI');
     expect(screen.getByText(/Agent ID from librechat\.yaml is hidden here/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Revert Agent to its librechat\.yaml/ }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Revert to librechat\.yaml \(.*\): Agent$/ }),
+    );
     expect(onResetField).toHaveBeenCalledWith('memory.agent');
   });
 });

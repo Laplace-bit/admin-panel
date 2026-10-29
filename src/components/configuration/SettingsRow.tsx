@@ -3,24 +3,48 @@ import type * as t from '@/types';
 import { SoleFieldContext } from '@/contexts/SettingsContext';
 import { SectionControls } from './SectionControls';
 import { SectionHeader } from './SectionHeader';
+import { fieldControl } from '@/utils';
 import { useLocalize } from '@/hooks';
 
-const LABELABLE = 'input, textarea, select, button, [role="switch"], [role="combobox"]';
+/** A button named by the text it shows ("Add tool"), not a switch or a select trigger. */
+const TEXT_BUTTON = 'button:not([role]), button[role="button"]';
+
+/**
+ * Adds `id` to the control's `aria-describedby`. The returned cleanup takes
+ * out only that id, from the attribute as it is then: React may have changed
+ * the rest since (a rename warning that went away), and restoring a snapshot
+ * would bring back a stale id. Undefined when the control already lists it.
+ */
+function addDescription(control: HTMLElement, id: string): (() => void) | undefined {
+  const described = control.getAttribute('aria-describedby')?.split(' ') ?? [];
+  if (described.includes(id)) return undefined;
+  control.setAttribute('aria-describedby', [...described, id].join(' '));
+  return () => {
+    const remaining = (control.getAttribute('aria-describedby') ?? '')
+      .split(' ')
+      .filter((token) => token !== '' && token !== id);
+    if (remaining.length > 0) control.setAttribute('aria-describedby', remaining.join(' '));
+    else control.removeAttribute('aria-describedby');
+  };
+}
 
 /**
  * Names the control after its section in a single-field section: the visible
  * label is the section heading, so `aria-labelledby` (which outranks the
- * control's own `aria-label`) points at "<Section> <field>". Runs after every
- * render because controls can remount without the row re-rendering.
+ * control's own `aria-label`) points at "<Section> <field>". A button that
+ * shows its own text keeps it as its name (WCAG 2.5.3, label in name: an
+ * empty list's "Add tool") and is described by the field's name instead.
+ * Runs after every render because controls can remount without the row
+ * re-rendering.
  */
 function useSoleFieldName(htmlFor: string | undefined, nameId: string) {
   useLayoutEffect(() => {
-    if (!htmlFor) return;
-    const target = document.getElementById(htmlFor);
-    const control = target?.matches(LABELABLE)
-      ? target
-      : target?.querySelector<HTMLElement>(LABELABLE);
-    if (!control || control.hasAttribute('aria-labelledby')) return;
+    const control = fieldControl(htmlFor);
+    if (!control) return;
+    if (control.matches(TEXT_BUTTON) && control.textContent?.trim()) {
+      return addDescription(control, nameId);
+    }
+    if (control.hasAttribute('aria-labelledby')) return;
     control.setAttribute('aria-labelledby', nameId);
     return () => control.removeAttribute('aria-labelledby');
   });
@@ -34,16 +58,9 @@ function useSoleFieldName(htmlFor: string | undefined, nameId: string) {
  */
 function useErrorDescription(htmlFor: string | undefined, hasError: boolean) {
   useLayoutEffect(() => {
-    if (!htmlFor || !hasError) return;
-    const target = document.getElementById(htmlFor);
-    const control = target?.matches(LABELABLE)
-      ? target
-      : target?.querySelector<HTMLElement>(LABELABLE);
+    const control = hasError ? fieldControl(htmlFor) : null;
     if (!control) return;
-    const errorId = `${htmlFor}-error`;
     const setsInvalid = control.getAttribute('aria-invalid') !== 'true';
-    const described = control.getAttribute('aria-describedby')?.split(' ') ?? [];
-    const addsDescription = !described.includes(errorId);
     if (setsInvalid) control.setAttribute('aria-invalid', 'true');
     /**
      * Writes to `aria-invalid` after ours are the control's own (React
@@ -52,26 +69,15 @@ function useErrorDescription(htmlFor: string | undefined, hasError: boolean) {
      */
     const claims = setsInvalid ? new MutationObserver(() => undefined) : null;
     claims?.observe(control, { attributes: true, attributeFilter: ['aria-invalid'] });
-    if (addsDescription) {
-      control.setAttribute('aria-describedby', [...described, errorId].join(' '));
-    }
-    /**
-     * Undo only what this effect added, against the attributes as they are
-     * now: React may have updated them since (a rename warning that went
-     * away), and restoring a snapshot would bring back a stale id.
-     */
+    const removeDescription = addDescription(control, `${htmlFor}-error`);
+    /** Undo only what this effect added, against the attributes as they are now. */
     return () => {
       const reclaimed = (claims?.takeRecords().length ?? 0) > 0;
       claims?.disconnect();
       if (setsInvalid && !reclaimed && control.getAttribute('aria-invalid') === 'true') {
         control.removeAttribute('aria-invalid');
       }
-      if (!addsDescription) return;
-      const remaining = (control.getAttribute('aria-describedby') ?? '')
-        .split(' ')
-        .filter((id) => id !== '' && id !== errorId);
-      if (remaining.length > 0) control.setAttribute('aria-describedby', remaining.join(' '));
-      else control.removeAttribute('aria-describedby');
+      removeDescription?.();
     };
   });
 }

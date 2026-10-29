@@ -24,7 +24,8 @@ const ISSUE_KEYS: Record<t.DomainIssue, string> = {
  * entries are validated as LibreChat parses them (host, optional scheme,
  * port or leading `*.`) before they are added on Enter, comma or Add, and
  * pasting a list adds every valid entry. A status line says what the list does: nothing restricts while
- * it is empty, so removing the last entry asks first, and removes the edit
+ * it is empty, so removing the last entry asks first (focus moves to the
+ * question's Cancel, and back to the input once answered), and removes the edit
  * target's own list (D3: an empty list is never written over the list the
  * layer beneath sets, which then applies again). The last entry of a list
  * only the layer beneath sets can't be removed here, and the field says so.
@@ -44,6 +45,7 @@ export function DomainListField({
   const localize = useLocalize();
   const statusId = useId();
   const errorId = useId();
+  const confirmId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const policy = getDomainListPolicy(path);
   const [draft, setDraft] = useState('');
@@ -87,8 +89,14 @@ export function DomainListField({
     addEntries(LIST_SEPARATOR.test(draft) ? splitDomainEntries(draft) : [draft.trim()]);
   };
 
-  const clearList = () => {
+  /** Closes the confirmation strip; its buttons go with it, so focus goes back to the input. */
+  const closeConfirm = () => {
     setConfirmingLast(false);
+    inputRef.current?.focus();
+  };
+
+  const clearList = () => {
+    closeConfirm();
     if (onClear() === false) {
       setNotice(localize('com_config_features_domains_keep_one', { source }));
     }
@@ -155,9 +163,12 @@ export function DomainListField({
         <div
           role="alertdialog"
           aria-label={localize('com_config_features_domains_confirm_title')}
+          aria-describedby={confirmId}
           className="flex flex-wrap items-center gap-2 rounded-md border border-(--settings-warn-mark) bg-(--settings-warn-bg) px-3 py-2 text-xs text-(--settings-warn-fg)"
         >
-          <span className="min-w-0 flex-[1_1_14rem]">{confirmText}</span>
+          <span id={confirmId} className="min-w-0 flex-[1_1_14rem]">
+            {confirmText}
+          </span>
           <Button
             htmlType="button"
             type="danger"
@@ -168,7 +179,8 @@ export function DomainListField({
             htmlType="button"
             type="secondary"
             label={localize('com_ui_cancel')}
-            onClick={() => setConfirmingLast(false)}
+            autoFocus
+            onClick={closeConfirm}
           />
         </div>
       )}

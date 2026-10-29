@@ -1,5 +1,7 @@
+import { useEffect, useRef } from 'react';
 import { Button, Icon } from '@clickhouse/click-ui';
 import type * as t from '@/types';
+import { activeConfigTab, pageTitle, restoreFocus, restoreFocusWhenShown } from '@/utils';
 import { useLocalize } from '@/hooks';
 
 function errorMessage(error: unknown): string | null {
@@ -8,7 +10,12 @@ function errorMessage(error: unknown): string | null {
   return null;
 }
 
-/** Danger card with Retry, shown in place of the configuration form when its data fails to load. */
+/**
+ * Danger card with Retry, shown in place of the configuration form when its
+ * data fails to load. A retry that loads the page takes the card, and the
+ * focused Retry with it, away: focus goes to the open tab once the page shows
+ * it. A retry that fails again gives focus back to Retry.
+ */
 export function ConfigLoadError({
   error,
   onRetry,
@@ -18,10 +25,29 @@ export function ConfigLoadError({
 }: t.ConfigLoadErrorProps) {
   const localize = useLocalize();
   const details = errorMessage(error);
+  const alertRef = useRef<HTMLDivElement>(null);
+  const retriedRef = useRef(false);
+  const wasRetrying = useRef(retrying);
+
+  useEffect(() => {
+    const was = wasRetrying.current;
+    wasRetrying.current = retrying;
+    if (!was || retrying) return;
+    retriedRef.current = false;
+    restoreFocus([alertRef.current?.querySelector('button')]);
+  }, [retrying]);
+
+  useEffect(
+    () => () => {
+      if (retriedRef.current) restoreFocusWhenShown([activeConfigTab, pageTitle]);
+    },
+    [],
+  );
 
   return (
     <div className="py-6 pr-4">
       <div
+        ref={alertRef}
         role="alert"
         className="flex flex-col gap-3 rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) p-5"
       >
@@ -53,7 +79,10 @@ export function ConfigLoadError({
             label={localize('com_config_shell_retry')}
             iconLeft={retrying ? 'loading-animated' : 'refresh'}
             disabled={retrying}
-            onClick={onRetry}
+            onClick={() => {
+              retriedRef.current = true;
+              onRetry();
+            }}
           />
         </div>
       </div>

@@ -142,4 +142,24 @@ describe('SettingsRow', () => {
     );
     expect(screen.getByRole('checkbox')).toHaveAccessibleName('Secure image links');
   });
+
+  it("keeps a button's own text as its name, described by the field's name (an empty list's Add)", () => {
+    render(
+      <SoleFieldContext.Provider value={{ headingId: 'h-ft', sectionTitle: 'Filtered tools' }}>
+        <SettingsRow
+          label="Hidden tools"
+          htmlFor="filteredTools"
+          control={
+            <div id="filteredTools">
+              <button type="button">Add tool</button>
+            </div>
+          }
+        />
+      </SoleFieldContext.Provider>,
+    );
+    const add = screen.getByRole('button');
+    expect(add).not.toHaveAttribute('aria-labelledby');
+    expect(add).toHaveAccessibleName('Add tool');
+    expect(add).toHaveAccessibleDescription('com_config_ui_sole_name:Filtered tools|Hidden tools');
+  });
 });

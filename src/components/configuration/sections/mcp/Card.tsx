@@ -5,7 +5,7 @@ import { useExpandableState, useLocalize, useValuesScope } from '@/hooks';
 import { RegionNameContext } from '@/contexts/RegionNameContext';
 import { transportLabelKey, transportOf } from './transport';
 import { sourceLabel } from '../../values';
-import { cn } from '@/utils';
+import { cn, restoreFocus } from '@/utils';
 
 /** Row-menu icons, the same as the custom endpoint rows'. */
 const ACTION_ICONS: Readonly<Record<t.McpServerAction['id'], t.MenuIconName>> = {
@@ -178,7 +178,10 @@ export function McpServerCard({
   const dataPath = `${path}.${serverKey}`;
   const domId = `section-${toDomId(path)}-${encodeURIComponent(serverKey)}`;
   const panelId = `${toDomId(dataPath)}-panel`;
+  const factsId = `${panelId}-facts`;
   const cardRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLButtonElement>(null);
+  const wasRenaming = useRef(renaming);
   const userToggled = useRef(false);
   const [isExpanded, setIsExpanded] = useExpandableState(defaultExpanded, [dataPath]);
   const [hasEverExpanded, setHasEverExpanded] = useState(isExpanded);
@@ -207,6 +210,13 @@ export function McpServerCard({
     };
   }, [setIsExpanded]);
 
+  /** Escape (or Enter on an unchanged name) takes the rename input away: focus goes back to the header. */
+  useEffect(() => {
+    const was = wasRenaming.current;
+    wasRenaming.current = renaming;
+    if (was && !renaming) restoreFocus([headerRef.current]);
+  }, [renaming]);
+
   useEffect(() => {
     if (!badges.isNew || !defaultExpanded) return;
     const card = cardRef.current;
@@ -232,85 +242,94 @@ export function McpServerCard({
     >
       <div
         className={cn(
-          'flex w-full items-start gap-1 rounded-lg pr-2 transition-colors hover:bg-(--cui-color-background-hover)',
-          isExpanded && 'sticky top-0 z-5 rounded-t-lg bg-(--cui-color-background-default)',
+          'w-full rounded-lg transition-colors hover:bg-(--cui-color-background-hover)',
+          renaming
+            ? 'flex items-start gap-1 pr-2'
+            : 'grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 py-2.5 pr-2 pl-3 has-[.row-link:focus-visible]:bg-(--cui-color-background-hover)',
+          isExpanded
+            ? 'sticky top-0 z-5 rounded-t-lg bg-(--cui-color-background-default)'
+            : 'relative',
         )}
       >
         {renaming ? (
           <RenameInput serverKey={serverKey} onCommit={onRenameCommit} onCancel={onRenameCancel} />
         ) : (
-          <button
-            type="button"
-            data-section-id={domId}
-            aria-expanded={isExpanded}
-            aria-controls={panelId}
-            aria-label={title ? `${title} (${serverKey})` : serverKey}
-            aria-describedby={`${panelId}-facts`}
-            onClick={() => {
-              userToggled.current = true;
-              setIsExpanded((prev) => !prev);
-            }}
-            className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-lg border-none bg-transparent px-3 py-2.5 text-left select-none focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--cui-color-outline)"
-          >
+          <>
             <span
               aria-hidden="true"
               className={cn(
-                'flex shrink-0 items-center justify-center pt-0.5 transition-transform duration-200',
+                'flex items-center justify-center pt-0.5 transition-transform duration-200',
                 isExpanded && 'rotate-90',
               )}
             >
               <DecorativeIcon name="chevron-right" size="sm" />
             </span>
-            <span className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <span
-                  className="max-w-full truncate text-sm font-medium text-(--cui-color-text-default)"
-                  title={title ?? serverKey}
-                >
-                  {title ?? serverKey}
-                </span>
-                {title && (
+            <button
+              ref={headerRef}
+              type="button"
+              data-section-id={domId}
+              aria-expanded={isExpanded}
+              aria-controls={panelId}
+              aria-describedby={factsId}
+              onClick={() => {
+                userToggled.current = true;
+                setIsExpanded((prev) => !prev);
+              }}
+              className="row-link flex min-w-0 cursor-pointer flex-wrap items-baseline gap-x-2 gap-y-0.5 border-none bg-transparent p-0 text-left select-none after:absolute after:inset-0 after:rounded-lg after:content-[''] focus-visible:after:outline-1 focus-visible:after:-outline-offset-1 focus-visible:after:outline-(--cui-color-outline)"
+            >
+              <span
+                className="max-w-full truncate text-sm font-medium text-(--cui-color-text-default)"
+                title={title ?? serverKey}
+              >
+                {title ?? serverKey}
+              </span>
+              {title && (
+                <>
+                  {' '}
                   <span
                     className="max-w-full truncate font-mono text-xs text-(--cui-color-text-muted)"
                     title={serverKey}
                   >
-                    <span className="sr-only">{localize('com_config_mcp_server_key')} </span>
+                    <span className="sr-only">{localize('com_config_mcp_server_key')}</span>{' '}
                     {serverKey}
                   </span>
-                )}
-                {badges.isNew && (
+                </>
+              )}
+              {badges.isNew && (
+                <>
+                  {' '}
                   <span className="rounded-full bg-(--cui-color-background-muted) px-1.5 py-0.5 text-xs font-semibold text-(--cui-color-text-default) uppercase">
                     {localize('com_config_ctl_entry_new')}
                   </span>
-                )}
+                </>
+              )}
+            </button>
+            {menuItems.length > 0 && (
+              <span className="relative z-1 row-span-2 -mt-0.5">
+                <KebabMenu
+                  items={menuItems}
+                  ariaLabel={localize('com_config_mcp_actions', { name: serverKey })}
+                />
               </span>
+            )}
+            <span
+              id={factsId}
+              className="col-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
+            >
+              <SourceChips badges={badges} />
               <span
-                id={`${panelId}-facts`}
-                className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
+                className="min-w-0 flex-[1_1_12rem] truncate text-xs text-(--cui-color-text-muted)"
+                title={summary ?? undefined}
               >
-                <SourceChips badges={badges} />
-                <span
-                  className="min-w-0 flex-[1_1_12rem] truncate text-xs text-(--cui-color-text-muted)"
-                  title={summary ?? undefined}
-                >
-                  {[
-                    transport ? localize(transportLabelKey(transport)) : null,
-                    isExpanded ? null : summary,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </span>
+                {[
+                  transport ? localize(transportLabelKey(transport)) : null,
+                  isExpanded ? null : summary,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               </span>
             </span>
-          </button>
-        )}
-        {menuItems.length > 0 && !renaming && (
-          <span className="shrink-0 pt-2">
-            <KebabMenu
-              items={menuItems}
-              ariaLabel={localize('com_config_mcp_actions', { name: serverKey })}
-            />
-          </span>
+          </>
         )}
       </div>
       <div

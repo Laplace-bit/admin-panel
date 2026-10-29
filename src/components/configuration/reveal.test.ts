@@ -209,4 +209,32 @@ describe('revealConfigPath', () => {
     row.blur();
     expect(row.hasAttribute('tabindex')).toBe(false);
   });
+
+  it("with focus 'heading', focuses the section's heading toggle, not its first control", () => {
+    const section = document.createElement('section');
+    section.id = 'section-balance';
+    section.innerHTML = html`<div data-section-id="section-balance">
+        <h2><button type="button" aria-expanded="true">Balance</button></h2>
+      </div>
+      <div><input type="radio" name="on" checked /><input id="balance-startBalance" /></div>`;
+    container.append(section);
+    revealConfigPath(container, { path: 'balance' }, { focus: 'heading', highlight: false });
+    vi.advanceTimersByTime(2_000);
+    expect(document.activeElement).toBe(section.querySelector('h2 > button'));
+  });
+
+  it("with focus 'heading', focuses an entry card's header button", () => {
+    const card = document.createElement('div');
+    card.id = 'section-mcpServers-docs';
+    card.innerHTML = html`<div>
+      <button type="button" data-section-id="section-mcpServers-docs" aria-expanded="false">
+        Docs
+      </button>
+      <button type="button" aria-haspopup="menu">Actions for docs</button>
+    </div>`;
+    container.append(card);
+    revealConfigPath(container, { path: 'mcpServers.docs' }, { focus: 'heading' });
+    vi.advanceTimersByTime(2_000);
+    expect(document.activeElement).toBe(card.querySelector('[data-section-id]'));
+  });
 });

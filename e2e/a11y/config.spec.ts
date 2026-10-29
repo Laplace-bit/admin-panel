@@ -1,7 +1,17 @@
 import AxeBuilder from '@axe-core/playwright';
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { CONFIG_TABS, LIVE, LIVE_SKIP_REASON, THEMES, openConfigTab } from '../live';
+import {
+  LIVE,
+  THEMES,
+  WCAG_TAGS,
+  CONFIG_TABS,
+  openConfigTab,
+  lockUserProfile,
+  LIVE_SKIP_REASON,
+  selectUserRoleProfile,
+  deleteUserRoleProfile,
+} from '../live';
 
 /**
  * Accessibility and visual-system guardrails for the configuration page (VS-12):
@@ -360,5 +370,194 @@ test.describe('custom endpoint drawer', () => {
         return node?.scrollTop ?? 0;
       });
     await expect.poll(scrolled).toBeGreaterThan(0);
+  });
+});
+
+/** Every WCAG 2.0 and 2.1 A and AA violation axe finds, in `selector` when given. */
+async function wcagViolations(page: Page, selector?: string) {
+  const builder = new AxeBuilder({ page }).withTags(WCAG_TAGS);
+  const results = await (selector ? builder.include(selector) : builder).analyze();
+  return results.violations.map((violation) => ({
+    rule: violation.id,
+    targets: violation.nodes.slice(0, 5).map((node) => node.target.join(' ')),
+  }));
+}
+
+const unsavedBar = (page: Page) => page.getByRole('region', { name: 'Unsaved changes' });
+const activeTab = (page: Page) => page.locator('[role="tab"][data-state="active"]');
+
+async function reviewAndSave(page: Page) {
+  await unsavedBar(page)
+    .getByRole('button', { name: /^Review & save$/ })
+    .click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: /^Save$/ }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(unsavedBar(page)).toHaveCount(0);
+}
+
+/** Opens Create endpoint and starts a blank endpoint; returns the drawer. */
+async function startBlankEndpoint(page: Page) {
+  await openConfigTab(page, 'custom');
+  await page.getByRole('button', { name: 'Create endpoint' }).click();
+  const drawer = page.getByRole('dialog');
+  const blank = drawer.getByRole('button', { name: /^Blank endpoint/ });
+  await blank.focus();
+  await page.keyboard.press('Enter');
+  return drawer;
+}
+
+/**
+ * Views a dialog swaps in place of another: the control that swapped them is
+ * gone, so focus must land in the new view (not on the dialog itself), and
+ * the new view must pass the WCAG scan.
+ */
+for (const theme of THEMES) {
+  test.describe(`views swapped in place: ${theme}`, () => {
+    test.use({ colorScheme: theme, viewport: { width: 1440, height: 900 } });
+
+    test('Create endpoint, its blank form: focus on Name, no WCAG violations', async ({ page }) => {
+      const drawer = await startBlankEndpoint(page);
+      await expect(drawer.locator('#endpoints-custom-9999-name')).toBeFocused();
+      expect(await wcagViolations(page, '[role="dialog"]')).toEqual([]);
+    });
+
+    test('the Preview drawer after Change: focus in the search, no WCAG violations', async ({
+      page,
+    }) => {
+      await openConfigTab(page, 'system');
+      await page.getByRole('button', { name: 'Preview', exact: true }).click();
+      const drawer = page.getByRole('dialog');
+      await drawer.getByRole('button', { name: 'Change' }).focus();
+      await page.keyboard.press('Enter');
+      await expect(drawer.getByRole('combobox')).toBeFocused();
+      expect(await wcagViolations(page, '[role="dialog"]')).toEqual([]);
+    });
+
+    test('Import YAML, its second step: focus on its first choice, no WCAG violations', async ({
+      page,
+    }) => {
+      await openConfigTab(page, 'system');
+      await page.getByRole('button', { name: 'Import YAML' }).click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByRole('tab', { name: 'Paste YAML' }).click();
+      await dialog
+        .getByRole('textbox', { name: 'Paste YAML' })
+        .fill('balance:\n  startBalance: 777\n');
+      await dialog.getByRole('button', { name: 'Continue' }).focus();
+      await page.keyboard.press('Enter');
+      await expect(dialog.getByText('Where should these settings go?')).toBeVisible();
+      await expect(dialog.getByRole('radio', { name: /^Base configuration/ })).toBeFocused();
+      expect(await wcagViolations(page, '[role="dialog"]')).toEqual([]);
+    });
+  });
+}
+
+test.describe('a role profile with an override of its own', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test.describe.configure({ timeout: 180_000 });
+  /** Set once the test creates the USER role's profile, so cleanup deletes only its own. */
+  let createdUserProfile = false;
+
+  lockUserProfile(async (page) => {
+    if (!createdUserProfile) return;
+    createdUserProfile = false;
+    await deleteUserRoleProfile(page, true);
+  });
+
+  test('has no WCAG violations with its sections open, and Remove override keeps focus on the field', async ({
+    page,
+  }) => {
+    await openConfigTab(page, 'system');
+    createdUserProfile = await selectUserRoleProfile(page);
+    await expect(page).toHaveURL(/scope=role(%3A|:)USER/);
+    const start = page.locator('#balance-startBalance');
+    await start.fill('4321');
+    await start.press('Tab');
+    await reviewAndSave(page);
+
+    await hideDevtools(page);
+    await expandSections(page);
+    const remove = page
+      .locator('.settings-row', { has: start })
+      .locator('button.settings-row-action');
+    await expect(remove).toHaveText(/^Remove override \(inherits /);
+    for (const colorScheme of THEMES) {
+      await page.emulateMedia({ colorScheme });
+      await page.waitForFunction(() => document.getAnimations().length === 0);
+      expect(await wcagViolations(page)).toEqual([]);
+    }
+
+    await remove.focus();
+    await page.keyboard.press('Enter');
+    await expect(remove).toHaveCount(0);
+    await expect(start).toBeFocused();
+    await reviewAndSave(page);
+  });
+});
+
+test.describe('focus stays on the page when a control takes itself away', () => {
+  test.use({ colorScheme: 'light', viewport: { width: 1440, height: 900 } });
+
+  test('Discard in the unsaved-changes bar puts focus on the open tab', async ({ page }) => {
+    await openConfigTab(page, 'system');
+    const field = page.locator('#balance-refillAmount');
+    await field.fill('12345');
+    await field.press('Tab');
+    await unsavedBar(page).getByRole('button', { name: 'Discard' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(unsavedBar(page)).toHaveCount(0);
+    await expect(activeTab(page)).toBeFocused();
+  });
+
+  test('Jump to puts focus on the heading of the section it scrolls to', async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await openConfigTab(page, 'features');
+    await page.getByRole('button', { name: 'Jump to…' }).focus();
+    await page.keyboard.press('Enter');
+    for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            document.activeElement?.matches(
+              'form :is(h2, h3, h4, h5, h6) > button, form button[data-section-id]',
+            ) ?? false,
+        ),
+      )
+      .toBe(true);
+  });
+
+  test('Escape on an MCP server rename puts focus back on its header', async ({ page }) => {
+    await openConfigTab(page, 'mcp');
+    await page.getByRole('button', { name: 'Create MCP server' }).click();
+    const create = page.getByRole('dialog');
+    await create.getByLabel('Server name').fill('e2e-focus');
+    await create.locator('#mcpDraft-url').fill('https://mcp.e2e.example/mcp');
+    await create.locator('#mcpDraft-url').press('Tab');
+    await create.getByRole('button', { name: 'Create', exact: true }).click();
+    await expect(create).toHaveCount(0);
+
+    const card = page.locator('[data-mcp-server="e2e-focus"]');
+    await card.getByRole('button', { name: 'Actions for e2e-focus' }).click();
+    await page.getByRole('menuitem', { name: /^Rename/ }).click();
+    const rename = page.getByRole('textbox', { name: 'Rename e2e-focus' });
+    await expect(rename).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(rename).toHaveCount(0);
+    await expect(card.locator('button[data-section-id]')).toBeFocused();
+
+    await unsavedBar(page).getByRole('button', { name: 'Discard' }).click();
+    await expect(card).toHaveCount(0);
+  });
+
+  test('Escape asks before discarding a name typed into a blank endpoint', async ({ page }) => {
+    const drawer = await startBlankEndpoint(page);
+    const name = drawer.locator('#endpoints-custom-9999-name');
+    await name.fill('Draft endpoint');
+    await page.keyboard.press('Escape');
+    await expect(drawer.getByText('Discard this new endpoint?')).toBeVisible();
+    await expect(name).toHaveValue('Draft endpoint');
   });
 });

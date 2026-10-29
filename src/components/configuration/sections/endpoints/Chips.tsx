@@ -70,7 +70,7 @@ export function FieldChips({
           type="button"
           className="settings-row-action"
           onClick={handleRevert}
-          aria-label={revert.ariaLabel}
+          aria-label={revert.compactAriaLabel}
           title={revert.label}
         >
           <DecorativeIcon name="history" size="xs" />

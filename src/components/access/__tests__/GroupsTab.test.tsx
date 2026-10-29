@@ -33,6 +33,7 @@ vi.mock('@/hooks', async () => ({
   useLocalize: () => (key: string) => key,
   useCapabilities: () => ({ hasCapability: () => true }),
   useRefreshScopes: () => vi.fn(),
+  useClearButtonLabel: vi.fn(),
   useReturnFocus: (await vi.importActual<typeof import('@/hooks/dialogs')>('@/hooks/dialogs'))
     .useReturnFocus,
 }));

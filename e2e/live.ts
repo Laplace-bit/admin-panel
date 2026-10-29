@@ -53,6 +53,9 @@ export const CONFIG_TABS = [
 
 export const THEMES = ['light', 'dark'] as const;
 
+/** The WCAG 2.0 and 2.1 level A and AA rules the panel's axe scans run. */
+export const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
+
 /** Opens a configuration tab and waits until its form has rendered real fields. */
 export async function openConfigTab(page: Page, tab: string) {
   await page.goto(`/configuration?tab=${tab}`);
@@ -185,6 +188,49 @@ export function lockUserProfile(cleanup?: (page: Page) => Promise<void>) {
       releaseLock();
     }
   });
+}
+
+/** Opens the scope selector once its profile list has loaded. */
+export async function openScopeSelector(page: Page) {
+  await page.getByRole('button', { name: /^Select scope/ }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('option', { name: /^Base configuration/ })).toBeVisible();
+  return dialog;
+}
+
+/**
+ * Opens the USER role's profile; on a clean database, creating it opens it.
+ * Returns whether it created the profile. Call it under `lockUserProfile`.
+ */
+export async function selectUserRoleProfile(page: Page): Promise<boolean> {
+  const dialog = await openScopeSelector(page);
+  const user = dialog.getByRole('option', { name: /^USER / });
+  if ((await user.count()) > 0) {
+    await user.click();
+    return false;
+  }
+  await dialog.getByRole('button', { name: 'Create' }).click();
+  await dialog.getByRole('option', { name: 'USER', exact: true }).click();
+  return true;
+}
+
+/**
+ * Deletes the USER role's profile, unless something has saved overrides to it
+ * since and `force` is unset (a test deleting a profile it created passes it).
+ * The confirm view lists no options and stays up until the delete succeeds,
+ * so the profile list coming back is what proves the delete finished.
+ */
+export async function deleteUserRoleProfile(page: Page, force = false) {
+  await openConfigTab(page, 'system');
+  const dialog = await openScopeSelector(page);
+  const user = dialog.getByRole('option', { name: /^USER / });
+  if (!force && (await user.filter({ hasText: 'No overrides' }).count()) === 0) return;
+  await dialog.getByRole('option', { name: 'Delete profile USER', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Delete configuration' }).click();
+  await expect(dialog.getByRole('option', { name: /^Base configuration/ })).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(user).toHaveCount(0);
 }
 
 /** click-ui Selects for the a11y specs: each `open` loads the Select's page and returns its trigger. */

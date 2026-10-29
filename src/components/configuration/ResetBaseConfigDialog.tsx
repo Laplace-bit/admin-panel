@@ -9,6 +9,7 @@ import { ReviewList } from './review';
  * "Revert all admin overrides to librechat.yaml" (RV-5): lists every base
  * override it removes and what each setting goes back to, as a danger action.
  * The list scrolls on its own, so it is a focusable region keyboard users can scroll.
+ * Its body text describes the dialog, so screen readers read it on open.
  */
 export function ResetBaseConfigDialog({
   open,
@@ -22,6 +23,7 @@ export function ResetBaseConfigDialog({
   const localize = useLocalize();
   const returnFocus = useReturnFocus(open, activeConfigTab);
   const listLabelId = useId();
+  const descriptionId = useId();
   const count = overrides?.count ?? 0;
 
   return (
@@ -36,10 +38,14 @@ export function ResetBaseConfigDialog({
         showClose
         onClose={onCancel}
         onCloseAutoFocus={returnFocus}
+        aria-describedby={descriptionId}
         className="modal-frost"
       >
         <div className="flex flex-col gap-4">
-          <p className="m-0 text-sm leading-relaxed text-(--cui-color-text-default)">
+          <p
+            id={descriptionId}
+            className="m-0 text-sm leading-relaxed text-(--cui-color-text-default)"
+          >
             {localize('com_config_review_reset_body')}
           </p>
           {overrides && count > 0 && (
