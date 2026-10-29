@@ -40,20 +40,21 @@ export function ConfigLoadError({
   const localize = useLocalize();
   const details = errorMessage(error);
   const alertRef = useRef<HTMLDivElement>(null);
-  const retriedRef = useRef(false);
+  const retriedFrom = useRef<string | null>(null);
   const wasRetrying = useRef(retrying);
 
   useEffect(() => {
     const was = wasRetrying.current;
     wasRetrying.current = retrying;
     if (!was || retrying) return;
-    retriedRef.current = false;
+    retriedFrom.current = null;
     restoreFocus([alertRef.current?.querySelector('button')]);
   }, [retrying]);
 
   useEffect(
     () => () => {
-      if (retriedRef.current) restoreFocusWhenShown([retryShownAgain, loadedConfigTab]);
+      const path = retriedFrom.current;
+      if (path) restoreFocusWhenShown([retryShownAgain, loadedConfigTab], null, path);
     },
     [],
   );
@@ -95,7 +96,7 @@ export function ConfigLoadError({
             iconLeft={retrying ? 'loading-animated' : 'refresh'}
             disabled={retrying}
             onClick={() => {
-              retriedRef.current = true;
+              retriedFrom.current = window.location.pathname;
               onRetry();
             }}
           />

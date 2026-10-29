@@ -66,6 +66,27 @@ function Page({
   );
 }
 
+/**
+ * The configuration route's error component: its card stays mounted, with
+ * Retry busy, while the router loads again. A navigation away unmounts it
+ * after the path has already changed.
+ */
+function RouteError() {
+  const [retrying, setRetrying] = useState(false);
+  return (
+    <>
+      <header>
+        <h1 tabIndex={-1}>Configuration</h1>
+      </header>
+      <ConfigLoadError
+        error={new Error('boom')}
+        onRetry={() => setRetrying(true)}
+        retrying={retrying}
+      />
+    </>
+  );
+}
+
 /** Another page of the app (Access management), with an open tab of its own when `tabs`. */
 function AccessPage({ tabs }: { tabs: boolean }) {
   return (
@@ -85,12 +106,13 @@ function AccessPage({ tabs }: { tabs: boolean }) {
 }
 
 /**
- * Renders the configuration page at /configuration. The returned `goTo`
- * changes the path the way the router does (history) and shows `page` there.
+ * Renders the configuration page (or `start`) at /configuration. The returned
+ * `goTo` changes the path the way the router does (history) and shows `page`
+ * there.
  */
-function renderApp() {
+function renderApp(start: ReactElement = <Page />) {
   window.history.pushState(null, '', '/configuration');
-  const { rerender } = render(<Page />);
+  const { rerender } = render(start);
   return async (path: string, page: ReactElement) => {
     window.history.pushState(null, '', path);
     rerender(page);
@@ -154,6 +176,18 @@ describe('ConfigLoadError', () => {
     const goTo = renderApp();
     await startRetry();
     await goTo('/access', <AccessPage tabs />);
+    expect(screen.getByRole('tab', { name: 'Roles' })).toBeInTheDocument();
+    expect(document.body).toHaveFocus();
+  });
+
+  it('moves no focus on a page the user goes to while the route still shows the card retrying', async () => {
+    const goTo = renderApp(<RouteError />);
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    retry.focus();
+    fireEvent.click(retry);
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    await goTo('/access', <AccessPage tabs />);
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByRole('tab', { name: 'Roles' })).toBeInTheDocument();
     expect(document.body).toHaveFocus();
   });

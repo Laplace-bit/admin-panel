@@ -39,17 +39,19 @@ const SHOWN_WAIT_MS = 30_000;
  * `restoreFocus` as soon as one of `targets` has rendered: checked every
  * frame while focus stays lost, for up to 30 s (Retry loading a page, a
  * step that loads its controls). Stops once focus is anywhere or the page
- * (its path) changes, so a page the user leaves while it loads, or comes
- * back to, never has focus moved by it. Returns a cancel function.
+ * leaves `path`, so a page the user leaves while it loads, or comes back
+ * to, never has focus moved by it. A caller starting it from an unmount
+ * cleanup passes the path its flow began on: the router has already moved
+ * to the next page when a navigation unmounts it. Returns a cancel function.
  */
 export function restoreFocusWhenShown(
   targets: readonly t.FocusTarget[],
   scope?: Element | null,
+  path: string = window.location.pathname,
 ): () => void {
   const deadline = Date.now() + SHOWN_WAIT_MS;
-  const { pathname } = window.location;
   const waiting = () =>
-    window.location.pathname === pathname && Date.now() <= deadline && isFocusLost(scope);
+    window.location.pathname === path && Date.now() <= deadline && isFocusLost(scope);
   const check = () => {
     if (!waiting() || restoreFocus(targets, scope)) return;
     frame = requestAnimationFrame(check);
