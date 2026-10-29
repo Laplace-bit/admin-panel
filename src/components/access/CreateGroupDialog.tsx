@@ -122,7 +122,7 @@ export function CreateGroupDialog({ open, onClose }: t.CreateGroupDialogProps) {
                     onChange={(e) => setName(e.target.value)}
                     placeholder={localize('com_access_group_name_placeholder')}
                     autoFocus
-                    className="rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) px-3 py-2 text-sm text-(--cui-color-text-default) placeholder:text-(--cui-color-text-disabled)"
+                    className="rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) px-3 py-2 text-sm text-(--cui-color-text-default) placeholder:text-(--cui-color-text-muted)"
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
@@ -138,7 +138,7 @@ export function CreateGroupDialog({ open, onClose }: t.CreateGroupDialogProps) {
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder={localize('com_access_group_desc_placeholder')}
-                    className="rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) px-3 py-2 text-sm text-(--cui-color-text-default) placeholder:text-(--cui-color-text-disabled)"
+                    className="rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) px-3 py-2 text-sm text-(--cui-color-text-default) placeholder:text-(--cui-color-text-muted)"
                   />
                 </div>
               </div>

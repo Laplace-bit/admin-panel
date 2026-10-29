@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { render, screen } from '@testing-library/react';
+import { CAPABILITY_CATEGORIES, CapabilityImplications, SystemCapabilities } from '@/constants';
 import { CapabilityPanel } from '../CapabilityPanel';
-import { CAPABILITY_CATEGORIES } from '@/constants';
 import { nestedControls } from '@/test/a11y';
 import { ruleBody } from '@/test/styles';
 
@@ -74,5 +74,23 @@ describe('CapabilityPanel category headers', () => {
       Object.fromEntries(USERS.capabilities.map((cap) => [cap, true])),
     );
     expect(usersToggle()).toHaveAttribute('aria-expanded', 'false');
+  });
+});
+
+describe('CapabilityPanel implied capabilities', () => {
+  it("notes a capability another one implies without reading out its icon's name", async () => {
+    const user = userEvent.setup();
+    const implied = CapabilityImplications[SystemCapabilities.MANAGE_USERS] ?? [];
+    expect(implied.length).toBeGreaterThan(0);
+    render(
+      <CapabilityPanel
+        capabilities={{ [SystemCapabilities.MANAGE_USERS]: true }}
+        onChange={vi.fn()}
+      />,
+    );
+    await user.click(usersToggle());
+
+    expect(screen.getAllByText('com_cap_implied_by')).toHaveLength(implied.length);
+    expect(screen.queryAllByRole('img')).toEqual([]);
   });
 });

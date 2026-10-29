@@ -13,7 +13,7 @@ import { useLocalize } from '@/hooks';
 import { cn } from '@/utils';
 
 /** One audit entry; its target's name is the button that opens the entry's drawer. */
-export function AuditLogTableRow({ entry, isLast, onOpen }: t.AuditLogTableRowProps) {
+export function AuditLogTableRow({ entry, isLast, onOpen, buttonRef }: t.AuditLogTableRowProps) {
   const localize = useLocalize();
   const targetConfig = auditTargetConfig(entry.target.type);
   const subject = auditSubject(entry, localize);
@@ -40,6 +40,7 @@ export function AuditLogTableRow({ entry, isLast, onOpen }: t.AuditLogTableRowPr
             }
           />
           <button
+            ref={buttonRef}
             type="button"
             aria-haspopup="dialog"
             aria-label={localize('com_a11y_audit_row_open', { target })}

@@ -1,5 +1,6 @@
+import type { ReactNode, Ref, RefObject, MutableRefObject } from 'react';
 import type { AdminUserSearchResult } from '@librechat/data-schemas';
-import type { ReactNode, RefObject, MutableRefObject } from 'react';
+import type { ButtonProps } from '@clickhouse/click-ui';
 import type { MenuIconName } from './scope';
 
 export interface ReorderableListHandle {
@@ -100,6 +101,7 @@ export interface SearchInputProps {
   placeholder: string;
   className?: string;
   ariaLabel?: string;
+  inputRef?: Ref<HTMLInputElement>;
 }
 
 export interface SelectedMemberListProps {
@@ -155,6 +157,12 @@ export interface TrashButtonProps {
   ariaLabel: string;
   size?: 'xs' | 'sm';
   disabled?: boolean;
+  buttonRef?: Ref<HTMLButtonElement>;
+}
+
+export interface BusyButtonProps extends ButtonProps {
+  /** The button's action is running: it shows a spinner and ignores presses, but keeps focus. */
+  busy: boolean;
 }
 
 export interface PaginationProps {

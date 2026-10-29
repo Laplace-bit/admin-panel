@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { Badge, Button, Icon } from '@clickhouse/click-ui';
+import { Badge, Button } from '@clickhouse/click-ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactElement } from 'react';
 import type * as t from '@/types';
@@ -17,42 +17,13 @@ import { CloseButton, DecorativeIcon, LoadingState } from '@/components/shared';
 import { useLocalize, useReturnFocus } from '@/hooks';
 import { cn } from '@/utils';
 
-interface AuditLogDetailDrawerProps {
-  entry: t.AuditLogEntryWithDiff | null;
-  open: boolean;
-  onClose: () => void;
-  /** Resolves to `true` when the clipboard write succeeded so the drawer only
-   * flips to its "Copied!" affordance after a real success. */
-  onCopyPermalink: (entryId: string) => Promise<boolean>;
-  /** Invoked when any inline `CopyableMono` (timestamp, actor/target/entry IDs,
-   * capability) fails to write to the clipboard. The caller is responsible for
-   * surfacing the failure — typically via the same screen-reader announcement
-   * used for the permalink-copy failure path so the drawer's copy controls are
-   * not silent on clipboard error. */
-  onCopyFailed?: () => void;
-  /** Render a "no entry found" message instead of the detail body when the
-   * deep-linked id couldn't be located (e.g. the entry was purged). */
-  notFound?: boolean;
-  /** Render a loading shell while the single-entry deep-link query is in flight
-   * for an entry that is not on the current page. Without this, the drawer
-   * would either flicker shut during the fetch or never appear on cold load. */
-  loading?: boolean;
-  /** Render a load-error message + close affordance when the single-entry
-   * fetch failed for reasons other than not-found (network failure, 5xx). The
-   * caller is responsible for distinguishing this from `notFound` (which is
-   * the 404 case where the request itself succeeded but the entry is gone). */
-  loadError?: boolean;
-}
-
-function CopyableMono({
-  value,
-  ariaLabel,
-  onCopyFailed,
-}: {
-  value: string;
-  ariaLabel: string;
-  onCopyFailed?: () => void;
-}): ReactElement {
+/**
+ * A value that copies itself. Its name starts with the value it shows and then
+ * says what pressing it does ("…, copy actor ID"); a copy is announced through
+ * `onCopied`, since only the button's hidden icon changes.
+ */
+function CopyableMono({ value, field, onCopied, onCopyFailed }: t.CopyableMonoProps): ReactElement {
+  const localize = useLocalize();
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
@@ -73,16 +44,16 @@ function CopyableMono({
       return;
     }
     setCopied(true);
+    onCopied?.(field);
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => setCopied(false), 1500);
-  }, [value, onCopyFailed]);
+  }, [value, field, onCopied, onCopyFailed]);
 
   return (
     <button
       type="button"
       onClick={() => void handleCopy()}
-      aria-label={ariaLabel}
-      aria-live="polite"
+      aria-label={localize('com_audit_detail_copy_value', { value, field })}
       className={cn(
         'inline-flex w-fit items-center gap-1 self-start rounded px-1 py-0.5 font-mono text-[11px]',
         'text-(--cui-color-text-muted) hover:bg-(--cui-color-background-hover)',
@@ -130,13 +101,15 @@ export function AuditLogDetailDrawer({
   open,
   onClose,
   onCopyPermalink,
+  onCopied,
   onCopyFailed,
   notFound = false,
   loading = false,
   loadError = false,
-}: AuditLogDetailDrawerProps): ReactElement | null {
+  returnFocusTo,
+}: t.AuditLogDetailDrawerProps): ReactElement | null {
   const localize = useLocalize();
-  const returnFocus = useReturnFocus(open);
+  const returnFocus = useReturnFocus(open, returnFocusTo);
 
   // Keep the last non-null entry so the close animation has content to render
   // while Radix Dialog slides the panel out. Without this, unmounting on
@@ -425,7 +398,8 @@ export function AuditLogDetailDrawer({
                     </span>
                     <CopyableMono
                       value={latestEntry.timestamp}
-                      ariaLabel={`Copy ${localize('com_audit_detail_timestamp')}`}
+                      field={localize('com_audit_field_timestamp')}
+                      onCopied={onCopied}
                       onCopyFailed={onCopyFailed}
                     />
                   </div>
@@ -438,7 +412,8 @@ export function AuditLogDetailDrawer({
                     </span>
                     <CopyableMono
                       value={latestEntry.actor.id ?? ''}
-                      ariaLabel={`Copy ${localize('com_audit_detail_actor')} ID`}
+                      field={localize('com_audit_field_actor_id')}
+                      onCopied={onCopied}
                       onCopyFailed={onCopyFailed}
                     />
                   </div>
@@ -452,7 +427,7 @@ export function AuditLogDetailDrawer({
                         state="neutral"
                         text={
                           <span className="inline-flex items-center gap-1">
-                            <Icon name={targetConfig.icon} size="xs" />
+                            <DecorativeIcon name={targetConfig.icon} size="xs" />
                             {localize(targetConfig.labelKey)}
                           </span>
                         }
@@ -463,7 +438,8 @@ export function AuditLogDetailDrawer({
                     </span>
                     <CopyableMono
                       value={latestEntry.target.id ?? ''}
-                      ariaLabel={`Copy ${localize('com_audit_detail_target')} ID`}
+                      field={localize('com_audit_field_target_id')}
+                      onCopied={onCopied}
                       onCopyFailed={onCopyFailed}
                     />
                   </div>
@@ -477,7 +453,8 @@ export function AuditLogDetailDrawer({
                       </span>
                       <CopyableMono
                         value={grantee.id}
-                        ariaLabel={`Copy ${localize('com_audit_detail_grantee')} ID`}
+                        field={localize('com_audit_field_grantee_id')}
+                        onCopied={onCopied}
                         onCopyFailed={onCopyFailed}
                       />
                     </div>
@@ -489,7 +466,8 @@ export function AuditLogDetailDrawer({
                     <span className="text-sm text-(--cui-color-text-default)">{subject.label}</span>
                     <CopyableMono
                       value={subject.value}
-                      ariaLabel={`Copy ${localize('com_audit_detail_capability')}`}
+                      field={localize('com_audit_field_capability')}
+                      onCopied={onCopied}
                       onCopyFailed={onCopyFailed}
                     />
                   </div>
@@ -498,7 +476,8 @@ export function AuditLogDetailDrawer({
                 <DetailRow label={localize('com_audit_detail_entry_id')}>
                   <CopyableMono
                     value={latestEntry.id}
-                    ariaLabel={`Copy ${localize('com_audit_detail_entry_id')}`}
+                    field={localize('com_audit_field_entry_id')}
+                    onCopied={onCopied}
                     onCopyFailed={onCopyFailed}
                   />
                 </DetailRow>

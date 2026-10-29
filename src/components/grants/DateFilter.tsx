@@ -29,7 +29,7 @@ export function DateFilter({ id, label, date, resetKey, onSelectDate }: t.DateFi
   }, [resetKey, id, labelId, valueId, hasDate]);
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex max-w-full min-w-0 items-center gap-1.5">
       <label id={labelId} htmlFor={id} className="text-xs text-(--cui-color-text-muted)">
         {label}
       </label>

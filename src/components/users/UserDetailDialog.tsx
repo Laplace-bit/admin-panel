@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
 import { Button, Dialog, Icon } from '@clickhouse/click-ui';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { PrincipalType, SystemRoles } from 'librechat-data-provider';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { TUser } from 'librechat-data-provider';
@@ -47,6 +47,8 @@ export function UserDetailDialog({
   const queryClient = useQueryClient();
   const refreshScopes = useRefreshScopes();
   const returnFocus = useReturnFocus(!!user);
+  const addRef = useRef<HTMLButtonElement>(null);
+  const addButton = useCallback(() => addRef.current, []);
 
   const [view, setView] = useState<'main' | 'add'>('main');
   const [removeTarget, setRemoveTarget] = useState<t.RemoveTarget | null>(null);
@@ -243,6 +245,7 @@ export function UserDetailDialog({
 
               {(canManageRoles || canManageGroups || canAssignConfigs) && (
                 <Button
+                  ref={addRef}
                   htmlType="button"
                   type="secondary"
                   label={localize('com_users_add_profiles')}
@@ -296,6 +299,7 @@ export function UserDetailDialog({
         saving={busy}
         onConfirm={handleConfirmRemove}
         onCancel={() => setRemoveTarget(null)}
+        returnFocusTo={addButton}
       />
     </>
   );

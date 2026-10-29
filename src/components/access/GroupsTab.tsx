@@ -1,5 +1,5 @@
 import { Button } from '@clickhouse/click-ui';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import type { AdminGroup } from '@librechat/data-schemas';
 import type * as t from '@/types';
@@ -8,10 +8,11 @@ import {
   SearchInput,
   EmptyState,
   Pagination,
+  ScreenReaderAnnouncer,
   TrashButton,
 } from '@/components/shared';
 import { deleteGroupFn, groupsQueryOptions, GROUPS_PAGE_SIZE, MAX_SEARCH_LENGTH } from '@/server';
-import { useLocalize, useCapabilities, useRefreshScopes } from '@/hooks';
+import { useLocalize, useAnnouncement, useCapabilities, useRefreshScopes } from '@/hooks';
 import { cn, notifySuccess, notifyError } from '@/utils';
 import { EditGroupDialog } from './EditGroupDialog';
 import { SystemCapabilities } from '@/constants';
@@ -29,6 +30,10 @@ export function GroupsTab({ onCreateGroup }: t.GroupsTabProps) {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page, setPage] = useState(1);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const { message: announcement, announce } = useAnnouncement();
+  const announcedSearch = useRef(debouncedSearch);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const searchField = useCallback(() => searchRef.current, []);
 
   useEffect(() => {
     return () => clearTimeout(debounceRef.current);
@@ -53,6 +58,13 @@ export function GroupsTab({ onCreateGroup }: t.GroupsTabProps) {
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / GROUPS_PAGE_SIZE);
 
+  /** Announces the match count once each new search has loaded; the first load stays quiet. */
+  useEffect(() => {
+    if (isFetching || isError || announcedSearch.current === debouncedSearch) return;
+    announcedSearch.current = debouncedSearch;
+    announce(localize('com_a11y_groups_found', { count: total }));
+  }, [debouncedSearch, isFetching, isError, total, announce, localize]);
+
   const deleteMutation = useMutation({
     mutationFn: (group: AdminGroup) => deleteGroupFn({ data: { id: group.id } }),
     onSuccess: (_data, group) => {
@@ -75,7 +87,7 @@ export function GroupsTab({ onCreateGroup }: t.GroupsTabProps) {
 
   if (isError && !data) {
     return (
-      <div className="px-4 py-8 text-center text-sm text-(--cui-color-foreground-danger)">
+      <div role="alert" className="px-4 py-8 text-center text-sm text-(--cui-color-text-danger)">
         {localize('com_error_load_groups')}
       </div>
     );
@@ -85,6 +97,7 @@ export function GroupsTab({ onCreateGroup }: t.GroupsTabProps) {
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-2 pr-1">
       <div className="flex items-center justify-between gap-3">
         <SearchInput
+          inputRef={searchRef}
           value={search}
           onChange={handleSearchChange}
           placeholder={localize('com_access_search_groups')}
@@ -159,7 +172,10 @@ export function GroupsTab({ onCreateGroup }: t.GroupsTabProps) {
           if (deleteTarget) deleteMutation.mutate(deleteTarget);
         }}
         onCancel={() => setDeleteTarget(null)}
+        returnFocusTo={searchField}
       />
+
+      <ScreenReaderAnnouncer message={announcement} />
     </div>
   );
 }
