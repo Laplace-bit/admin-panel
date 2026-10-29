@@ -27,7 +27,8 @@ function loadedConfigTab(): HTMLElement | null {
  * Danger card with Retry, shown in place of the configuration form when its
  * data fails to load. A retry takes the card, and the focused Retry with it,
  * away while it loads: focus goes to the open tab once the page has loaded,
- * or to the Retry of the card shown again if it failed again.
+ * or to the Retry of the card shown again if it failed again, unless the
+ * user has gone to another page by then.
  */
 export function ConfigLoadError({
   error,

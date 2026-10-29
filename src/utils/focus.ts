@@ -38,16 +38,20 @@ const SHOWN_WAIT_MS = 30_000;
 /**
  * `restoreFocus` as soon as one of `targets` has rendered: checked every
  * frame while focus stays lost, for up to 30 s (Retry loading a page, a
- * step that loads its controls). Stops once focus is anywhere; returns a
- * cancel function.
+ * step that loads its controls). Stops once focus is anywhere or the page
+ * (its path) changes, so a page the user leaves while it loads, or comes
+ * back to, never has focus moved by it. Returns a cancel function.
  */
 export function restoreFocusWhenShown(
   targets: readonly t.FocusTarget[],
   scope?: Element | null,
 ): () => void {
   const deadline = Date.now() + SHOWN_WAIT_MS;
+  const { pathname } = window.location;
+  const waiting = () =>
+    window.location.pathname === pathname && Date.now() <= deadline && isFocusLost(scope);
   const check = () => {
-    if (!isFocusLost(scope) || restoreFocus(targets, scope) || Date.now() > deadline) return;
+    if (!waiting() || restoreFocus(targets, scope)) return;
     frame = requestAnimationFrame(check);
   };
   let frame = requestAnimationFrame(check);

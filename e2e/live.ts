@@ -56,9 +56,12 @@ export const THEMES = ['light', 'dark'] as const;
 /** The WCAG 2.0 and 2.1 level A and AA rules the panel's axe scans run. */
 export const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
-/** Opens a configuration tab and waits until its form has rendered real fields. */
-export async function openConfigTab(page: Page, tab: string) {
-  await page.goto(`/configuration?tab=${tab}`);
+/**
+ * Opens a configuration tab, in the profile of `scope` (e.g. `role:USER`) if
+ * given, and waits until its form has rendered real fields.
+ */
+export async function openConfigTab(page: Page, tab: string, scope?: string) {
+  await page.goto(`/configuration?tab=${tab}${scope ? `&scope=${scope}` : ''}`);
   const form = page.getByRole('form', { name: 'Configuration' });
   await expect(form).toBeVisible({ timeout: 30_000 });
   await page.waitForLoadState('networkidle');

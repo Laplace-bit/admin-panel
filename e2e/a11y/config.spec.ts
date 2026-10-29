@@ -470,34 +470,75 @@ for (const theme of THEMES) {
   });
 }
 
+/** Starting credits and its row's action: Remove override where the open profile sets its own. */
+function startBalanceRow(page: Page) {
+  const field = page.locator('#balance-startBalance');
+  const action = page
+    .locator('.settings-row', { has: field })
+    .locator('button.settings-row-action');
+  return { field, action };
+}
+
+/** Waits until the USER role's profile is open with its own values loaded. */
+async function expectUserProfileOpen(page: Page) {
+  await expect(page.getByRole('region', { name: 'Profile being edited' })).toContainText(
+    'Role: USER',
+  );
+  await expect(startBalanceRow(page).field).toBeVisible();
+}
+
+/** Removes the USER role profile's own Starting credits, if it has one, and saves. */
+async function removeUserStartBalance(page: Page) {
+  await openConfigTab(page, 'system', 'role:USER');
+  await expectUserProfileOpen(page);
+  const { action } = startBalanceRow(page);
+  if ((await action.count()) === 0) return;
+  await action.click();
+  await reviewAndSave(page);
+}
+
 test.describe('a role profile with an override of its own', () => {
   test.use({ viewport: { width: 1440, height: 900 } });
   test.describe.configure({ timeout: 180_000 });
-  /** Set once the test creates the USER role's profile, so cleanup deletes only its own. */
-  let createdUserProfile = false;
+  /**
+   * What the test saved to the USER role's profile, for cleanup to undo in a
+   * page of its own (a failure can leave the test's page mid-edit): the
+   * profile, when it created it, or Starting credits, on a profile that had
+   * none of its own. A Starting credits the profile already had is never
+   * written: the test uses it as it is and discards its removal.
+   */
+  let saved: 'profile' | 'override' | null = null;
 
   lockUserProfile(async (page) => {
-    if (!createdUserProfile) return;
-    createdUserProfile = false;
-    await deleteUserRoleProfile(page, true);
+    const undo = saved;
+    saved = null;
+    if (undo == null) return;
+    const own = await page.context().newPage();
+    try {
+      if (undo === 'profile') await deleteUserRoleProfile(own, true);
+      else await removeUserStartBalance(own);
+    } finally {
+      await own.close();
+    }
   });
 
   test('has no WCAG violations with its sections open, and Remove override keeps focus on the field', async ({
     page,
   }) => {
     await openConfigTab(page, 'system');
-    createdUserProfile = await selectUserRoleProfile(page);
+    if (await selectUserRoleProfile(page)) saved = 'profile';
     await expect(page).toHaveURL(/scope=role(%3A|:)USER/);
-    const start = page.locator('#balance-startBalance');
-    await start.fill('4321');
-    await start.press('Tab');
-    await reviewAndSave(page);
+    await expectUserProfileOpen(page);
+    const { field: start, action: remove } = startBalanceRow(page);
+    if ((await remove.count()) === 0) {
+      saved ??= 'override';
+      await start.fill('4321');
+      await start.press('Tab');
+      await reviewAndSave(page);
+    }
 
     await hideDevtools(page);
     await expandSections(page);
-    const remove = page
-      .locator('.settings-row', { has: start })
-      .locator('button.settings-row-action');
     await expect(remove).toHaveText(/^Remove override \(inherits /);
     for (const colorScheme of THEMES) {
       await page.emulateMedia({ colorScheme });
@@ -509,7 +550,8 @@ test.describe('a role profile with an override of its own', () => {
     await page.keyboard.press('Enter');
     await expect(remove).toHaveCount(0);
     await expect(start).toBeFocused();
-    await reviewAndSave(page);
+    await unsavedBar(page).getByRole('button', { name: 'Discard' }).click();
+    await expect(remove).toHaveText(/^Remove override \(inherits /);
   });
 });
 
