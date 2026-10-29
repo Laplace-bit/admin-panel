@@ -1,8 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import type { Page, Route } from '@playwright/test';
-
-const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
+import { WCAG_TAGS } from './live';
 
 // Login tests must be unauthenticated
 test.use({ storageState: { cookies: [], origins: [] } });

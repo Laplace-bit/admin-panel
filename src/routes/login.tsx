@@ -1,5 +1,6 @@
 import { Container } from '@clickhouse/click-ui';
 import { createFileRoute } from '@tanstack/react-router';
+import { useDocumentTitle, useLocalize } from '@/hooks';
 import ThemeSelector from '@/components/ThemeSelector';
 import { AuthCard } from '@/components/AuthCard';
 import { ssoProvidersFn } from '@/server';
@@ -13,7 +14,9 @@ export const Route = createFileRoute('/login')({
 });
 
 function LoginPage() {
+  const localize = useLocalize();
   const { redirect } = Route.useSearch();
+  useDocumentTitle(localize('com_auth_sign_in'));
   const { providers, ssoOnly } = Route.useLoaderData();
 
   return (

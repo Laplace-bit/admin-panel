@@ -12,9 +12,13 @@ import {
   searchField,
   uniqueName,
 } from './access';
-import { AUDITED_WRITES_SKIP_REASON, LIVE, MOCK_FIXTURES_SKIP_REASON, THEMES } from './live';
-
-const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
+import {
+  LIVE,
+  THEMES,
+  WCAG_TAGS,
+  MOCK_FIXTURES_SKIP_REASON,
+  AUDITED_WRITES_SKIP_REASON,
+} from './live';
 
 async function hideTanStackDevtools(page: Page) {
   await page.evaluate(() => {

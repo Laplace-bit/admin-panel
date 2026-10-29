@@ -195,3 +195,6 @@ export interface DiscardPromptState {
 export interface WarningListProps {
   notes: readonly string[];
 }
+
+/** Where lost focus goes: an element, or a lookup run only if the ones before it can't take focus. */
+export type FocusTarget = HTMLElement | null | undefined | (() => HTMLElement | null | undefined);

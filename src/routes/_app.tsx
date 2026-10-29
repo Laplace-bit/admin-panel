@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Outlet, useRouter, Link, redirect } from '@tanstack/react-router';
 import type { ErrorComponentProps } from '@tanstack/react-router';
 import type * as t from '@/types';
-import { capabilitiesQueryOptions, useCommandMenu, useLocalize } from '@/hooks';
+import { capabilitiesQueryOptions, useCommandMenu, useDocumentTitle, useLocalize } from '@/hooks';
 import { AccessDenied, PermissionsUnavailable } from '@/components/shared';
 import { SystemCapabilities, hasImpliedCapability } from '@/constants';
 import { ConfigContractProvider } from '@/contexts/ContractContext';
@@ -20,6 +20,11 @@ const ROUTE_TITLE_KEYS: Record<string, string> = {
   '/access': 'com_access_title',
   '/grants': 'com_grants_title',
   '/help': 'com_help_title',
+};
+
+/** Browser tab titles that differ from the header's ("Welcome!" names no page). */
+const DOCUMENT_TITLE_KEYS: Record<string, string> = {
+  '/': 'com_nav_dashboard',
 };
 
 export const Route = createFileRoute('/_app')({
@@ -67,6 +72,12 @@ function AppLayout() {
     return stored !== null ? stored === 'true' : true;
   });
   const pathname = router.state.location.pathname;
+  const matchedKey = Object.keys(ROUTE_TITLE_KEYS).find((route) =>
+    route === '/' ? pathname === '/' : pathname.startsWith(route),
+  );
+  const title = matchedKey ? localize(ROUTE_TITLE_KEYS[matchedKey]) : undefined;
+  const documentTitleKey = matchedKey && DOCUMENT_TITLE_KEYS[matchedKey];
+  useDocumentTitle(documentTitleKey ? localize(documentTitleKey) : title);
 
   const toggleSidebar = () =>
     setSidebarCollapsed((prev) => {
@@ -95,11 +106,6 @@ function AppLayout() {
   ) {
     return <AccessDenied />;
   }
-
-  const matchedKey = Object.keys(ROUTE_TITLE_KEYS).find((route) =>
-    route === '/' ? pathname === '/' : pathname.startsWith(route),
-  );
-  const title = matchedKey ? localize(ROUTE_TITLE_KEYS[matchedKey]) : undefined;
 
   return (
     <ConfigContractProvider>
@@ -134,6 +140,7 @@ function AppPending() {
 function AppError({ error }: ErrorComponentProps) {
   if (import.meta.env.DEV) console.error(error);
   const localize = useLocalize();
+  useDocumentTitle(localize('com_error_page_title'));
   return (
     <div role="alert" className="flex min-h-screen items-center justify-center p-6">
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
@@ -159,6 +166,7 @@ function AppError({ error }: ErrorComponentProps) {
 
 function AppNotFound() {
   const localize = useLocalize();
+  useDocumentTitle(localize('com_error_not_found_title'));
   return (
     <div role="alert" className="flex min-h-screen items-center justify-center p-6">
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">

@@ -7,6 +7,7 @@ import {
   useValuesScope,
   useFieldProfiles,
   useHasValueLayers,
+  useRefocusWhenGone,
 } from '@/hooks';
 import {
   ShadowBadge,
@@ -15,6 +16,7 @@ import {
   FieldProvenance,
   formatConfigValue,
 } from './values';
+import { activeConfigTab, fieldControl } from '@/utils';
 import { ProfileIndicator } from './ProfileIndicator';
 import { StateChip } from '@/components/shared';
 import { inferControlWidth } from './width';
@@ -69,15 +71,8 @@ export function ConfigRow({
   const revertLabels = useRevertLabels(fieldPath ?? '', title);
   const overriddenBy = useFieldProfiles(fieldPath);
   const valuesScope = useValuesScope();
-  if (hidden) return null;
-
   const isPending = Boolean(isPendingReset) || state.isPendingReset;
   const isEdited = !isPending && state.isEdited;
-  const errorText = error ?? state.error;
-  const source = resolveSource(state, isDbOverride, isConfigured);
-  const undo = fieldPath && onDiscardField ? () => onDiscardField(fieldPath) : undefined;
-  const undoLabel = localize('com_config_ui_undo_change', { name: title });
-
   const isChanged = fieldPath != null && previewChangedPaths?.includes(fieldPath);
   /** A stored override LibreChat ignores can be removed even where the section is read-only (D5). */
   const canReset =
@@ -88,6 +83,17 @@ export function ConfigRow({
     (!disabled || state.ignoredOverride) &&
     permissions?.canEdit &&
     onResetField;
+  /** The reset takes its own button away: focus goes to the field it reset. */
+  const requestRefocus = useRefocusWhenGone(Boolean(canReset), [
+    () => fieldControl(fieldId),
+    activeConfigTab,
+  ]);
+  if (hidden) return null;
+
+  const errorText = error ?? state.error;
+  const source = resolveSource(state, isDbOverride, isConfigured);
+  const undo = fieldPath && onDiscardField ? () => onDiscardField(fieldPath) : undefined;
+  const undoLabel = localize('com_config_ui_undo_change', { name: title });
 
   /** Outside a values provider with layers, the row's own flags decide the chip. */
   const fallbackProvenanceChip = (): ReactNode => {
@@ -176,14 +182,17 @@ export function ConfigRow({
   const resetAriaLabel =
     revertLabels?.ariaLabel ??
     (isChanged
-      ? localize('com_a11y_remove_override', { name: title })
+      ? localize('com_a11y_reset_override', { name: title })
       : localize('com_a11y_reset_to_default', { name: title }));
 
   const resetAction = canReset ? (
     <button
       type="button"
       className="settings-row-action"
-      onClick={() => onResetField(fieldPath)}
+      onClick={() => {
+        requestRefocus();
+        onResetField(fieldPath);
+      }}
       aria-label={resetAriaLabel}
     >
       {resetLabel}

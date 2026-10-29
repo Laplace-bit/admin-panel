@@ -37,6 +37,7 @@ vi.mock('@/hooks', async () => {
     useLocalize: () => localize,
     useConfigFeatures: contract.useConfigFeatures,
     useReturnFocus: dialogs.useReturnFocus,
+    useRefocusWhenGone: dialogs.useRefocusWhenGone,
     useScopeActions: scope.useScopeActions,
     useFieldProfiles: scope.useFieldProfiles,
     useFieldState: field.useFieldState,

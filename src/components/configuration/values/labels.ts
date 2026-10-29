@@ -24,29 +24,39 @@ const SOURCE_KEYS: Readonly<Record<t.ProvenanceSource, string>> = {
   inherited: 'com_config_values_source_inherited',
 };
 
-/** Revert label and accessible-name keys by the layer a field reverts to. */
-const REVERT_KEYS: Readonly<Record<t.ProvenanceSource, { label: string; aria: string }>> = {
-  yaml: { label: 'com_config_values_revert_yaml', aria: 'com_config_values_revert_yaml_aria' },
+const INHERITED_KEYS: t.RevertKeys = {
+  label: 'com_config_values_revert_inherited',
+  aria: 'com_config_values_revert_inherited_aria',
+  compact: 'com_config_values_revert_inherited_compact',
+};
+
+/** Removing an override that falls back to no value at all. */
+const UNSET_KEYS: t.RevertKeys = {
+  label: 'com_config_values_revert_unset',
+  aria: 'com_config_values_revert_unset_aria',
+  compact: 'com_config_values_revert_unset_compact',
+};
+
+/** Revert keys by the layer a field reverts to. */
+const REVERT_KEYS: Readonly<Record<t.ProvenanceSource, t.RevertKeys>> = {
+  yaml: {
+    label: 'com_config_values_revert_yaml',
+    aria: 'com_config_values_revert_yaml_aria',
+    compact: 'com_config_values_revert_yaml_compact',
+  },
   default: {
     label: 'com_config_values_revert_default',
     aria: 'com_config_values_revert_default_aria',
+    compact: 'com_config_values_revert_default_compact',
   },
   runtimeDefault: {
     label: 'com_config_values_revert_runtime',
     aria: 'com_config_values_revert_runtime_aria',
+    compact: 'com_config_values_revert_runtime_compact',
   },
-  inherited: {
-    label: 'com_config_values_revert_inherited',
-    aria: 'com_config_values_revert_inherited_aria',
-  },
-  admin: {
-    label: 'com_config_values_revert_inherited',
-    aria: 'com_config_values_revert_inherited_aria',
-  },
-  scope: {
-    label: 'com_config_values_revert_inherited',
-    aria: 'com_config_values_revert_inherited_aria',
-  },
+  inherited: INHERITED_KEYS,
+  admin: INHERITED_KEYS,
+  scope: INHERITED_KEYS,
 };
 
 function lastSegment(path: string): string {
@@ -228,9 +238,10 @@ export function sourceLabel(
 }
 
 /**
- * Label and accessible name of a field's revert action (EV-4): what removing
+ * Label and accessible names of a field's revert action (EV-4): what removing
  * the edit target's own override falls back to, e.g. "Revert to
- * librechat.yaml (1,000,000)" or "Remove override (inherits On from Base)".
+ * librechat.yaml (1,000,000)" or "Remove override (inherits On)". Each
+ * accessible name starts with the words its control shows (WCAG 2.5.3).
  * Undefined when the field has no override to revert.
  */
 export function getRevertLabels(
@@ -243,15 +254,16 @@ export function getRevertLabels(
   const target = state.revertTarget;
   if (!target) return undefined;
   const value = formatConfigValue(target.value, localize, path);
-  const keys = REVERT_KEYS[target.source];
+  const keys =
+    target.value === undefined && target.source === 'default'
+      ? UNSET_KEYS
+      : REVERT_KEYS[target.source];
   const options = { name, value, scope: scopeSourceLabel(scope, localize) };
-  if (target.value === undefined && target.source === 'default') {
-    return {
-      label: localize('com_config_values_revert_unset'),
-      ariaLabel: localize('com_config_values_revert_unset_aria', options),
-    };
-  }
-  return { label: localize(keys.label, options), ariaLabel: localize(keys.aria, options) };
+  return {
+    label: localize(keys.label, options),
+    ariaLabel: localize(keys.aria, options),
+    compactAriaLabel: localize(keys.compact, options),
+  };
 }
 
 /** Accessible summary of where a value comes from, e.g. "Default 20,000 · librechat.yaml 1,000,000". */

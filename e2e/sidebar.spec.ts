@@ -192,4 +192,15 @@ test.describe('Sidebar rail', () => {
       expect(fit.ellipsized).toBe(true);
     }
   });
+
+  test('gives focus back to the avatar when its menu closes with Escape', async ({ page }) => {
+    await openSidebar(page, false);
+    const avatar = page.getByRole('button', { name: RINGED[0][1] });
+    await avatar.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('menu')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu')).toBeHidden();
+    await expect(avatar).toBeFocused();
+  });
 });

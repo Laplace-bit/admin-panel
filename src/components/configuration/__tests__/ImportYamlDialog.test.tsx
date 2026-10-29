@@ -151,6 +151,26 @@ describe('ImportYamlDialog wizard', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("puts focus on the target step's first control once Continue has checked the YAML", async () => {
+    renderDialog();
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Paste YAML' }), { key: 'Enter' });
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Paste YAML' }), {
+      target: { value: 'balance:\n  startBalance: 777\n' },
+    });
+    /**
+     * A browser drops focus from Continue once it is disabled while checking
+     * the YAML; jsdom keeps it there, so the click starts with focus on <body>.
+     */
+    const next = screen.getByRole('button', { name: 'Continue' });
+    next.focus();
+    next.blur();
+    fireEvent.click(next);
+    await screen.findByText('Where should these settings go?');
+    await waitFor(() =>
+      expect(screen.getByRole('radio', { name: /^Base configuration/ })).toHaveFocus(),
+    );
+  });
+
   it('preselects the open profile and compares with its own values', async () => {
     const { onImport } = renderDialog(userScope);
     await toTargets();

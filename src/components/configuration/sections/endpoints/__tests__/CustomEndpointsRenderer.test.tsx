@@ -485,6 +485,34 @@ describe('CustomEndpointsRenderer', () => {
     expect(row('Claude')).toBeInTheDocument();
   });
 
+  it('puts focus on the Name field once a template is picked, and on a template after Back', () => {
+    render(<Harness layers={baseLayers()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'com_config_create_endpoint' }));
+    const blank = screen.getByRole('button', { name: /com_config_ce_template_blank_name/ });
+    blank.focus();
+    fireEvent.click(blank);
+    expect(document.getElementById('endpoints-custom-9999-name')).toHaveFocus();
+
+    const back = screen.getByRole('button', { name: 'com_config_ce_back' });
+    back.focus();
+    fireEvent.click(back);
+    expect(screen.getByRole('button', { name: /com_config_ce_template_blank_name/ })).toHaveFocus();
+  });
+
+  it('asks before Escape discards a name typed but not yet committed', () => {
+    render(<Harness layers={baseLayers()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'com_config_create_endpoint' }));
+    fireEvent.click(screen.getByRole('button', { name: /com_config_ce_template_blank_name/ }));
+    const name = document.getElementById('endpoints-custom-9999-name');
+    if (!name) throw new Error('no name field');
+    name.focus();
+    fireEvent.change(name, { target: { value: 'Draft endpoint' } });
+    fireEvent.keyDown(name, { key: 'Escape' });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('com_config_ce_discard_confirm')).toBeVisible();
+    expect(name).toHaveValue('Draft endpoint');
+  });
+
   it('keeps Create disabled until the endpoint can be served, then adds it', async () => {
     vi.useFakeTimers();
     try {
@@ -805,7 +833,7 @@ describe('CustomEndpointsRenderer — hiding inherited endpoints by key (keyedTo
       );
       const drawer = openRow('Claude');
       const reverts = within(drawer).getAllByRole('button', {
-        name: /com_config_values_revert_inherited_aria/,
+        name: /com_config_values_revert_inherited_compact/,
       });
       expect(reverts).toHaveLength(1);
       fireEvent.click(reverts[0]);

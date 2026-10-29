@@ -257,6 +257,17 @@ describe('PreviewDrawer on a server that resolves configs (resolvedApi)', () => 
     expect(screen.queryByText(/Their role and groups/)).not.toBeInTheDocument();
   });
 
+  it('puts focus in the picker search on Change, and back on Change once the picker closes', () => {
+    renderDrawer({ type: 'PRINCIPAL', principal: jane });
+    const change = screen.getByRole('button', { name: 'Change' });
+    change.focus();
+    fireEvent.click(change);
+    expect(screen.getByRole('combobox')).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Change' })).toHaveFocus();
+  });
+
   describe('Azure groups and Vertex AI before and after LibreChat derives them', () => {
     const groups = ['endpoints', 'azureOpenAI', 'groups'];
     const userLayer = (ignored: t.PreviewIgnored[]): t.PreviewLayer => ({

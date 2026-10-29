@@ -186,15 +186,22 @@ function focusMovedInto(container: HTMLElement, before: Element | null): boolean
 const CHECKED_RADIO =
   'input[type="radio"]:checked, [role="radio"][aria-checked="true"], [role="group"] button[aria-pressed="true"]';
 
+/** The toggle in a section's, group's or entry card's heading, which names it. */
+const HEADING_TOGGLE = 'button[data-section-id], :is(h2, h3, h4, h5, h6) > button[aria-expanded]';
+
 /**
- * Focuses the target's control; a read-only setting (no control) focuses its
- * row instead, so keyboard and screen-reader users land where the page shows
- * it rather than at the top of the page.
+ * Focuses the target's control (with `heading`, the toggle that heads the
+ * section or card, if it has one); a read-only setting (no control) focuses
+ * its row instead, so keyboard and screen-reader users land where the page
+ * shows it rather than at the top of the page.
  */
-function focusTarget(el: HTMLElement) {
-  const control = el.matches(FOCUSABLE)
-    ? el
-    : (el.querySelector<HTMLElement>(CHECKED_RADIO) ?? el.querySelector<HTMLElement>(FOCUSABLE));
+function focusTarget(el: HTMLElement, heading: boolean) {
+  const toggle = heading ? el.querySelector<HTMLElement>(HEADING_TOGGLE) : null;
+  const control =
+    toggle ??
+    (el.matches(FOCUSABLE)
+      ? el
+      : (el.querySelector<HTMLElement>(CHECKED_RADIO) ?? el.querySelector<HTMLElement>(FOCUSABLE)));
   if (control) {
     control.focus({ preventScroll: true });
     return;
@@ -275,7 +282,9 @@ export function revealConfigPath(
     settleTimers.push(
       window.setTimeout(() => {
         settle();
-        if (focus && !focusMovedInto(container, focusedBefore)) focusTarget(el);
+        if (focus && !focusMovedInto(container, focusedBefore)) {
+          focusTarget(el, focus === 'heading');
+        }
       }, SETTLE_MS[0]),
       window.setTimeout(() => {
         settle();

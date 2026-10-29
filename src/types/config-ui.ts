@@ -139,6 +139,21 @@ export interface ConfigTabContentProps {
   onShowAll?: () => void;
 }
 
+/** The open tab's settings, inside `ConfigTabContent` and its status region. */
+export interface TabSettingsProps extends ConfigTabContentProps {
+  /** Puts why the tab shows no settings in the status region ('' once it shows some again). */
+  onEmptyState: (message: string) => void;
+}
+
+/** Why the tab shows no settings (a filter that matches nothing, "Set values only"). */
+export interface EmptyTabStateProps {
+  message: string;
+  /** The way out: Clear filter, Show all. */
+  action?: ReactNode;
+  /** Called with `message` while it shows, and with '' once it goes. */
+  onShown: (message: string) => void;
+}
+
 export interface ConfigTableOfContentsProps {
   /** The tab's entries (`buildTocEntries`), narrowed to the tab filter's matches. */
   entries: TocEntry[];
@@ -656,4 +671,19 @@ export interface UnknownSettingsProps {
   fields: SchemaField[];
   value: ConfigValue;
   path: string;
+}
+
+/** Props of one Langfuse connection key (public or secret). */
+export interface LangfuseKeyFieldProps {
+  /** The text field's id (and form name). */
+  id: string;
+  label: string;
+  /** The stored key, masked: shown as a button that opens the key for editing. Undefined while editing. */
+  preview?: string;
+  autoFocus: boolean;
+  value: string;
+  placeholder: string;
+  disabled: boolean;
+  onEdit: () => void;
+  onChange: (value: string) => void;
 }
