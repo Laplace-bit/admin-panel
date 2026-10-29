@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
-import { LIVE, LIVE_SKIP_REASON } from './live';
+import { LIVE, LIVE_SKIP_REASON, lockBase } from './live';
 
 /**
  * Save-pipeline journeys for custom endpoints (WS1). They need a real
@@ -53,6 +53,7 @@ async function setText(field: Locator, value: string) {
 test.describe('Configuration saves: custom endpoints by identity', () => {
   test.skip(!LIVE, LIVE_SKIP_REASON);
   test.describe.configure({ mode: 'serial', timeout: 120_000 });
+  lockBase();
 
   test('editing one field of a librechat.yaml endpoint saves only that change', async ({
     page,

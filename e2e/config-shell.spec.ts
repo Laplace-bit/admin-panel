@@ -222,7 +222,7 @@ test.describe('Configuration shell: Back from the USER role profile', () => {
     await expect(user).toHaveCount(0);
   }
 
-  lockUserProfile(async (page) => {
+  lockUserProfile(async ({ page }) => {
     if (!createdUserProfile) return;
     createdUserProfile = false;
     await deleteUserProfile(page);

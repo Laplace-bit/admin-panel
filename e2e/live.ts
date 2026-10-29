@@ -2,7 +2,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, expect } from '@playwright/test';
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import type { Page, TestInfo } from '@playwright/test';
+import type { Browser, Page, TestInfo } from '@playwright/test';
 
 /**
  * Configuration specs need a LibreChat backend that serves the admin config
@@ -72,14 +72,11 @@ function lockKey(baseUrl: string): string {
 }
 
 const LOCK_KEY = lockKey(process.env.E2E_BASE_URL ?? 'http://localhost:3000');
-const LOCK_DIR = join(tmpdir(), `librechat-admin-e2e-user-profile-${LOCK_KEY}`);
 const LOCK_POLL_MS = 250;
 /** Longer than a locked test holds the lock, unless its body and its cleanup both hang. */
 const LOCK_STALE_MS = 5 * 60_000;
 /** Past the stale age, so a waiter takes over a hung holder's lock before it gives up. */
 const LOCK_WAIT_MS = LOCK_STALE_MS + 60_000;
-
-let lockHeld = false;
 
 function lockOwner(dir: string): number | undefined {
   try {
@@ -100,9 +97,9 @@ function isAlive(pid: number): boolean {
 }
 
 /**
- * A lock is stale when its owner has exited, is this worker (one test runs at a time per
- * worker, so it leaked), or has held it past the stale age. A lock whose owner file is not
- * written yet is judged by age alone.
+ * A lock is stale when its owner has exited, is this worker (a worker only waits for a lock it
+ * does not hold, so it leaked), or has held it past the stale age. A lock whose owner file is
+ * not written yet is judged by age alone.
  */
 function isStale(dir: string): boolean {
   const pid = lockOwner(dir);
@@ -118,11 +115,11 @@ function isStale(dir: string): boolean {
  * Moves a stale lock aside and deletes it. When the move fails, another waiter got there
  * first; when the lock moved aside is not stale, a waiter re-took it in between, so it goes back.
  */
-function takeOver() {
-  const aside = `${LOCK_DIR}.stale-${process.pid}-${Date.now()}`;
+function takeOver(dir: string) {
+  const aside = `${dir}.stale-${process.pid}-${Date.now()}`;
   try {
-    renameSync(LOCK_DIR, aside);
-    if (!isStale(aside)) renameSync(aside, LOCK_DIR);
+    renameSync(dir, aside);
+    if (!isStale(aside)) renameSync(aside, dir);
   } catch {
     /* Another waiter moved it first, or took the lock while it was aside. */
   } finally {
@@ -131,60 +128,102 @@ function takeOver() {
 }
 
 /** One attempt: `mkdir` is atomic and fails while another worker holds the lock. */
-function tryLock(): boolean {
+function tryLock(dir: string): boolean {
   try {
-    mkdirSync(LOCK_DIR);
+    mkdirSync(dir);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    if (isStale(LOCK_DIR)) takeOver();
+    if (isStale(dir)) takeOver(dir);
     return false;
   }
-  writeFileSync(join(LOCK_DIR, 'owner'), String(process.pid));
+  writeFileSync(join(dir, 'owner'), String(process.pid));
   return true;
 }
 
-function releaseLock() {
-  if (!lockHeld) return;
-  lockHeld = false;
-  process.off('exit', releaseLock);
-  if (lockOwner(LOCK_DIR) === process.pid) rmSync(LOCK_DIR, { recursive: true, force: true });
+/** A lock on one piece of E2E_BASE_URL's backend, shared by every worker and spec file. */
+function backendLock(name: string, label: string) {
+  const dir = join(tmpdir(), `librechat-admin-e2e-${name}-${LOCK_KEY}`);
+  let held = false;
+
+  function release() {
+    if (!held) return;
+    held = false;
+    process.off('exit', release);
+    if (lockOwner(dir) === process.pid) rmSync(dir, { recursive: true, force: true });
+  }
+
+  /** Waits for the lock without spending the test's own timeout on the wait. */
+  async function acquire(testInfo: TestInfo) {
+    const started = Date.now();
+    const timeout = testInfo.timeout;
+    if (timeout) testInfo.setTimeout(timeout + LOCK_WAIT_MS);
+    while (!tryLock(dir)) {
+      if (Date.now() - started > LOCK_WAIT_MS) {
+        const holder = lockOwner(dir) ?? 'unknown';
+        throw new Error(
+          `Gave up after ${LOCK_WAIT_MS / 1000} s waiting for the ${label} lock ` +
+            `${dir}, held by pid ${holder}`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
+    }
+    held = true;
+    process.on('exit', release);
+    if (timeout) testInfo.setTimeout(timeout + Date.now() - started);
+  }
+
+  return { acquire, release };
 }
 
-/** Waits for the lock without spending the test's own timeout on the wait. */
-async function acquireLock(testInfo: TestInfo) {
-  const started = Date.now();
-  const timeout = testInfo.timeout;
-  if (timeout) testInfo.setTimeout(timeout + LOCK_WAIT_MS);
-  while (!tryLock()) {
-    if (Date.now() - started > LOCK_WAIT_MS) {
-      const holder = lockOwner(LOCK_DIR) ?? 'unknown';
-      throw new Error(
-        `Gave up after ${LOCK_WAIT_MS / 1000} s waiting for the USER role profile lock ` +
-          `${LOCK_DIR}, held by pid ${holder}`,
-      );
+const userProfileLock = backendLock('user-profile', 'USER role profile');
+const baseLock = backendLock('base', 'Base configuration');
+
+/** Puts back what a locked test changed, before the lock is released, also after a failure. */
+type LockCleanup = (
+  fixtures: { page: Page; browser: Browser },
+  testInfo: TestInfo,
+) => Promise<void>;
+
+/** Holds `lock` through each test of the calling describe and its `cleanup`. */
+function lockEach(lock: ReturnType<typeof backendLock>, cleanup?: LockCleanup) {
+  test.beforeEach(() => lock.acquire(test.info()));
+  test.afterEach(async ({ page, browser }, testInfo) => {
+    try {
+      await cleanup?.({ page, browser }, testInfo);
+    } finally {
+      lock.release();
     }
-    await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
-  }
-  lockHeld = true;
-  process.on('exit', releaseLock);
-  if (timeout) testInfo.setTimeout(timeout + Date.now() - started);
+  });
 }
 
 /**
  * Runs each test of the calling describe alone against E2E_BASE_URL's backend, across workers
  * and spec files. Every test that creates, uses or deletes the USER role's profile calls it:
- * there are only two built-in roles, so no test gets a profile of its own. `cleanup` runs
- * before the lock is released, also after a failure.
+ * there are only two built-in roles, so no test gets a profile of its own.
  */
-export function lockUserProfile(cleanup?: (page: Page) => Promise<void>) {
-  test.beforeEach(() => acquireLock(test.info()));
-  test.afterEach(async ({ page }) => {
-    try {
-      await cleanup?.(page);
-    } finally {
-      releaseLock();
-    }
-  });
+export function lockUserProfile(cleanup?: LockCleanup) {
+  lockEach(userProfileLock, cleanup);
+}
+
+/**
+ * Keeps Base's admin overrides from changing under a configuration visual baseline. Every
+ * describe whose journeys save to Base calls it, so each journey holds the lock from before its
+ * first save until it, or its `cleanup`, has put Base back; each baseline holds it from its check
+ * that Base stores no override until its screenshot is taken. A describe that also locks the USER
+ * role's profile nests inside this one, so every worker takes the two locks in the same order.
+ */
+export function lockBase(cleanup?: LockCleanup) {
+  lockEach(baseLock, cleanup);
+}
+
+/** Holds the Base lock (see lockBase) around a hook that saves to Base outside a test. */
+export async function withBaseLock(testInfo: TestInfo, run: () => Promise<void>) {
+  await baseLock.acquire(testInfo);
+  try {
+    await run();
+  } finally {
+    baseLock.release();
+  }
 }
 
 /** click-ui Selects for the a11y specs: each `open` loads the Select's page and returns its trigger. */

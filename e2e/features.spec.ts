@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
-import { LIVE, LIVE_SKIP_REASON, openConfigTab } from './live';
+import { LIVE, LIVE_SKIP_REASON, lockBase, openConfigTab } from './live';
 
 /**
  * Features tab journeys (WS13): the memory agent switch, allowlists, web
@@ -35,6 +35,7 @@ async function setText(field: Locator, value: string) {
 test.describe('Features editors', () => {
   test.skip(!LIVE, LIVE_SKIP_REASON);
   test.describe.configure({ mode: 'serial', timeout: 120_000 });
+  lockBase();
 
   test('the memory agent switches from a librechat.yaml ID to an inline model and back', async ({
     page,

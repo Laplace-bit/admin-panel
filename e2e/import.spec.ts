@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { LIVE, LIVE_SKIP_REASON, lockUserProfile } from './live';
+import { LIVE, LIVE_SKIP_REASON, lockBase, lockUserProfile } from './live';
 
 /**
  * The YAML import wizard needs LibreChat's admin config API, which the mock
@@ -63,7 +63,7 @@ async function revertBaseStartBalance(page: Page) {
 }
 
 test.describe('the base configuration', () => {
-  test.afterEach(({ page }) => revertBaseStartBalance(page));
+  lockBase(({ page }) => revertBaseStartBalance(page));
 
   test('imports a snippet into Base, previewing exactly its keys', async ({ page }) => {
     const value = 100000 + (Date.now() % 100000);

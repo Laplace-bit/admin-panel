@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Browser, BrowserContextOptions, Locator, Page } from '@playwright/test';
-import { LIVE, LIVE_SKIP_REASON, lockUserProfile } from './live';
+import { LIVE, LIVE_SKIP_REASON, lockBase, lockUserProfile, withBaseLock } from './live';
 
 /**
  * Model specs journeys (WS11, the audit's specs journeys). They need a live
@@ -78,8 +78,10 @@ async function addSpec(page: Page, label: string, endpoint: string, model: strin
 test.describe('Model specs', () => {
   test.skip(!LIVE, LIVE_SKIP_REASON);
   test.describe.configure({ mode: 'serial', timeout: 120_000 });
-  test.beforeAll(({ browser }, workerInfo) => revertList(browser, workerInfo.project.use));
-  test.afterEach(({ browser }, testInfo) => revertList(browser, testInfo.project.use));
+  test.beforeAll(({ browser }, testInfo) =>
+    withBaseLock(testInfo, () => revertList(browser, testInfo.project.use)),
+  );
+  lockBase(({ browser }, testInfo) => revertList(browser, testInfo.project.use));
 
   test('the tab says how users pick models and what they will see', async ({ page }) => {
     await openSpecs(page);
