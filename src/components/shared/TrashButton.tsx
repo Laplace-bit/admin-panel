@@ -8,7 +8,13 @@ import { cn } from '@/utils';
  * `IconButton` overwrites `aria-label` with the icon name) and the button can
  * never act as a form's implicit submit button.
  */
-export function TrashButton({ onClick, ariaLabel, size = 'sm', disabled }: t.TrashButtonProps) {
+export function TrashButton({
+  onClick,
+  ariaLabel,
+  size = 'sm',
+  disabled,
+  buttonRef,
+}: t.TrashButtonProps) {
   const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     onClick();
@@ -16,6 +22,7 @@ export function TrashButton({ onClick, ariaLabel, size = 'sm', disabled }: t.Tra
 
   return (
     <button
+      ref={buttonRef}
       type="button"
       onClick={handleClick}
       aria-label={ariaLabel}

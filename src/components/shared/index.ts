@@ -1,6 +1,7 @@
 export { AccessDenied } from './AccessDenied';
 export { AddItemButton } from './AddItemButton';
 export { Avatar } from './Avatar';
+export { BusyButton } from './BusyButton';
 export { CloseButton } from './CloseButton';
 export { CommandDialog } from './CommandDialog';
 export { CountBadge, OverrideCount } from './CountBadge';

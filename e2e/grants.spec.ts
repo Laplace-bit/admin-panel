@@ -133,7 +133,9 @@ test.describe('Grants page - Management tab', () => {
     const adminRow = page.locator('tbody tr').filter({ hasText: 'Admin' }).first();
     await adminRow.click();
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
-    await expect(page.getByRole('dialog').locator('.badge-role')).toBeVisible();
+    const badge = page.getByRole('dialog').locator('.badge-role');
+    await expect(badge).toBeVisible();
+    await expect(badge.getByRole('img')).toHaveCount(0);
   });
 
   test('dialog cancel discards changes', async ({ page }) => {
@@ -165,6 +167,41 @@ test.describe('Grants page - Audit Log tab', () => {
     await expect(auditTab).toHaveAttribute('data-state', 'active');
     await expect(page.getByRole('table')).toBeVisible();
   });
+
+  test('Clear dates gives focus to the From date picker', async ({ page }) => {
+    await page.getByRole('button', { name: 'From', exact: true }).click();
+    await page.getByRole('gridcell').filter({ hasText: /^1$/ }).first().click();
+    const clear = page.getByRole('button', { name: 'Clear date filters' });
+    await clear.focus();
+    await page.keyboard.press('Enter');
+
+    await expect(clear).toHaveCount(0);
+    await expect(page.locator('#audit-date-from')).toBeFocused();
+    await expect(page.locator('#audit-date-from')).toHaveAccessibleName('From');
+  });
+
+  for (const width of [390, 320]) {
+    test(`the filters wrap at ${width}px: no sideways scroll, Export on screen`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 844 });
+      const filters = page.getByRole('group', { name: 'Filters' });
+      await expect(filters).toBeVisible();
+
+      const overflow = await filters.evaluate((el) => {
+        let box = el.parentElement;
+        while (box && getComputedStyle(box).overflowY !== 'auto') box = box.parentElement;
+        return box ? box.scrollWidth - box.clientWidth : 0;
+      });
+      expect(overflow).toBeLessThanOrEqual(0);
+      const exportBox = await page
+        .getByRole('button', { name: /export all matching/i })
+        .boundingBox();
+      expect(exportBox).not.toBeNull();
+      expect(exportBox!.x).toBeGreaterThanOrEqual(0);
+      expect(exportBox!.x + exportBox!.width).toBeLessThanOrEqual(width);
+    });
+  }
 
   test('empty state when no entries match filters', async ({ page }) => {
     await searchField(page).fill('zzzznonexistent');
@@ -220,6 +257,17 @@ test.describe('Grants page - Audit Log tab', () => {
       }
     });
 
+    test('Export keeps focus on its button while it runs', async ({ page }) => {
+      const exportButton = page.getByRole('button', { name: /export all matching/i });
+      await exportButton.focus();
+      const download = page.waitForEvent('download');
+      await page.keyboard.press('Enter');
+      await download;
+
+      await expect(exportButton).toBeFocused();
+      await expect(exportButton).not.toHaveAttribute('aria-busy');
+    });
+
     test('Export writes the seeded entry the filters match', async ({ page }) => {
       await searchField(page).fill('Alice');
       await page.getByRole('button', { name: /^Revoked$/i }).click();
@@ -262,6 +310,37 @@ test.describe('Grants page - Audit Log tab', () => {
       await expect(drawer.getByText('Alice Chen').first()).toBeVisible();
       await expect(drawer.getByText('read:agents').first()).toBeVisible();
       await expect(drawer.getByText(/entry not found/i)).toHaveCount(0);
+
+      const results = await new AxeBuilder({ page })
+        .withTags(WCAG_TAGS)
+        .include('[role="dialog"]')
+        .analyze();
+      expect(results.violations).toEqual([]);
+    });
+
+    test('copying a value from the drawer is announced', async ({ page }) => {
+      await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+      await page.getByRole('button', { name: 'Open audit log entry for USER' }).click();
+      const copy = page.getByRole('dialog').locator('button', { hasText: 'read:agents' });
+      await copy.focus();
+      await page.keyboard.press('Enter');
+
+      await expect(page.getByRole('status').filter({ hasText: 'Copied' })).toHaveText(
+        'Copied capability',
+      );
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('read:agents');
+    });
+
+    test('closing a drawer opened from a permalink gives focus to its row', async ({ page }) => {
+      const row = page.getByRole('button', { name: 'Open audit log entry for USER' });
+      await row.click();
+      const entryId = new URL(page.url()).searchParams.get('entryId');
+      await page.goto(`/grants?tab=audit-log&entryId=${entryId}`);
+      await expect(page.getByRole('dialog')).toBeVisible();
+
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('dialog')).not.toBeVisible();
+      await expect(row).toBeFocused();
     });
 
     test('the mock serves one entry by id, as LibreChat does', async ({ request }) => {

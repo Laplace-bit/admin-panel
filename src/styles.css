@@ -389,9 +389,19 @@ button.row-link:focus-visible {
 }
 
 /* click-ui DatePicker: round the PopoverTrigger button so the global
-   focus-visible outline matches the input wrapper's border-radius. */
+   focus-visible outline matches the input wrapper's border-radius. Its
+   input wrapper is a fixed 250px; capped at the width there is, the audit
+   log's date filters fit a 320px screen instead of scrolling sideways. */
 .audit-date-cell button {
   border-radius: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.audit-date-cell button div,
+.audit-date-cell button input {
+  min-width: 0;
+  max-width: 100%;
 }
 
 input:not([cmdk-input]):focus-visible,
@@ -1167,6 +1177,15 @@ body > div:has(+ .modal-frost) {
   --click-switch-color-background-default: var(--settings-switch-off);
   --click-switch-color-stroke-default: var(--settings-switch-off);
   --click-badge-opaque-color-text-success: var(--settings-success-fg);
+}
+
+/* A focused or pressed danger button (Delete, Clear) keeps AA contrast: on
+   click-ui's light 0.3-alpha red, its #c10000 text is 4.06:1. The hover
+   tint, 0.2 alpha, gives 4.75:1, and the focus ring still marks focus. The
+   dark text passes on click-ui's dark tint. Unlayered so it wins over
+   click-ui's sheet. */
+:root[data-cui-theme='light'] {
+  --click-button-basic-color-danger-background-active: rgb(100% 13.725% 13.725% / 0.2);
 }
 
 /* One accent in both themes (VS-1, VS-9): click-ui's dark theme paints the

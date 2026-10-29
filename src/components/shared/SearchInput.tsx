@@ -7,10 +7,12 @@ export function SearchInput({
   placeholder,
   className,
   ariaLabel,
+  inputRef,
 }: t.SearchInputProps) {
   return (
     <div className={`cui-field ${className ?? ''}`} style={{ maxWidth: 400 }}>
       <SearchField
+        ref={inputRef}
         value={value}
         onChange={onChange}
         placeholder={placeholder}

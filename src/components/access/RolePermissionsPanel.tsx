@@ -143,7 +143,7 @@ export function RolePermissionsPanel({
           <div
             className={
               singlePermTypes.length > 6
-                ? 'grid w-fit grid-cols-[auto_auto_auto] gap-x-4 gap-y-1.5'
+                ? 'grid min-w-0 grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2 md:grid-cols-3'
                 : 'flex flex-wrap gap-x-6 gap-y-1.5'
             }
           >
