@@ -5,7 +5,7 @@ import { useExpandableState, useLocalize, useValuesScope } from '@/hooks';
 import { RegionNameContext } from '@/contexts/RegionNameContext';
 import { transportLabelKey, transportOf } from './transport';
 import { sourceLabel } from '../../values';
-import { cn, restoreFocus } from '@/utils';
+import { cn, restoreFocusLater } from '@/utils';
 
 /** Row-menu icons, the same as the custom endpoint rows'. */
 const ACTION_ICONS: Readonly<Record<t.McpServerAction['id'], t.MenuIconName>> = {
@@ -210,11 +210,15 @@ export function McpServerCard({
     };
   }, [setIsExpanded]);
 
-  /** Escape (or Enter on an unchanged name) takes the rename input away: focus goes back to the header. */
+  /**
+   * Escape (or Enter on an unchanged name) takes the rename input away: focus
+   * goes back to the header. Checked a frame later, since a blur that ends the
+   * rename (a click or Tab elsewhere) is still moving focus to its target.
+   */
   useEffect(() => {
     const was = wasRenaming.current;
     wasRenaming.current = renaming;
-    if (was && !renaming) restoreFocus([headerRef.current]);
+    if (was && !renaming) restoreFocusLater([() => headerRef.current]);
   }, [renaming]);
 
   useEffect(() => {
@@ -222,6 +226,13 @@ export function McpServerCard({
     const card = cardRef.current;
     requestAnimationFrame(() => card?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' }));
   }, [badges.isNew, defaultExpanded]);
+
+  /**
+   * The facts line sits above the header's stretched hit area so its chips'
+   * and summary's tooltips show on hover; a click on it still opens or closes
+   * the card, as a click anywhere else on the header does.
+   */
+  const toggleFromFacts = () => headerRef.current?.click();
 
   const menuItems: t.KebabMenuItem[] = actions.map((action) => ({
     label: action.label,
@@ -314,7 +325,8 @@ export function McpServerCard({
             )}
             <span
               id={factsId}
-              className="col-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
+              onClick={toggleFromFacts}
+              className="relative z-1 col-start-2 flex min-w-0 cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 select-none"
             >
               <SourceChips badges={badges} />
               <span

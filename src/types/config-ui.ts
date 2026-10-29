@@ -139,6 +139,21 @@ export interface ConfigTabContentProps {
   onShowAll?: () => void;
 }
 
+/** The open tab's settings, inside `ConfigTabContent` and its status region. */
+export interface TabSettingsProps extends ConfigTabContentProps {
+  /** Puts why the tab shows no settings in the status region ('' once it shows some again). */
+  onEmptyState: (message: string) => void;
+}
+
+/** Why the tab shows no settings (a filter that matches nothing, "Set values only"). */
+export interface EmptyTabStateProps {
+  message: string;
+  /** The way out: Clear filter, Show all. */
+  action?: ReactNode;
+  /** Called with `message` while it shows, and with '' once it goes. */
+  onShown: (message: string) => void;
+}
+
 export interface ConfigTableOfContentsProps {
   /** The tab's entries (`buildTocEntries`), narrowed to the tab filter's matches. */
   entries: TocEntry[];

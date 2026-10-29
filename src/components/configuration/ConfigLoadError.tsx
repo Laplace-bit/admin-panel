@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Button, Icon } from '@clickhouse/click-ui';
 import type * as t from '@/types';
-import { activeConfigTab, pageTitle, restoreFocus, restoreFocusWhenShown } from '@/utils';
+import { activeConfigTab, restoreFocus, restoreFocusWhenShown } from '@/utils';
 import { useLocalize } from '@/hooks';
 
 function errorMessage(error: unknown): string | null {
@@ -11,10 +11,23 @@ function errorMessage(error: unknown): string | null {
 }
 
 /**
+ * The Retry of a load error card shown again after a retry failed: the route
+ * and the page both mount a new card in place of the one that retried.
+ */
+function retryShownAgain(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-config-load-error] button:not([disabled])');
+}
+
+/** The open tab once the page has loaded: none while a skeleton (`aria-busy`) stands in for it. */
+function loadedConfigTab(): HTMLElement | null {
+  return document.querySelector('[aria-busy="true"]') ? null : activeConfigTab();
+}
+
+/**
  * Danger card with Retry, shown in place of the configuration form when its
- * data fails to load. A retry that loads the page takes the card, and the
- * focused Retry with it, away: focus goes to the open tab once the page shows
- * it. A retry that fails again gives focus back to Retry.
+ * data fails to load. A retry takes the card, and the focused Retry with it,
+ * away while it loads: focus goes to the open tab once the page has loaded,
+ * or to the Retry of the card shown again if it failed again.
  */
 export function ConfigLoadError({
   error,
@@ -39,7 +52,7 @@ export function ConfigLoadError({
 
   useEffect(
     () => () => {
-      if (retriedRef.current) restoreFocusWhenShown([activeConfigTab, pageTitle]);
+      if (retriedRef.current) restoreFocusWhenShown([retryShownAgain, loadedConfigTab]);
     },
     [],
   );
@@ -49,6 +62,7 @@ export function ConfigLoadError({
       <div
         ref={alertRef}
         role="alert"
+        data-config-load-error
         className="flex flex-col gap-3 rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) p-5"
       >
         <div className="flex items-start gap-3">

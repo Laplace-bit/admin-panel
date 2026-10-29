@@ -1,6 +1,6 @@
-import { useMemo, useContext } from 'react';
 import { Button } from '@clickhouse/click-ui';
-import type { KeyboardEvent, ReactNode } from 'react';
+import { useMemo, useEffect, useContext } from 'react';
+import type { KeyboardEvent } from 'react';
 import type * as t from '@/types';
 import {
   SECTION_RENDERERS,
@@ -15,11 +15,13 @@ import {
   countSectionOverrides,
   countEntrySectionOverrides,
 } from './counts';
+import { useLocalize, useAnnouncement, useConfigContract } from '@/hooks';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { RevealTargetContext } from '@/contexts/RevealTargetContext';
 import { FieldRenderer, SingleFieldRenderer } from './renderer';
 import { RowFilterContext } from '@/contexts/RowFilterContext';
 import { deriveFieldValue, isSectionDisabled } from '@/utils';
+import { ScreenReaderAnnouncer } from '@/components/shared';
 import { SECTION_META, isPathInSection } from './configMeta';
 import { ReadOnlySection } from './ReadOnlySection';
 import { UnknownSettings } from './UnknownSettings';
@@ -27,7 +29,6 @@ import { ConfigSection } from './ConfigSection';
 import { CodeField } from './fields/CodeField';
 import { InfoBanner } from './InfoBanner';
 import { ScopeGate } from './ScopeGate';
-import { useLocalize, useConfigContract } from '@/hooks';
 import { getWriteRules } from '@/constants';
 
 /**
@@ -47,19 +48,37 @@ function isSimpleScalar(f: t.SchemaField): boolean {
   return !f.children?.length && f.type !== 'record' && f.type !== 'object';
 }
 
-/** Why the tab shows no settings (a filter, "Set values only"): a status message screen readers hear (WCAG 4.1.3). */
-function EmptyTabState({ message, action }: { message: string; action?: ReactNode }) {
+/** Why the tab shows no settings (a filter, "Set values only"), also put in the tab's status region. */
+function EmptyTabState({ message, action, onShown }: t.EmptyTabStateProps) {
+  useEffect(() => {
+    onShown(message);
+    return () => onShown('');
+  }, [message, onShown]);
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-16 text-(--cui-color-text-muted)">
-      <span role="status" className="text-sm">
-        {message}
-      </span>
+      <span className="text-sm">{message}</span>
       {action}
     </div>
   );
 }
 
-export function ConfigTabContent({
+/**
+ * The open tab's settings. Why it shows none (a filter that matches nothing,
+ * "Set values only") is a status message (WCAG 4.1.3) from a region that
+ * stays mounted while the settings come and go, so screen readers hear it
+ * arrive.
+ */
+export function ConfigTabContent(props: t.ConfigTabContentProps) {
+  const { message, announce } = useAnnouncement();
+  return (
+    <>
+      <ScreenReaderAnnouncer message={message} />
+      <TabSettings {...props} onEmptyState={announce} />
+    </>
+  );
+}
+
+function TabSettings({
   sections,
   configValues,
   editedValues,
@@ -96,7 +115,8 @@ export function ConfigTabContent({
   filterText,
   onClearFilter,
   onShowAll,
-}: t.ConfigTabContentProps) {
+  onEmptyState,
+}: t.TabSettingsProps) {
   const localize = useLocalize();
   const revealTarget = useContext(RevealTargetContext);
   const fieldsDisabled = readOnly;
@@ -213,13 +233,16 @@ export function ConfigTabContent({
   }
 
   if (visibleSections.length === 0 && filtering) {
-    return <EmptyTabState message={localize('com_scope_no_changed_in_tab')} />;
+    return (
+      <EmptyTabState message={localize('com_scope_no_changed_in_tab')} onShown={onEmptyState} />
+    );
   }
 
   if (visibleSections.length === 0 && visibleSectionIds) {
     return (
       <EmptyTabState
         message={localize('com_config_shell_filter_empty', { query: filterText ?? '' })}
+        onShown={onEmptyState}
         action={
           onClearFilter && (
             <Button
@@ -238,6 +261,7 @@ export function ConfigTabContent({
     return (
       <EmptyTabState
         message={localize('com_config_shell_nothing_customized')}
+        onShown={onEmptyState}
         action={
           onShowAll && (
             <Button

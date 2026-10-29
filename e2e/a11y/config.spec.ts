@@ -386,6 +386,23 @@ async function wcagViolations(page: Page, selector?: string) {
 const unsavedBar = (page: Page) => page.getByRole('region', { name: 'Unsaved changes' });
 const activeTab = (page: Page) => page.locator('[role="tab"][data-state="active"]');
 
+/** Marks the status regions on the page now, so a test can tell a message put into one from a region mounted with it. */
+async function markStatusRegions(page: Page) {
+  await page
+    .locator('[role="status"]')
+    .evaluateAll((regions) =>
+      regions.forEach((region) => region.setAttribute('data-e2e-before', '')),
+    );
+  return page.locator('[role="status"][data-e2e-before]');
+}
+
+/** Waits two frames, so focus a deferred restore would move has moved. */
+async function settleFrames(page: Page) {
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+}
+
 async function reviewAndSave(page: Page) {
   await unsavedBar(page)
     .getByRole('button', { name: /^Review & save$/ })
@@ -501,9 +518,11 @@ test.describe('focus stays on the page when a control takes itself away', () => 
 
   test('Discard in the unsaved-changes bar puts focus on the open tab', async ({ page }) => {
     await openConfigTab(page, 'system');
+    const regions = await markStatusRegions(page);
     const field = page.locator('#balance-refillAmount');
     await field.fill('12345');
     await field.press('Tab');
+    await expect(regions.filter({ hasText: /^1 unsaved change/ })).toHaveCount(1);
     await unsavedBar(page).getByRole('button', { name: 'Discard' }).focus();
     await page.keyboard.press('Enter');
     await expect(unsavedBar(page)).toHaveCount(0);
@@ -529,7 +548,9 @@ test.describe('focus stays on the page when a control takes itself away', () => 
       .toBe(true);
   });
 
-  test('Escape on an MCP server rename puts focus back on its header', async ({ page }) => {
+  test('an MCP server rename gives focus back to its header on Escape or Enter, and leaves it where a click or Tab moved it', async ({
+    page,
+  }) => {
     await openConfigTab(page, 'mcp');
     await page.getByRole('button', { name: 'Create MCP server' }).click();
     const create = page.getByRole('dialog');
@@ -540,16 +561,79 @@ test.describe('focus stays on the page when a control takes itself away', () => 
     await expect(create).toHaveCount(0);
 
     const card = page.locator('[data-mcp-server="e2e-focus"]');
-    await card.getByRole('button', { name: 'Actions for e2e-focus' }).click();
-    await page.getByRole('menuitem', { name: /^Rename/ }).click();
+    const header = card.locator('button[data-section-id]');
     const rename = page.getByRole('textbox', { name: 'Rename e2e-focus' });
-    await expect(rename).toBeFocused();
-    await page.keyboard.press('Escape');
+    const startRename = async () => {
+      await card.getByRole('button', { name: 'Actions for e2e-focus' }).click();
+      await page.getByRole('menuitem', { name: /^Rename/ }).click();
+      await expect(rename).toBeFocused();
+    };
+
+    for (const key of ['Escape', 'Enter']) {
+      await startRename();
+      await page.keyboard.press(key);
+      await expect(rename).toHaveCount(0);
+      await expect(header).toBeFocused();
+    }
+
+    const filter = page.getByRole('textbox', { name: 'Filter this tab…' });
+    await startRename();
+    await filter.click();
     await expect(rename).toHaveCount(0);
-    await expect(card.locator('button[data-section-id]')).toBeFocused();
+    await settleFrames(page);
+    await expect(filter).toBeFocused();
+    await page.keyboard.type('e2e');
+    await expect(filter).toHaveValue('e2e');
+    await filter.fill('');
+
+    const other = page
+      .locator('[data-mcp-server]:not([data-mcp-server="e2e-focus"]) button[data-section-id]')
+      .first();
+    await startRename();
+    await other.click();
+    await expect(rename).toHaveCount(0);
+    await settleFrames(page);
+    await expect(other).toBeFocused();
+
+    await startRename();
+    await page.keyboard.press('Tab');
+    await expect(rename).toHaveCount(0);
+    await settleFrames(page);
+    await expect(header).not.toBeFocused();
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
 
     await unsavedBar(page).getByRole('button', { name: 'Discard' }).click();
     await expect(card).toHaveCount(0);
+  });
+
+  test("an MCP card's chips and summary show their tooltips and still open and close the card", async ({
+    page,
+  }) => {
+    await openConfigTab(page, 'mcp');
+    const card = page.locator('[data-mcp-server]').first();
+    const header = card.locator('button[data-section-id]');
+    const facts = card.locator(`[id="${await header.getAttribute('aria-describedby')}"]`);
+    const chip = facts.locator('.state-chip').first();
+    await expect(chip).toHaveAttribute('title', /\S/);
+    const hits = await facts.evaluate((line) =>
+      [line.querySelector('.state-chip'), line.querySelector('[title]:not(.state-chip)')].map(
+        (el) => {
+          if (!el) return 'missing';
+          const box = el.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+          return hit != null && el.contains(hit)
+            ? 'itself'
+            : (hit?.outerHTML.slice(0, 80) ?? 'none');
+        },
+      ),
+    );
+    expect(hits).toEqual(['itself', 'itself']);
+
+    const expanded = await header.getAttribute('aria-expanded');
+    await chip.click();
+    await expect(header).not.toHaveAttribute('aria-expanded', expanded ?? '');
+    await chip.click();
+    await expect(header).toHaveAttribute('aria-expanded', expanded ?? '');
   });
 
   test('Escape asks before discarding a name typed into a blank endpoint', async ({ page }) => {

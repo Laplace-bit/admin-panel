@@ -87,6 +87,43 @@ test.describe('Configuration shell: loading and errors', () => {
     await alert.getByRole('button', { name: 'Retry' }).click();
     await expect(page.locator('form[aria-label]')).toBeVisible({ timeout: 30_000 });
   });
+
+  const RETRIES = [
+    { what: 'schema', marker: '"totalFields"', fromSidebar: true },
+    { what: 'base config', marker: 'yamlPaths', fromSidebar: false },
+  ] as const;
+
+  for (const { what, marker, fromSidebar } of RETRIES) {
+    test(`Retry on a failing ${what} gives focus back to Retry if it fails again, then to the open tab once it loads`, async ({
+      page,
+    }) => {
+      await page.route('**/_serverFn/**', failServerFn(marker));
+      if (fromSidebar) {
+        await page.goto('/');
+        await page.locator('aside a[href*="/configuration"]').first().click();
+      } else {
+        await page.goto('/configuration?tab=system');
+      }
+      const alert = page.getByRole('alert').filter({ hasText: "Couldn't load the configuration" });
+      await expect(alert).toBeVisible({ timeout: 30_000 });
+      await alert.evaluate((card) => card.setAttribute('data-e2e-retried', ''));
+      await alert.getByRole('button', { name: 'Retry' }).focus();
+      await page.keyboard.press('Enter');
+
+      const again = page
+        .locator('[role="alert"]:not([data-e2e-retried])')
+        .filter({ hasText: "Couldn't load the configuration" });
+      await expect(again).toBeVisible({ timeout: 30_000 });
+      const retry = again.getByRole('button', { name: 'Retry' });
+      await expect(retry).toBeFocused();
+      await expect(page.locator('header h1')).not.toBeFocused();
+
+      await page.unroute('**/_serverFn/**');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('form[aria-label]')).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator('[role="tab"][data-state="active"]')).toBeFocused();
+    });
+  }
 });
 
 test.describe('Configuration shell: toolbar', () => {
@@ -108,10 +145,22 @@ test.describe('Configuration shell: toolbar', () => {
   test("the filter's clear button is named in the panel's language", async ({ page }) => {
     await openTab(page, 'system');
     const filter = page.getByRole('textbox', { name: 'Filter this tab…' });
+    await page
+      .locator('[role="status"]')
+      .evaluateAll((regions) =>
+        regions.forEach((region) => region.setAttribute('data-e2e-before', '')),
+      );
     await filter.fill('zzzzxx');
     await expect(
-      page.getByRole('status').filter({ hasText: 'No settings on this tab match' }),
+      page
+        .getByText('No settings on this tab match “zzzzxx”')
+        .and(page.locator(':not([role="status"])')),
     ).toBeVisible();
+    await expect(
+      page
+        .locator('[role="status"][data-e2e-before]')
+        .filter({ hasText: 'No settings on this tab match “zzzzxx”' }),
+    ).toHaveCount(1);
     const clear = page.getByRole('button', { name: 'Clear', exact: true });
     await expect(clear).toBeVisible();
     await expect(page.getByRole('button', { name: 'clear input' })).toHaveCount(0);
@@ -364,6 +413,16 @@ test.describe('App shell: page titles', () => {
     test('/login names the browser tab "Sign in"', async ({ page }) => {
       await page.goto('/login');
       await expect(page).toHaveTitle(/^Sign in · LibreChat Admin Panel$/);
+    });
+
+    test('a failed SSO callback names the browser tab "Authentication failed"', async ({
+      page,
+    }) => {
+      await page.goto(
+        '/auth/openid/callback?error=auth_failed&error_description=Authentication+failed',
+      );
+      await expect(page.getByRole('heading', { name: 'Authentication failed' })).toBeVisible();
+      await expect(page).toHaveTitle(/^Authentication failed · LibreChat Admin Panel$/);
     });
   });
 });

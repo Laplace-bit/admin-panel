@@ -424,13 +424,31 @@ describe('ChangesBar', () => {
     },
   );
 
-  it('announces how many changes are unsaved in a status message, without its buttons', () => {
-    render(<ChangesBar review={reviewFor(saves)} />);
+  it('announces the first unsaved change from a status region that was there before it', async () => {
+    function Page() {
+      const [dirty, setDirty] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setDirty(true)}>
+            Edit
+          </button>
+          <ChangesBar review={reviewFor(saves, { isDirty: dirty })} />
+        </>
+      );
+    }
+    render(<Page />);
     const status = screen.getByRole('status');
-    expect(status).toHaveTextContent(/^1 unsaved change/);
+    expect(status).toBeEmptyDOMElement();
+    expect(screen.queryByRole('region', { name: 'Unsaved changes' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(screen.getByRole('status')).toBe(status);
+    expect(status).toHaveTextContent(/^1 unsaved change · System$/);
     expect(within(status).queryByRole('button')).toBeNull();
     const bar = screen.getByRole('region', { name: 'Unsaved changes' });
     expect(within(bar).getByRole('button', { name: 'Discard' })).toBeVisible();
+    expect(within(bar).queryByRole('status')).toBeNull();
   });
 
   it('puts focus on the open tab once Discard takes the bar away', async () => {

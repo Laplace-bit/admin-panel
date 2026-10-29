@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import type * as t from '@/types';
 import { ConfigTabContent } from '../ConfigTabContent';
 import '@/locales/i18n';
@@ -21,33 +21,47 @@ const SECTIONS: t.ConfigSectionConfig[] = [
   },
 ];
 
+function Tab(props: Partial<t.ConfigTabContentProps>) {
+  return (
+    <ConfigTabContent
+      sections={SECTIONS}
+      configValues={{}}
+      editedValues={{}}
+      onFieldChange={vi.fn()}
+      {...props}
+    />
+  );
+}
+
+async function nextFrame() {
+  await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+}
+
 describe('ConfigTabContent empty states', () => {
-  it('announces that the filter matches no setting on the tab as a status message', () => {
-    render(
-      <ConfigTabContent
-        sections={SECTIONS}
-        configValues={{}}
-        editedValues={{}}
-        onFieldChange={vi.fn()}
-        visibleSectionIds={new Set()}
-        filterText="zzzzxx"
-        onClearFilter={vi.fn()}
-      />,
-    );
-    expect(screen.getByRole('status')).toHaveTextContent('No settings on this tab match “zzzzxx”');
+  it('announces that the filter matches no setting from a status region that was there before', async () => {
+    const { rerender } = render(<Tab />);
+    const status = screen.getByRole('status');
+    expect(status).toBeEmptyDOMElement();
+
+    rerender(<Tab visibleSectionIds={new Set()} filterText="zzzzxx" onClearFilter={vi.fn()} />);
+    await nextFrame();
+    expect(screen.getByRole('status')).toBe(status);
+    expect(status).toHaveTextContent('No settings on this tab match “zzzzxx”');
     expect(screen.getByRole('button', { name: 'Clear filter' })).toBeVisible();
+
+    rerender(<Tab />);
+    await nextFrame();
+    expect(status).toBeEmptyDOMElement();
   });
 
-  it('announces that "Set values only" leaves nothing on the tab as a status message', () => {
-    render(
-      <ConfigTabContent
-        sections={SECTIONS}
-        configValues={{}}
-        editedValues={{}}
-        onFieldChange={vi.fn()}
-        showConfiguredOnly
-      />,
-    );
-    expect(screen.getByRole('status')).toHaveTextContent('Nothing is set on this tab');
+  it('announces that "Set values only" leaves nothing on the tab from a status region that was there before', async () => {
+    const { rerender } = render(<Tab />);
+    const status = screen.getByRole('status');
+    expect(status).toBeEmptyDOMElement();
+
+    rerender(<Tab showConfiguredOnly />);
+    await nextFrame();
+    expect(screen.getByRole('status')).toBe(status);
+    expect(status).toHaveTextContent('Nothing is set on this tab');
   });
 });
