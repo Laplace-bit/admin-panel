@@ -64,9 +64,7 @@ test.describe('Features editors', () => {
     );
     await expect(memory.getByLabel('Model', { exact: true })).toHaveValue('gpt-4o-mini');
 
-    await memory
-      .getByRole('button', { name: /^Revert Agent to its librechat\.yaml value/ })
-      .click();
+    await memory.getByRole('button', { name: /^Revert to librechat\.yaml \(.*\): Agent$/ }).click();
     await review(page);
     await saveAndWait(page);
     await expect(memory.getByRole('button', { name: 'Existing agent' })).toHaveAttribute(
@@ -120,8 +118,12 @@ test.describe('Features editors', () => {
       web.getByText('Stored encrypted. Only the last characters are shown.'),
     ).toBeVisible();
 
-    await web.getByRole('button', { name: /^Revert Serper API key/ }).click();
-    await web.getByRole('button', { name: /^Revert Search provider/ }).click();
+    await web
+      .getByRole('button', { name: /^(Revert to .+|Remove override): Serper API key$/ })
+      .click();
+    await web
+      .getByRole('button', { name: /^(Revert to .+|Remove override): Search provider$/ })
+      .click();
     await review(page);
     await saveAndWait(page);
   });

@@ -1,16 +1,16 @@
-import { useState } from 'react';
 import { Button } from '@clickhouse/click-ui';
 import * as Dialog from '@radix-ui/react-dialog';
+import { useEffect, useRef, useState } from 'react';
 import { PrincipalType } from 'librechat-data-provider';
 import type * as t from '@/types';
 import { useLocalize, useReturnFocus, useConfigPreview, useConfigFeatures } from '@/hooks';
 import { CloseButton, DecorativeIcon } from '@/components/shared';
+import { cn, restoreFocus, formatScopeName } from '@/utils';
 import { Banner } from '../sections/endpoints/Banner';
 import { getScopeTypeConfig } from '@/constants';
 import { PreviewPicker } from './Picker';
 import { PreviewLayers } from './Layers';
 import { PreviewConfig } from './Config';
-import { cn, formatScopeName } from '@/utils';
 import { sourceLabel } from '../values';
 
 function targetLabel(target: t.PreviewTarget, localize: t.LocalizeFn): string {
@@ -89,6 +89,8 @@ export function PreviewDrawer({ open, onClose, initialTarget }: t.PreviewDrawerP
   const [target, setTarget] = useState(initialTarget);
   const [picking, setPicking] = useState(false);
   const [wasOpen, setWasOpen] = useState(open);
+  const changeRef = useRef<HTMLButtonElement>(null);
+  const wasPicking = useRef(picking);
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
@@ -96,6 +98,15 @@ export function PreviewDrawer({ open, onClose, initialTarget }: t.PreviewDrawerP
       setPicking(false);
     }
   }
+
+  /** Picking or cancelling takes the picker, and the focus in it, away: focus goes back to Change. */
+  useEffect(() => {
+    const was = wasPicking.current;
+    wasPicking.current = picking;
+    if (!was || picking) return;
+    const change = changeRef.current;
+    restoreFocus([change], change?.closest('[role="dialog"]'));
+  }, [picking]);
 
   const config = getScopeTypeConfig(
     target.type === 'BASE' ? 'BASE' : target.principal.principalType,
@@ -141,6 +152,7 @@ export function PreviewDrawer({ open, onClose, initialTarget }: t.PreviewDrawerP
                 </span>
                 {!picking && (
                   <Button
+                    ref={changeRef}
                     htmlType="button"
                     type="secondary"
                     label={localize('com_config_preview_change')}

@@ -25,6 +25,65 @@ function maskPublicKey(publicKey: string): string {
   return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`;
 }
 
+/**
+ * One Langfuse key. A stored key shows its masked value as a button named by
+ * the key's label and that value ("Public key pk-lf-...cdef", WCAG 2.5.3);
+ * pressing it swaps in a text field labelled by the key's name.
+ */
+function KeyField({
+  id,
+  label,
+  preview,
+  autoFocus,
+  value,
+  placeholder,
+  disabled,
+  onEdit,
+  onChange,
+}: t.LangfuseKeyFieldProps) {
+  const localize = useLocalize();
+  if (preview === undefined) {
+    return (
+      <TextField
+        id={id}
+        name={id}
+        label={label}
+        autoFocus={autoFocus}
+        autoComplete="off"
+        data-lpignore="true"
+        data-1p-ignore="true"
+        data-bwignore="true"
+        data-form-type="other"
+        value={value}
+        disabled={disabled}
+        placeholder={placeholder}
+        onChange={onChange}
+      />
+    );
+  }
+  const labelId = `${id}-label`;
+  const previewId = `${id}-preview`;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span id={labelId} className="text-sm font-medium">
+        {label}
+      </span>
+      <button
+        type="button"
+        className="rounded-md border border-(--cui-color-stroke-default) px-3 py-2 text-left hover:border-(--cui-color-stroke-intense) focus-visible:outline-2 focus-visible:outline-(--cui-color-stroke-intense)"
+        disabled={disabled}
+        onClick={onEdit}
+        aria-labelledby={`${labelId} ${previewId}`}
+        title={localize('com_ui_edit')}
+      >
+        <code id={previewId} className="text-sm">
+          {preview}
+        </code>
+      </button>
+    </div>
+  );
+}
+
 function getVerificationLabel(
   state: VerificationState,
   message: string,
@@ -345,79 +404,41 @@ export function LangfuseRenderer({ disabled, isEditingScope }: t.FieldRendererPr
         ))}
       </Select>
 
-      <div className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium">{localize('com_config_langfuse_public_key')}</span>
-        {configured && !editingPublicKey ? (
-          <button
-            type="button"
-            className="rounded-md border border-(--cui-color-stroke-default) px-3 py-2 text-left hover:border-(--cui-color-stroke-emphasis) focus-visible:outline-2 focus-visible:outline-(--cui-color-stroke-emphasis)"
-            disabled={disabled || busy}
-            onClick={() => {
-              hasDraftRef.current = true;
-              setEditingPublicKey(true);
-            }}
-            aria-label={`${localize('com_ui_edit')} ${localize('com_config_langfuse_public_key')}`}
-          >
-            <code className="text-sm">{maskPublicKey(publicKey)}</code>
-          </button>
-        ) : (
-          <TextField
-            id="langfuse-public-token"
-            name="langfuse-public-token"
-            label=""
-            autoFocus={editingPublicKey}
-            autoComplete="off"
-            data-lpignore="true"
-            data-1p-ignore="true"
-            data-bwignore="true"
-            data-form-type="other"
-            value={publicKey}
-            disabled={disabled || busy}
-            placeholder="pk-lf-..."
-            onChange={(value) => {
-              setPublicKey(value);
-              markDraftUnverified();
-            }}
-          />
-        )}
-      </div>
+      <KeyField
+        id="langfuse-public-token"
+        label={localize('com_config_langfuse_public_key')}
+        preview={configured && !editingPublicKey ? maskPublicKey(publicKey) : undefined}
+        autoFocus={editingPublicKey}
+        value={publicKey}
+        placeholder="pk-lf-..."
+        disabled={disabled || busy}
+        onEdit={() => {
+          hasDraftRef.current = true;
+          setEditingPublicKey(true);
+        }}
+        onChange={(value) => {
+          setPublicKey(value);
+          markDraftUnverified();
+        }}
+      />
 
-      <div className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium">{localize('com_config_langfuse_secret_key')}</span>
-        {configured && !editingSecretKey ? (
-          <button
-            type="button"
-            className="rounded-md border border-(--cui-color-stroke-default) px-3 py-2 text-left hover:border-(--cui-color-stroke-emphasis) focus-visible:outline-2 focus-visible:outline-(--cui-color-stroke-emphasis)"
-            disabled={disabled || busy}
-            onClick={() => {
-              hasDraftRef.current = true;
-              setEditingSecretKey(true);
-            }}
-            aria-label={`${localize('com_ui_edit')} ${localize('com_config_langfuse_secret_key')}`}
-          >
-            <code className="text-sm">{status?.secretKeyPreview}</code>
-          </button>
-        ) : (
-          <TextField
-            id="langfuse-private-token"
-            name="langfuse-private-token"
-            label=""
-            autoFocus={editingSecretKey}
-            autoComplete="off"
-            data-lpignore="true"
-            data-1p-ignore="true"
-            data-bwignore="true"
-            data-form-type="other"
-            value={secretKey}
-            disabled={disabled || busy}
-            placeholder="sk-lf-..."
-            onChange={(value) => {
-              setSecretKey(value);
-              markDraftUnverified();
-            }}
-          />
-        )}
-      </div>
+      <KeyField
+        id="langfuse-private-token"
+        label={localize('com_config_langfuse_secret_key')}
+        preview={configured && !editingSecretKey ? (status?.secretKeyPreview ?? '') : undefined}
+        autoFocus={editingSecretKey}
+        value={secretKey}
+        placeholder="sk-lf-..."
+        disabled={disabled || busy}
+        onEdit={() => {
+          hasDraftRef.current = true;
+          setEditingSecretKey(true);
+        }}
+        onChange={(value) => {
+          setSecretKey(value);
+          markDraftUnverified();
+        }}
+      />
 
       <div className="flex min-h-9 items-center justify-end gap-2">
         {isEditing ? (

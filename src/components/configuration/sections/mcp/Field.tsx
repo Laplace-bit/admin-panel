@@ -2,6 +2,7 @@ import { useContext } from 'react';
 import type { ReactNode } from 'react';
 import type * as t from '@/types';
 import {
+  fieldControl,
   isRowVisible,
   isConfigRecord,
   hasConfigValue,
@@ -9,7 +10,13 @@ import {
   getSecretPreviewValue,
 } from '@/utils';
 import { entryFieldDefault, layerValueBeneath, lowerLayerValue } from '../../renderer/defaults';
-import { useFieldState, useLocalize, useValuesScope, useHasValueLayers } from '@/hooks';
+import {
+  useLocalize,
+  useFieldState,
+  useValuesScope,
+  useHasValueLayers,
+  useRefocusWhenGone,
+} from '@/hooks';
 import { ConfiguredOnlyContext } from '@/contexts/ConfiguredOnlyContext';
 import { fieldMetaFor, resolveControl } from '../../renderer/kinds';
 import { fieldDescription, toFieldId } from '../../renderer/paths';
@@ -161,11 +168,16 @@ function McpFieldRow({
   })();
 
   const canRevert = !owned && !readOnly && state.isOverride && !state.isEdited && revert != null;
+  /** The revert takes its own button away: focus goes to the field it reverted. */
+  const requestRefocus = useRefocusWhenGone(canRevert, [() => fieldControl(fieldId)]);
   const actions = canRevert ? (
     <button
       type="button"
       className="settings-row-action"
-      onClick={() => onChange(field.key, undefined)}
+      onClick={() => {
+        requestRefocus();
+        onChange(field.key, undefined);
+      }}
       aria-label={revert.ariaLabel}
     >
       {revert.label}

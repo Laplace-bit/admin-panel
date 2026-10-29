@@ -34,6 +34,7 @@ vi.mock('@/hooks', async () => ({
     options ? `${key}(${Object.values(options).join(',')})` : key,
   useCapabilities: () => ({ hasCapability: () => true }),
   useRefreshScopes: () => vi.fn(),
+  useClearButtonLabel: vi.fn(),
   useReturnFocus: (await vi.importActual<typeof import('@/hooks/dialogs')>('@/hooks/dialogs'))
     .useReturnFocus,
   useAnnouncement: (

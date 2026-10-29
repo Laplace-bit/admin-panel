@@ -1,5 +1,7 @@
+import { useEffect, useRef } from 'react';
 import { Button, Icon } from '@clickhouse/click-ui';
 import type * as t from '@/types';
+import { activeConfigTab, restoreFocus, restoreFocusWhenShown } from '@/utils';
 import { useLocalize } from '@/hooks';
 
 function errorMessage(error: unknown): string | null {
@@ -8,7 +10,26 @@ function errorMessage(error: unknown): string | null {
   return null;
 }
 
-/** Danger card with Retry, shown in place of the configuration form when its data fails to load. */
+/**
+ * The Retry of a load error card shown again after a retry failed: the route
+ * and the page both mount a new card in place of the one that retried.
+ */
+function retryShownAgain(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-config-load-error] button:not([disabled])');
+}
+
+/** The open tab once the page has loaded: none while a skeleton (`aria-busy`) stands in for it. */
+function loadedConfigTab(): HTMLElement | null {
+  return document.querySelector('[aria-busy="true"]') ? null : activeConfigTab();
+}
+
+/**
+ * Danger card with Retry, shown in place of the configuration form when its
+ * data fails to load. A retry takes the card, and the focused Retry with it,
+ * away while it loads: focus goes to the open tab once the page has loaded,
+ * or to the Retry of the card shown again if it failed again, unless the
+ * user has gone to another page by then.
+ */
 export function ConfigLoadError({
   error,
   onRetry,
@@ -18,11 +39,32 @@ export function ConfigLoadError({
 }: t.ConfigLoadErrorProps) {
   const localize = useLocalize();
   const details = errorMessage(error);
+  const alertRef = useRef<HTMLDivElement>(null);
+  const retriedFrom = useRef<string | null>(null);
+  const wasRetrying = useRef(retrying);
+
+  useEffect(() => {
+    const was = wasRetrying.current;
+    wasRetrying.current = retrying;
+    if (!was || retrying) return;
+    retriedFrom.current = null;
+    restoreFocus([alertRef.current?.querySelector('button')]);
+  }, [retrying]);
+
+  useEffect(
+    () => () => {
+      const path = retriedFrom.current;
+      if (path) restoreFocusWhenShown([retryShownAgain, loadedConfigTab], null, path);
+    },
+    [],
+  );
 
   return (
     <div className="py-6 pr-4">
       <div
+        ref={alertRef}
         role="alert"
+        data-config-load-error
         className="flex flex-col gap-3 rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) p-5"
       >
         <div className="flex items-start gap-3">
@@ -53,7 +95,10 @@ export function ConfigLoadError({
             label={localize('com_config_shell_retry')}
             iconLeft={retrying ? 'loading-animated' : 'refresh'}
             disabled={retrying}
-            onClick={onRetry}
+            onClick={() => {
+              retriedFrom.current = window.location.pathname;
+              onRetry();
+            }}
           />
         </div>
       </div>

@@ -5,13 +5,12 @@ import type { Page } from '@playwright/test';
 import { createRole, deleteFromList, grantReadUsage, searchField, uniqueName } from './access';
 import {
   LIVE,
+  WCAG_TAGS,
   MOCK_BACKEND_URL,
   MOCK_ADMIN_HEADERS,
   MOCK_FIXTURES_SKIP_REASON,
   AUDITED_WRITES_SKIP_REASON,
 } from './live';
-
-const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
 async function hideTanStackDevtools(page: Page) {
   await page.evaluate(() => {

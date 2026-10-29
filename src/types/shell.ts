@@ -220,7 +220,8 @@ export type ScopeParam =
 export interface RevealOptions {
   /** Where the target lands; `auto` centres a field and puts a section, group or card at the top. */
   align?: 'auto' | 'center' | 'start';
-  focus?: boolean;
+  /** Focus the target's control once it lands; `heading` focuses its section's or card's heading toggle instead. */
+  focus?: boolean | 'heading';
   highlight?: boolean;
   /** Called once with the revealed element, or null when it never appeared. */
   onDone?: (el: HTMLElement | null) => void;

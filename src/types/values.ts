@@ -200,10 +200,20 @@ export interface FieldProvenanceProps {
   formatLayer?: (layer: FieldLayer) => string;
 }
 
-/** Label and accessible name of a field's revert action (WS4, EV-4). */
+/** Locale keys of a revert action, by the layer it reverts to (`RevertLabels`' texts). */
+export interface RevertKeys {
+  label: string;
+  aria: string;
+  compact: string;
+}
+
+/** Label and accessible names of a field's revert action (WS4, EV-4). */
 export interface RevertLabels {
   label: string;
+  /** The name of a control that shows `label`, which it starts with. */
   ariaLabel: string;
+  /** The name of a compact control that shows only "Revert" (an endpoint field's chip). */
+  compactAriaLabel: string;
 }
 
 /** The base config payload: every layer the page reads (WS4, EV-1 and EV-7). */

@@ -1,7 +1,8 @@
+import { useRef } from 'react';
 import { SearchField } from '@clickhouse/click-ui';
 import type { KeyboardEvent } from 'react';
 import type * as t from '@/types';
-import { useLocalize } from '@/hooks';
+import { useClearButtonLabel, useLocalize } from '@/hooks';
 
 /**
  * "Filter this tab…": narrows the tab to the settings that match, row by row
@@ -10,6 +11,8 @@ import { useLocalize } from '@/hooks';
  */
 export function ToolbarFilter({ value, onChange, hits, onSelect }: t.ToolbarFilterProps) {
   const localize = useLocalize();
+  const fieldRef = useRef<HTMLDivElement>(null);
+  useClearButtonLabel(fieldRef, localize('com_ui_clear'));
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
@@ -25,6 +28,7 @@ export function ToolbarFilter({ value, onChange, hits, onSelect }: t.ToolbarFilt
 
   return (
     <div
+      ref={fieldRef}
       className="cui-field relative w-full max-w-72 min-w-48 flex-1 sm:w-auto"
       onKeyDown={handleKeyDown}
     >

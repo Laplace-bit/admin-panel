@@ -13,8 +13,8 @@ import {
 } from '@tanstack/react-router';
 import type { ErrorComponentProps } from '@tanstack/react-router';
 import type * as t from '@/types';
+import { useLocalize, useDocumentTitle, useToastCloseLabels, useDialogCloseLabels } from '@/hooks';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
-import { useLocalize, useDialogCloseLabels } from '@/hooks';
 import appCss from '../styles.css?url';
 import { withBasePath } from '@/utils';
 
@@ -70,7 +70,9 @@ function RootComponent() {
 function ThemedApp() {
   const { resolvedTheme } = useTheme();
   const localize = useLocalize();
-  useDialogCloseLabels(localize('com_ui_close'));
+  const close = localize('com_ui_close');
+  useDialogCloseLabels(close);
+  useToastCloseLabels(close);
   return (
     <ClickUIProvider theme={resolvedTheme}>
       <div className="isolate">
@@ -124,6 +126,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 function RootError({ error }: ErrorComponentProps) {
   if (import.meta.env.DEV) console.error(error);
   const localize = useLocalize();
+  useDocumentTitle(localize('com_error_page_title'));
   return (
     <div
       role="alert"
@@ -164,6 +167,7 @@ function RootError({ error }: ErrorComponentProps) {
 
 function RootNotFound() {
   const localize = useLocalize();
+  useDocumentTitle(localize('com_error_not_found_title'));
   return (
     <div
       role="alert"

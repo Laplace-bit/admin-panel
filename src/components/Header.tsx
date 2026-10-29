@@ -8,6 +8,7 @@ import { useLocalize } from '@/hooks';
  * and the title truncates instead of being overlapped. The search button is
  * named by what it shows ("Search Ctrl+K"; on phones, where only its icon
  * shows, by its screen-reader-only "Search"), so its name holds its label.
+ * The title takes focus from script (`pageTitle`) after a command opens a page.
  */
 export function Header({ title, onSearchClick, children }: t.HeaderProps) {
   const localize = useLocalize();
@@ -21,7 +22,8 @@ export function Header({ title, onSearchClick, children }: t.HeaderProps) {
         <div className="flex min-w-28 flex-1 basis-auto">
           {title ? (
             <h1
-              className="m-0 min-w-0 truncate text-base font-bold text-(--cui-color-text-default)"
+              tabIndex={-1}
+              className="m-0 min-w-0 truncate text-base font-bold text-(--cui-color-text-default) outline-none"
               title={title}
             >
               {title}

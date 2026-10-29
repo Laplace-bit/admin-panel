@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { Button, Dialog } from '@clickhouse/click-ui';
 import type * as t from '@/types';
 import { useReturnFocus, useLocalize } from '@/hooks';
@@ -6,6 +7,7 @@ import { activeConfigTab } from '@/utils';
 /**
  * Themed unsaved-changes prompt for leaving the page or switching profile
  * (WS5: SH-6): Save & continue, Discard, or Cancel, with the change count.
+ * Its body text describes the dialog, so screen readers read it on open.
  */
 export function NavigationGuardDialog({
   open,
@@ -17,6 +19,7 @@ export function NavigationGuardDialog({
 }: t.NavigationGuardDialogProps) {
   const localize = useLocalize();
   const returnFocus = useReturnFocus(open, activeConfigTab);
+  const descriptionId = useId();
 
   const title = (() => {
     if (intent.kind === 'scope') {
@@ -40,10 +43,14 @@ export function NavigationGuardDialog({
         showClose
         onClose={onCancel}
         onCloseAutoFocus={returnFocus}
+        aria-describedby={descriptionId}
         className="modal-frost"
       >
         <div className="flex flex-col gap-4">
-          <p className="m-0 text-sm leading-relaxed text-(--cui-color-text-default)">
+          <p
+            id={descriptionId}
+            className="m-0 text-sm leading-relaxed text-(--cui-color-text-default)"
+          >
             {localize('com_config_shell_guard_desc', { count: changeCount })}
           </p>
           <div className="flex flex-wrap items-center justify-end gap-2">

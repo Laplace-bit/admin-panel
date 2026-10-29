@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { PrincipalType } from 'librechat-data-provider';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import type * as t from '@/types';
 import { ConfigValuesProvider } from '@/contexts/ConfigValuesContext';
 import { scopeConfigFixture, scopeLayersFixture, valuesDataFixture } from '@/test/layers';
@@ -150,6 +151,36 @@ describe('ConfigRow', () => {
     expect(screen.queryByRole('button', { name: /com_a11y_reset_to_default/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /com_config_ui_undo_change/ }));
     expect(onDiscardField).toHaveBeenCalledWith(PATH);
+  });
+
+  it('puts focus on the field once its reset takes the Reset button away', async () => {
+    function Row() {
+      const [pending, setPending] = useState(false);
+      return (
+        <ConfigValuesProvider
+          value={values({ configuredPaths: new Set([PATH]), overridePaths: new Set([PATH]) })}
+        >
+          <ConfigRow
+            title="Start balance"
+            fieldId="balance-startBalance"
+            fieldPath={PATH}
+            permissions={{ canView: true, canEdit: true }}
+            isDbOverride
+            isPendingReset={pending}
+            onResetField={() => setPending(true)}
+          >
+            <input id="balance-startBalance" />
+          </ConfigRow>
+        </ConfigValuesProvider>
+      );
+    }
+    render(<Row />);
+    const reset = screen.getByRole('button', { name: /com_a11y_reset_to_default/ });
+    reset.focus();
+    fireEvent.click(reset);
+    expect(reset).not.toBeInTheDocument();
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(document.getElementById('balance-startBalance')).toHaveFocus();
   });
 
   it('shows an error chip, marker and message', () => {

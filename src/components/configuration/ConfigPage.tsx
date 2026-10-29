@@ -471,6 +471,7 @@ export function ConfigPage({
     () => ({ renames: edits.renameEdits, copies: edits.copyEdits }),
     [edits.renameEdits, edits.copyEdits],
   );
+  /** "Jump to…" scrolls to the section and puts focus on its heading, as the list it was chosen from goes away. */
   const jumpTo = useCallback(
     (id: string) => {
       const entry = findTocEntry(tocEntries, id);
@@ -480,7 +481,7 @@ export function ConfigPage({
       revealConfigPath(
         scrollEl,
         { path: entry.path, sectionId: isSection ? undefined : entry.sectionId },
-        { align: 'start', focus: false, highlight: false },
+        { align: 'start', focus: 'heading', highlight: false },
       );
     },
     [tocEntries, scrollEl, setActiveSection],

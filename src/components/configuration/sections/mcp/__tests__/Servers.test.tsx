@@ -617,7 +617,9 @@ describe('McpServersRenderer — delete, undo and rename (MCP-12, D9)', () => {
     expect(edits.editedValues).toEqual({});
     await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
     expect(document.activeElement).toBe(
-      within(card('acme')).getByRole('button', { name: 'Acme Docs (acme)' }),
+      within(card('acme')).getByRole('button', {
+        name: /^Acme Docs com_config_mcp_server_key acme/,
+      }),
     );
   });
 

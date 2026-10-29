@@ -283,6 +283,12 @@ export interface ChangesBarProps {
   review: ChangeReviewState;
 }
 
+/** The unsaved-changes bar while it is shown. */
+export interface ShownChangesBarProps extends ChangesBarProps {
+  /** Called as Discard is pressed, before the edits are dropped. */
+  onDiscard: () => void;
+}
+
 /** Props of the grouped review list (WS7). */
 export interface ReviewListProps extends Omit<ReviewRowViewProps, 'row' | 'leading'> {
   tabs: ReviewTab[];

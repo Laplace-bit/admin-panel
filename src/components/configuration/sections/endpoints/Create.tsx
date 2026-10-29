@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Button } from '@clickhouse/click-ui';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type * as t from '@/types';
 import { BLANK_ENDPOINT_TEMPLATE, ENDPOINT_TEMPLATES } from '@/constants';
 import {
@@ -10,7 +11,14 @@ import {
   useConfigFeatures,
 } from '@/hooks';
 import { ConfigValuesContext } from '@/contexts/ConfigValuesContext';
-import { isConfigRecord, isConfigValueEqual } from '@/utils';
+import {
+  firstControl,
+  restoreFocus,
+  firstFormField,
+  isConfigRecord,
+  commitFocusedField,
+  isConfigValueEqual,
+} from '@/utils';
 import { hasBlockingIssue, validateEndpoint } from './model';
 import { DiscardConfirm } from '@/components/shared';
 import { sourceLabel } from '../../values';
@@ -95,6 +103,29 @@ export function EndpointCreator({
   /** What Discard does once confirmed: close the drawer, or go back to the templates. */
   const [discardAction, setDiscardAction] = useState<'close' | 'back'>('close');
   const prompt = useDiscardPrompt();
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const draftRef = useRef(draft);
+  const shownTemplate = useRef(template);
+
+  useLayoutEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  /**
+   * Picking a template swaps the picker for the form, and Back the form for
+   * the picker, taking the focused button with it: focus goes to the new
+   * view's first field or template.
+   */
+  useEffect(() => {
+    const was = shownTemplate.current;
+    shownTemplate.current = template;
+    if (!open || (was == null) === (template == null)) return;
+    const view = template ? prompt.formRef.current : pickerRef.current;
+    restoreFocus(
+      [template ? firstFormField(view) : firstControl(view)],
+      view?.closest('[role="dialog"]'),
+    );
+  }, [open, template, prompt.formRef]);
 
   const reset = () => {
     setTemplate(null);
@@ -148,10 +179,17 @@ export function EndpointCreator({
   const name = typeof entry.name === 'string' ? entry.name : '';
   const inherited = scope != null && inheritedNames.includes(name) ? name : null;
   const blocked = hasBlockingIssue(issues) || inherited != null;
-  const isDirty = template != null && !isConfigValueEqual(draft, template.entry);
+  /**
+   * Whether closing would lose anything: the draft differs from its template,
+   * counting what is typed in the focused field but not committed yet.
+   */
+  const isDirty = (): boolean => {
+    flushSync(() => commitFocusedField(prompt.formRef.current));
+    return template != null && !isConfigValueEqual(draftRef.current, template.entry);
+  };
 
   const requestClose = () => {
-    if (!isDirty) {
+    if (!isDirty()) {
       close();
       return;
     }
@@ -196,7 +234,7 @@ export function EndpointCreator({
             iconLeft="arrow-left"
             label={localize('com_config_ce_back')}
             onClick={() => {
-              if (!isDirty) {
+              if (!isDirty()) {
                 reset();
                 return;
               }
@@ -302,7 +340,9 @@ export function EndpointCreator({
           <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
         </form>
       ) : (
-        <TemplatePicker onPick={start} />
+        <div ref={pickerRef}>
+          <TemplatePicker onPick={start} />
+        </div>
       )}
     </EndpointDrawer>
   );

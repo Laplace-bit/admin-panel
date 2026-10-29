@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   RouterProvider,
@@ -143,4 +143,16 @@ describe('Sidebar', () => {
       );
     },
   );
+
+  it('gives focus back to the avatar when its menu closes with Escape', async () => {
+    await renderSidebar(false);
+    const avatar = screen.getByRole('button', { name: AVATAR });
+    avatar.focus();
+    fireEvent.keyDown(avatar, { key: 'ArrowDown' });
+    const menu = await screen.findByRole('menu');
+    await waitFor(() => expect(menu.contains(document.activeElement)).toBe(true));
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    await waitFor(() => expect(avatar).toHaveFocus());
+  });
 });

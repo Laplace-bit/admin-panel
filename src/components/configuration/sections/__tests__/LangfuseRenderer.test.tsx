@@ -11,8 +11,17 @@ import {
 } from '@/server';
 import { LangfuseRenderer } from '../LangfuseRenderer';
 
+/** The labels the key tests read by their English text; every other key renders as its id. */
+const { LABELS } = vi.hoisted(() => ({
+  LABELS: {
+    com_config_langfuse_public_key: 'Public key',
+    com_config_langfuse_secret_key: 'Secret key',
+    com_ui_edit: 'Edit',
+  } as Readonly<Record<string, string>>,
+}));
+
 vi.mock('@/hooks', () => ({
-  useLocalize: () => (key: string) => key,
+  useLocalize: () => (key: string) => LABELS[key] ?? key,
 }));
 
 vi.mock('@/utils', () => ({
@@ -29,6 +38,7 @@ vi.mock('@/server', () => ({
 }));
 
 interface TextFieldProps {
+  id?: string;
   label?: string;
   value?: string;
   placeholder?: string;
@@ -79,14 +89,17 @@ vi.mock('@clickhouse/click-ui', () => ({
       ),
     },
   ),
-  TextField: ({ label, value, placeholder, disabled, onChange }: TextFieldProps) => (
-    <input
-      aria-label={label || placeholder}
-      value={value ?? ''}
-      placeholder={placeholder}
-      disabled={disabled}
-      onChange={(event) => onChange?.(event.target.value)}
-    />
+  TextField: ({ id, label, value, placeholder, disabled, onChange }: TextFieldProps) => (
+    <>
+      {label && <label htmlFor={id}>{label}</label>}
+      <input
+        id={id}
+        value={value ?? ''}
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={(event) => onChange?.(event.target.value)}
+      />
+    </>
   ),
   Icon: () => null,
 }));
@@ -191,6 +204,29 @@ describe('LangfuseRenderer', () => {
     expect(await screen.findByText('com_config_langfuse_verified')).toBeVisible();
   });
 
+  it('names each stored key by its label and masked value, and its text field by its label', async () => {
+    await renderVerified({
+      configured: true,
+      enabled: true,
+      destinations,
+      destination: 'eu',
+      publicKey: 'pk-lf-1234567890abcdef',
+      secretKeyPreview: 'sk-lf-...515f',
+    });
+
+    const publicKey = screen.getByRole('button', { name: /^Public key pk-lf-/ });
+    expect(publicKey).toHaveAccessibleName('Public key pk-lf-...cdef');
+    expect(publicKey).toHaveAccessibleDescription('Edit');
+    expect(screen.getByRole('button', { name: 'Secret key sk-lf-...515f' })).toBeVisible();
+
+    fireEvent.click(publicKey);
+    expect(screen.getByRole('textbox', { name: 'Public key' })).toHaveValue(
+      'pk-lf-1234567890abcdef',
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^Secret key sk-lf-/ }));
+    expect(screen.getByRole('textbox', { name: 'Secret key' })).toHaveValue('');
+  });
+
   it('holds the connection controls until the stored connection is verified', async () => {
     let resolveVerification: ((result: { success: boolean }) => void) | undefined;
     mockTest.mockImplementationOnce(
@@ -210,12 +246,8 @@ describe('LangfuseRenderer', () => {
     renderLangfuse();
 
     expect(await screen.findByText('com_config_langfuse_checking')).toBeVisible();
-    const editPublicKey = screen.getByRole('button', {
-      name: 'com_ui_edit com_config_langfuse_public_key',
-    });
-    const editSecretKey = screen.getByRole('button', {
-      name: 'com_ui_edit com_config_langfuse_secret_key',
-    });
+    const editPublicKey = screen.getByRole('button', { name: /^Public key pk-lf-/ });
+    const editSecretKey = screen.getByRole('button', { name: /^Secret key sk-lf-/ });
     const disable = screen.getByRole('button', { name: 'com_config_langfuse_disable' });
     expect(editPublicKey).toBeDisabled();
     expect(editSecretKey).toBeDisabled();
@@ -320,9 +352,7 @@ describe('LangfuseRenderer', () => {
     mockUpdate.mockResolvedValue({ ...configuredStatus, publicKey: 'pk-lf-new' });
     const { queryClient } = await renderVerified(configuredStatus);
 
-    fireEvent.click(
-      screen.getByRole('button', { name: 'com_ui_edit com_config_langfuse_public_key' }),
-    );
+    fireEvent.click(screen.getByRole('button', { name: /^Public key pk-lf-/ }));
     expect(screen.getByRole('button', { name: 'com_ui_cancel' })).toBeVisible();
     expect(
       screen.getByRole('button', { name: 'com_config_langfuse_save_and_enable' }),
@@ -360,9 +390,7 @@ describe('LangfuseRenderer', () => {
     };
     const { queryClient } = await renderVerified(configuredStatus);
 
-    fireEvent.click(
-      screen.getByRole('button', { name: 'com_ui_edit com_config_langfuse_public_key' }),
-    );
+    fireEvent.click(screen.getByRole('button', { name: /^Public key pk-lf-/ }));
     fireEvent.change(screen.getByPlaceholderText('pk-lf-...'), {
       target: { value: 'pk-lf-draft' },
     });
@@ -500,9 +528,7 @@ describe('LangfuseRenderer', () => {
     mockUpdate.mockResolvedValue({ ...configuredStatus, enabled: true, publicKey: 'pk-lf-new' });
     await renderVerified(configuredStatus);
 
-    fireEvent.click(
-      screen.getByRole('button', { name: 'com_ui_edit com_config_langfuse_public_key' }),
-    );
+    fireEvent.click(screen.getByRole('button', { name: /^Public key pk-lf-/ }));
     fireEvent.change(screen.getByPlaceholderText('pk-lf-...'), {
       target: { value: 'pk-lf-new' },
     });
@@ -526,9 +552,7 @@ describe('LangfuseRenderer', () => {
     });
     mockTest.mockResolvedValueOnce({ success: false, message: 'invalid keys' });
 
-    fireEvent.click(
-      screen.getByRole('button', { name: 'com_ui_edit com_config_langfuse_public_key' }),
-    );
+    fireEvent.click(screen.getByRole('button', { name: /^Public key pk-lf-/ }));
     fireEvent.change(screen.getByPlaceholderText('pk-lf-...'), {
       target: { value: 'pk-lf-invalid' },
     });

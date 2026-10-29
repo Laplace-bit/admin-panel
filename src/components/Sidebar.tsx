@@ -1,14 +1,14 @@
-import { useState } from 'react';
 import { flushSync } from 'react-dom';
+import { useRef, useState } from 'react';
 import { Icon, Dropdown } from '@clickhouse/click-ui';
 import { Link, useRouter } from '@tanstack/react-router';
 import type * as t from '@/types';
 import { useStripAriaExpanded, useCapabilities, useLocalize } from '@/hooks';
+import { getInitials, isFocusLost, cn } from '@/utils';
 import { DecorativeIcon } from '@/components/shared';
 import libreChatLogo from '@/assets/librechat.svg';
 import { SettingsDialog } from './SettingsDialog';
 import { SystemCapabilities } from '@/constants';
-import { getInitials, cn } from '@/utils';
 import { adminLogoutFn } from '@/server';
 
 const navItems: t.NavItem[] = [
@@ -60,6 +60,8 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
   const userMenuRef = useStripAriaExpanded<HTMLButtonElement>();
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** An item was chosen: it may move focus itself (Settings opens a dialog), so closing leaves it be. */
+  const chosenRef = useRef(false);
 
   const visibleItems = navItems.filter((item) => {
     if (!item.capability) return true;
@@ -93,9 +95,28 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
    * focus, and the dialog gives focus back to that button when it closes.
    */
   const openSettings = () => {
+    chosenRef.current = true;
     flushSync(() => setMenuOpen(false));
     userMenuRef.current?.focus();
     setSettingsOpen(true);
+  };
+
+  /**
+   * Gives focus back to the avatar once the menu closes (Escape, a click
+   * outside): Radix returns it to click-ui's trigger wrapper, which can't take
+   * it, so it fell to `<body>`. After a chosen item, focus it moved stays.
+   */
+  const handleMenuCloseAutoFocus = (event: Event) => {
+    event.preventDefault();
+    const chosen = chosenRef.current;
+    chosenRef.current = false;
+    if (!chosen) {
+      userMenuRef.current?.focus();
+      return;
+    }
+    requestAnimationFrame(() => {
+      if (isFocusLost()) userMenuRef.current?.focus();
+    });
   };
 
   /** The avatar shows the initials, so its name starts with them (WCAG 2.5.3, label in name). */
@@ -185,7 +206,7 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
                     </span>
                   </button>
                 </Dropdown.Trigger>
-                <Dropdown.Content>
+                <Dropdown.Content onCloseAutoFocus={handleMenuCloseAutoFocus}>
                   <div className="user-dropdown flex min-w-45 flex-col select-none">
                     {user && (
                       <div className="px-3 pt-3 pb-2">
@@ -203,7 +224,14 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
                     <Dropdown.Item icon="settings" onSelect={openSettings}>
                       {localize('com_ui_settings')}
                     </Dropdown.Item>
-                    <Dropdown.Item icon="slide-out" onClick={handleLogout} disabled={isLoggingOut}>
+                    <Dropdown.Item
+                      icon="slide-out"
+                      onClick={() => {
+                        chosenRef.current = true;
+                        void handleLogout();
+                      }}
+                      disabled={isLoggingOut}
+                    >
                       {isLoggingOut ? localize('com_ui_signing_out') : localize('com_ui_sign_out')}
                     </Dropdown.Item>
                   </div>

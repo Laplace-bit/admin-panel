@@ -1,10 +1,10 @@
 import { PrincipalType } from 'librechat-data-provider';
 import { Link, Button, Dialog } from '@clickhouse/click-ui';
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import type * as t from '@/types';
 import { useLocalize, useReturnFocus, useImportPreview, importTargetLabel } from '@/hooks';
+import { errorText, firstControl, termsRefusalUrl, restoreFocusWhenShown } from '@/utils';
 import { Source, Targets, Preview, SyntaxFrame } from './wizard';
-import { errorText, termsRefusalUrl } from '@/utils';
 import { parseImportedYaml } from '@/server';
 
 const STEPS: t.ImportStep[] = ['input', 'target', 'preview'];
@@ -51,6 +51,21 @@ export function ImportYamlDialog({
   );
   const [newName, setNewName] = useState('');
   const [included, setIncluded] = useState<Set<string> | null>(null);
+  const stepRef = useRef<HTMLDivElement>(null);
+  const shownStep = useRef(step);
+
+  /**
+   * Each step's controls replace the last step's, and Continue is disabled
+   * while it checks the YAML, so focus falls to the dialog: it goes to the
+   * new step's first control once that renders.
+   */
+  useEffect(() => {
+    const was = shownStep.current;
+    shownStep.current = step;
+    if (!open || was === step) return;
+    const view = stepRef.current;
+    return restoreFocusWhenShown([() => firstControl(view)], view?.closest('[role="dialog"]'));
+  }, [open, step]);
 
   const target = useMemo((): t.ImportTarget | null => {
     if (mode === 'base') return { type: 'base' };
@@ -238,53 +253,55 @@ export function ImportYamlDialog({
               })}
             </p>
 
-            {step === 'input' && (
-              <Source
-                activeTab={activeTab}
-                onTabChange={(tab) => {
-                  setActiveTab(tab);
-                  clearErrors();
-                }}
-                yamlText={yamlText}
-                onTextChange={(text) => {
-                  setYamlText(text);
-                  clearErrors();
-                }}
-                fileName={fileName}
-                onFile={handleFile}
-              />
-            )}
+            <div ref={stepRef} className="contents">
+              {step === 'input' && (
+                <Source
+                  activeTab={activeTab}
+                  onTabChange={(tab) => {
+                    setActiveTab(tab);
+                    clearErrors();
+                  }}
+                  yamlText={yamlText}
+                  onTextChange={(text) => {
+                    setYamlText(text);
+                    clearErrors();
+                  }}
+                  fileName={fileName}
+                  onFile={handleFile}
+                />
+              )}
 
-            {step === 'target' && (
-              <Targets
-                open={open}
-                currentScope={currentScope}
-                mode={mode}
-                onModeChange={setMode}
-                kind={kind}
-                onKindChange={(next) => {
-                  setKind(next);
-                  setSelected(null);
-                }}
-                selected={selected}
-                onSelect={setSelected}
-                newType={newType}
-                onNewTypeChange={setNewType}
-                newName={newName}
-                onNewNameChange={setNewName}
-              />
-            )}
+              {step === 'target' && (
+                <Targets
+                  open={open}
+                  currentScope={currentScope}
+                  mode={mode}
+                  onModeChange={setMode}
+                  kind={kind}
+                  onKindChange={(next) => {
+                    setKind(next);
+                    setSelected(null);
+                  }}
+                  selected={selected}
+                  onSelect={setSelected}
+                  newType={newType}
+                  onNewTypeChange={setNewType}
+                  newName={newName}
+                  onNewNameChange={setNewName}
+                />
+              )}
 
-            {step === 'preview' && (
-              <Preview
-                preview={preview}
-                targetLabel={targetLabel}
-                isScope={target?.type !== 'base'}
-                included={selection}
-                onToggle={toggle}
-                unknownEnumValues={unknownEnumValues}
-              />
-            )}
+              {step === 'preview' && (
+                <Preview
+                  preview={preview}
+                  targetLabel={targetLabel}
+                  isScope={target?.type !== 'base'}
+                  included={selection}
+                  onToggle={toggle}
+                  unknownEnumValues={unknownEnumValues}
+                />
+              )}
+            </div>
           </div>
 
           <div className="form-dialog-footer">
