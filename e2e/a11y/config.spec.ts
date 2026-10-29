@@ -5,6 +5,7 @@ import {
   LIVE,
   THEMES,
   WCAG_TAGS,
+  lockBase,
   CONFIG_TABS,
   openConfigTab,
   lockUserProfile,
@@ -16,8 +17,10 @@ import {
 /**
  * Accessibility and visual-system guardrails for the configuration page (VS-12):
  * axe on every tab at 1440 and 390 px in both themes, layout invariants of the
- * settings grid, and screenshot baselines. Needs a live backend (see ../live.ts);
- * refresh baselines with `--update-snapshots` after intended visual changes.
+ * settings grid, and screenshot baselines. Needs a live backend (see ../live.ts).
+ * The baselines show librechat.yaml values only: refresh them with
+ * `--update-snapshots` after intended visual changes, on a Base that stores no
+ * admin overrides.
  */
 test.skip(!LIVE, LIVE_SKIP_REASON);
 
@@ -301,16 +304,45 @@ const VISUAL_VARIANTS = [
   { label: 'light-390', colorScheme: 'light', width: 390, height: 1100 },
 ] as const;
 
+/**
+ * Opens a tab and checks that Base stores no admin overrides. An override draws
+ * its tab's override count into every baseline, the header's revert action into
+ * the 1440 px ones, and its chip and section count into its own tab's. Each
+ * journey that saves to Base holds the Base lock until it has reverted, and the
+ * baseline holds it until its screenshot is taken, so an override found here was
+ * left by a run that failed before reverting, or saved by a test that does not
+ * take the lock. It fails naming its tabs ("System: 1 admin override") before a
+ * screenshot is compared or written by `--update-snapshots`.
+ */
+async function openWithoutBaseOverrides(page: Page, tab: string) {
+  await openConfigTab(page, tab);
+  await expect(
+    page.getByRole('tab', { selected: true }).locator('.config-tab-count').first(),
+  ).toBeVisible();
+  const overridden = await page
+    .getByRole('tab')
+    .filter({ has: page.locator('.config-tab-count-override') })
+    .evaluateAll((tabs: HTMLElement[]) =>
+      tabs.map((el) => {
+        const count = el.querySelector('.config-tab-count-override')?.getAttribute('title');
+        return `${el.innerText.split('\n')[0]}: ${count}`;
+      }),
+    );
+  expect(overridden, 'Tabs where Base stores admin overrides, which no baseline shows').toEqual([]);
+}
+
 for (const variant of VISUAL_VARIANTS) {
   test.describe(`visual baseline: ${variant.label}`, () => {
     test.use({
       colorScheme: variant.colorScheme,
       viewport: { width: variant.width, height: variant.height },
     });
+    lockBase();
+    lockUserProfile();
 
     for (const tab of VISUAL_TABS) {
       test(`${tab}`, async ({ page }) => {
-        await openConfigTab(page, tab);
+        await openWithoutBaseOverrides(page, tab);
         await hideDevtools(page);
         await expect(page).toHaveScreenshot(`${tab}-${variant.label}.png`, {
           animations: 'disabled',
@@ -509,7 +541,7 @@ test.describe('a role profile with an override of its own', () => {
    */
   let saved: 'profile' | 'override' | null = null;
 
-  lockUserProfile(async (page) => {
+  lockUserProfile(async ({ page }) => {
     const undo = saved;
     saved = null;
     if (undo == null) return;

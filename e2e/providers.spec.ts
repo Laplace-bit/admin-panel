@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
-import { LIVE, LIVE_SKIP_REASON } from './live';
+import { LIVE, LIVE_SKIP_REASON, lockBase } from './live';
 
 /**
  * AI providers editor (WS9) journeys. They need a live LibreChat backend
@@ -11,6 +11,7 @@ import { LIVE, LIVE_SKIP_REASON } from './live';
  */
 test.skip(!LIVE, LIVE_SKIP_REASON);
 test.describe.configure({ mode: 'serial', timeout: 120_000 });
+lockBase();
 
 const DISABLED_PROVIDER = process.env.E2E_DISABLED_PROVIDER ?? 'assistants';
 

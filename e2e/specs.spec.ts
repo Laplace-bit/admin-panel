@@ -1,13 +1,13 @@
 import { test, expect } from '@playwright/test';
-import type { Locator, Page } from '@playwright/test';
-import { LIVE, LIVE_SKIP_REASON, lockUserProfile } from './live';
+import type { Browser, BrowserContextOptions, Locator, Page } from '@playwright/test';
+import { LIVE, LIVE_SKIP_REASON, lockBase, lockUserProfile, withBaseLock } from './live';
 
 /**
  * Model specs journeys (WS11, the audit's specs journeys). They need a live
- * LibreChat backend whose librechat.yaml defines at least one model spec and
- * whose Base stores no spec list of its own (reset the admin overrides first):
- * run with E2E_LIVE=1. Each journey that saves puts the list back to
- * librechat.yaml before it ends.
+ * LibreChat backend whose librechat.yaml defines at least one model spec:
+ * run with E2E_LIVE=1. They also need a Base that stores no spec list of its
+ * own, so the list goes back to librechat.yaml before the first journey (a
+ * failed run may have left one) and after every journey, passed or failed.
  */
 const unsavedBar = (page: Page) => page.getByRole('region', { name: 'Unsaved changes' });
 const cards = (page: Page) => page.locator('#section-modelSpecs\\.list [data-entry-card]');
@@ -36,14 +36,26 @@ async function saveAndWait(page: Page) {
   await expect(dialog).toHaveCount(0);
 }
 
-/** Puts the spec list back to librechat.yaml when the journey left an override. */
-async function revertList(page: Page) {
-  await openSpecs(page);
-  const revert = page.getByRole('button', { name: 'Revert list to librechat.yaml' });
-  if ((await revert.count()) === 0) return;
-  await revert.click();
-  await review(page);
-  await saveAndWait(page);
+/**
+ * Puts the spec list back to librechat.yaml when Base stores a list of its own.
+ * It opens a page in a context of its own, so it runs before the first journey,
+ * which has no page yet, and after each journey whatever that journey left on
+ * its page: a review dialog, unsaved edits or a phone-width viewport.
+ */
+async function revertList(browser: Browser, { baseURL, storageState }: BrowserContextOptions) {
+  const context = await browser.newContext({ baseURL, storageState });
+  try {
+    const page = await context.newPage();
+    await openSpecs(page);
+    const revert = page.getByRole('button', { name: 'Revert list to librechat.yaml' });
+    if ((await revert.count()) === 0) return;
+    await revert.click();
+    await review(page);
+    await saveAndWait(page);
+    await expect(revert).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
 }
 
 /**
@@ -66,6 +78,10 @@ async function addSpec(page: Page, label: string, endpoint: string, model: strin
 test.describe('Model specs', () => {
   test.skip(!LIVE, LIVE_SKIP_REASON);
   test.describe.configure({ mode: 'serial', timeout: 120_000 });
+  test.beforeAll(({ browser }, testInfo) =>
+    withBaseLock(testInfo, () => revertList(browser, testInfo.project.use)),
+  );
+  lockBase(({ browser }, testInfo) => revertList(browser, testInfo.project.use));
 
   test('the tab says how users pick models and what they will see', async ({ page }) => {
     await openSpecs(page);
@@ -90,7 +106,6 @@ test.describe('Model specs', () => {
     await expect(cards(page)).toHaveCount(before + 1);
     await expect(cards(page).last()).toContainText('E2E Spec');
     await expect(cards(page).last()).toContainText('OpenAI · gpt-4o-mini');
-    await revertList(page);
   });
 
   test('duplicate names and incomplete specs block Save', async ({ page }) => {
@@ -141,7 +156,6 @@ test.describe('Model specs', () => {
     await page.waitForLoadState('networkidle');
     const count = await cards(page).count();
     await expect(cards(page).nth(count - 2)).toContainText('E2E Last');
-    await revertList(page);
   });
 
   test('Enter in a spec field never adds or removes an endpoint next to the specs', async ({

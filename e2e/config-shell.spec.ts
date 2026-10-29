@@ -259,7 +259,7 @@ test.describe('Configuration shell: Back from the USER role profile', () => {
   /** Set once a test creates the USER role's profile, so cleanup never deletes one it found. */
   let createdUserProfile = false;
 
-  lockUserProfile(async (page) => {
+  lockUserProfile(async ({ page }) => {
     if (!createdUserProfile) return;
     createdUserProfile = false;
     await deleteUserRoleProfile(page);
