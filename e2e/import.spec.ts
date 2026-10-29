@@ -52,7 +52,9 @@ async function startBalanceIn(page: Page, scope?: string) {
  */
 async function revertBaseStartBalance(page: Page) {
   await startBalanceIn(page);
-  const revert = page.getByRole('button', { name: /^Revert Starting credits to / });
+  const revert = page.getByRole('button', {
+    name: /^(Revert to .+|Remove override): Starting credits$/,
+  });
   if ((await revert.count()) === 0) return;
   await revert.click();
   await page.getByRole('button', { name: /^Review & save$/ }).click();
