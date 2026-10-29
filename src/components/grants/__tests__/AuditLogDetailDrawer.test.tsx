@@ -1,6 +1,6 @@
-import { describe, it, vi } from 'vitest';
 import { PrincipalType } from 'librechat-data-provider';
-import { fireEvent, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import type * as t from '@/types';
 import { expectFocusBack, openFrom, pressEscape, renderWithOpener } from '@/test/focus';
@@ -57,5 +57,71 @@ describe('AuditLogDetailDrawer focus', () => {
       close(await openFrom(opener));
       await expectFocusBack(opener);
     });
+  });
+});
+
+/** Each copy button's value and the field it names. */
+const COPYABLE: ReadonlyArray<[string, string]> = [
+  [ENTRY.timestamp, 'timestamp'],
+  ['u-admin', 'actor ID'],
+  ['EDITORS', 'target ID'],
+  ['read:configs', 'capability'],
+  [ENTRY.id, 'entry ID'],
+];
+
+function renderEntry(props: Partial<DrawerProps> = {}) {
+  render(
+    <AuditLogDetailDrawer
+      entry={ENTRY}
+      open
+      onClose={vi.fn()}
+      onCopyPermalink={vi.fn()}
+      {...props}
+    />,
+  );
+  return screen.getByRole('dialog');
+}
+
+describe('AuditLogDetailDrawer copy buttons', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each(COPYABLE)(
+    'names the %s button by its value, then what pressing it does',
+    (value, field) => {
+      const drawer = renderEntry();
+      const button = within(drawer).getByRole('button', { name: `${value}, copy ${field}` });
+      expect(button).toHaveTextContent(value);
+      expect(button).not.toHaveAttribute('aria-live');
+    },
+  );
+
+  it('reports each copy with the field it copied', async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const onCopied = vi.fn();
+    const drawer = renderEntry({ onCopied });
+    fireEvent.click(within(drawer).getByRole('button', { name: 'u-admin, copy actor ID' }));
+    await waitFor(() => expect(onCopied).toHaveBeenCalledWith('actor ID'));
+    expect(writeText).toHaveBeenCalledWith('u-admin');
+  });
+
+  it('reports a failed copy instead', async () => {
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      clipboard: { writeText: vi.fn(async () => Promise.reject(new Error('denied'))) },
+    });
+    const onCopied = vi.fn();
+    const onCopyFailed = vi.fn();
+    const drawer = renderEntry({ onCopied, onCopyFailed });
+    fireEvent.click(within(drawer).getByRole('button', { name: 'EDITORS, copy target ID' }));
+    await waitFor(() => expect(onCopyFailed).toHaveBeenCalled());
+    expect(onCopied).not.toHaveBeenCalled();
+  });
+
+  it("keeps the target badge's icon out of the drawer's text", () => {
+    const drawer = renderEntry();
+    expect(within(drawer).queryAllByRole('img')).toEqual([]);
   });
 });

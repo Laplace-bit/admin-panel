@@ -1,16 +1,17 @@
-import { useMemo, useState } from 'react';
 import { Button } from '@clickhouse/click-ui';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type * as t from '@/types';
 import {
   LoadingState,
   Pagination,
+  ScreenReaderAnnouncer,
   SearchInput,
   EmptyState,
   TrashButton,
 } from '@/components/shared';
+import { useLocalize, useAnnouncement, useCapabilities, useRefreshScopes } from '@/hooks';
 import { deleteRoleFn, allRolesQueryOptions, ROLES_PAGE_SIZE } from '@/server';
-import { useLocalize, useCapabilities, useRefreshScopes } from '@/hooks';
 import { notifySuccess, notifyError } from '@/utils';
 import { EditRoleDialog } from './EditRoleDialog';
 import { SystemCapabilities } from '@/constants';
@@ -18,6 +19,10 @@ import { ConfirmDialog } from './ConfirmDialog';
 
 export function RolesTab({ onCreateRole }: t.RolesTabProps) {
   const localize = useLocalize();
+  const { message: announcement, announce } = useAnnouncement();
+  const announcedSearch = useRef('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const searchField = useCallback(() => searchRef.current, []);
   const queryClient = useQueryClient();
   const refreshScopes = useRefreshScopes();
   const { hasCapability } = useCapabilities();
@@ -36,6 +41,13 @@ export function RolesTab({ onCreateRole }: t.RolesTabProps) {
       (role) => role.name.toLowerCase().includes(q) || role.description.toLowerCase().includes(q),
     );
   }, [allRoles, search]);
+
+  /** Announces the match count after each change to the search; the first render stays quiet. */
+  useEffect(() => {
+    if (announcedSearch.current === search) return;
+    announcedSearch.current = search;
+    announce(localize('com_a11y_roles_found', { count: filtered.length }));
+  }, [search, filtered.length, announce, localize]);
 
   const totalPages = Math.ceil(filtered.length / ROLES_PAGE_SIZE);
   const paged = useMemo(
@@ -76,6 +88,7 @@ export function RolesTab({ onCreateRole }: t.RolesTabProps) {
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-2 pr-1">
       <div className="flex items-center justify-between gap-3">
         <SearchInput
+          inputRef={searchRef}
           value={search}
           onChange={handleSearchChange}
           placeholder={localize('com_access_search_roles')}
@@ -159,7 +172,10 @@ export function RolesTab({ onCreateRole }: t.RolesTabProps) {
           if (deleteTarget) deleteMutation.mutate(deleteTarget);
         }}
         onCancel={() => setDeleteTarget(null)}
+        returnFocusTo={searchField}
       />
+
+      <ScreenReaderAnnouncer message={announcement} />
     </div>
   );
 }

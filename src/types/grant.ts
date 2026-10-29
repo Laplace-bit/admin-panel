@@ -63,6 +63,8 @@ export interface AuditLogTableRowProps {
   isLast: boolean;
   /** Opens the entry's detail drawer. */
   onOpen: () => void;
+  /** The row's button, which takes focus when a drawer opened from a permalink closes. */
+  buttonRef?: Ref<HTMLButtonElement>;
 }
 
 export interface DateFilterProps {
@@ -73,4 +75,46 @@ export interface DateFilterProps {
   /** Changes when the filters are cleared, so the picker remounts without its own selection. */
   resetKey: number;
   onSelectDate: (date: Date) => void;
+}
+
+export interface AuditLogDetailDrawerProps {
+  entry: AuditLogEntryWithDiff | null;
+  open: boolean;
+  onClose: () => void;
+  /** Resolves to `true` when the clipboard write succeeded so the drawer only
+   * flips to its "Copied!" affordance after a real success. */
+  onCopyPermalink: (entryId: string) => Promise<boolean>;
+  /** Invoked with the copied field's name ("actor ID") after an inline copy
+   * succeeded, so the caller can announce it. */
+  onCopied?: (field: string) => void;
+  /** Invoked when any inline `CopyableMono` (timestamp, actor/target/entry IDs,
+   * capability) fails to write to the clipboard. The caller is responsible for
+   * surfacing the failure — typically via the same screen-reader announcement
+   * used for the permalink-copy failure path so the drawer's copy controls are
+   * not silent on clipboard error. */
+  onCopyFailed?: () => void;
+  /** Render a "no entry found" message instead of the detail body when the
+   * deep-linked id couldn't be located (e.g. the entry was purged). */
+  notFound?: boolean;
+  /** Render a loading shell while the single-entry deep-link query is in flight
+   * for an entry that is not on the current page. Without this, the drawer
+   * would either flicker shut during the fetch or never appear on cold load. */
+  loading?: boolean;
+  /** Render a load-error message + close affordance when the single-entry
+   * fetch failed for reasons other than not-found (network failure, 5xx). The
+   * caller is responsible for distinguishing this from `notFound` (which is
+   * the 404 case where the request itself succeeded but the entry is gone). */
+  loadError?: boolean;
+  /** Where focus goes on close when nothing on the page opened the drawer
+   * (it opened from a permalink). */
+  returnFocusTo?: () => HTMLElement | null;
+}
+
+/** A value in the audit log drawer that copies itself when pressed. */
+export interface CopyableMonoProps {
+  value: string;
+  /** What the value is, in a sentence ("actor ID"). */
+  field: string;
+  onCopied?: (field: string) => void;
+  onCopyFailed?: () => void;
 }

@@ -14,18 +14,19 @@ import {
   localDayBoundaryIso,
 } from './auditLogUtils';
 import {
-  AUDIT_LOG_PAGE_SIZE,
-  auditLogEntryQueryOptions,
-  auditLogQueryOptions,
-  exportAuditLogServerFn,
-} from '@/server';
-import {
+  BusyButton,
   EmptyState,
   LoadingState,
   Pagination,
   ScreenReaderAnnouncer,
   SearchInput,
 } from '@/components/shared';
+import {
+  AUDIT_LOG_PAGE_SIZE,
+  auditLogEntryQueryOptions,
+  auditLogQueryOptions,
+  exportAuditLogServerFn,
+} from '@/server';
 import { useAnnouncement, useDebouncedFilter, useLocalize } from '@/hooks';
 import { AuditLogDetailDrawer } from './AuditLogDetailDrawer';
 import { AUDIT_ACTIONS, isAuditEntryId } from '@/constants';
@@ -41,6 +42,7 @@ const TARGET_TYPE_OPTIONS: readonly t.AuditTargetType[] = [
 /** Radix `Select.Item` cannot use `value=""` (Radix reserves empty string for
  * "no selection"). Use a non-empty sentinel and translate to `''` in state. */
 const TARGET_TYPE_ALL = '__all__';
+const DATE_FROM_ID = 'audit-date-from';
 
 function downloadBlob(blob: Blob): void {
   const url = URL.createObjectURL(blob);
@@ -67,6 +69,10 @@ export function AuditLogTab() {
 
   const [currentPage, setCurrentPage] = useState(1);
   const { message: announcement, announce } = useAnnouncement();
+  const searchRef = useRef<HTMLInputElement>(null);
+  const rowButtons = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const lastEntryId = useRef(entryId);
+  const focusDateFrom = useRef(false);
 
   const resetToFirstPage = useCallback(() => setCurrentPage(1), []);
   const searchFilter = useDebouncedFilter('', resetToFirstPage);
@@ -241,6 +247,26 @@ export function AuditLogTab() {
     !entryOnPage &&
     (!isAuditEntryId(entryId) || (entryFetch.isSuccess && entryFetch.data?.entry === null));
 
+  useEffect(() => {
+    if (entryId) lastEntryId.current = entryId;
+  }, [entryId]);
+
+  /**
+   * Where focus goes when the drawer closes and nothing opened it (a permalink):
+   * the entry's row when it is on this page, else the search field.
+   */
+  const drawerFallback = useCallback(() => {
+    const id = lastEntryId.current;
+    return (id ? rowButtons.current.get(id) : undefined) ?? searchRef.current;
+  }, []);
+
+  /** Clear dates removes itself, so focus moves to the remounted From picker. */
+  useEffect(() => {
+    if (!focusDateFrom.current) return;
+    focusDateFrom.current = false;
+    document.getElementById(DATE_FROM_ID)?.focus();
+  }, [dateResetNonce]);
+
   const openEntry = useCallback(
     (id: string) => {
       void navigate({ search: (prev: Record<string, unknown>) => ({ ...prev, entryId: id }) });
@@ -275,6 +301,9 @@ export function AuditLogTab() {
       );
       try {
         await navigator.clipboard.writeText(url);
+        announce(
+          localize('com_audit_detail_copied_field', { field: localize('com_audit_field_link') }),
+        );
         return true;
       } catch {
         announce(localize('com_a11y_copy_failed'));
@@ -334,24 +363,25 @@ export function AuditLogTab() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pt-4 pr-1 pl-1">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div
-          className="flex flex-1 flex-wrap items-center gap-3"
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-3"
           role="group"
           aria-label={localize('com_a11y_filters')}
         >
           <SearchInput
+            inputRef={searchRef}
             value={searchFilter.value}
             onChange={searchFilter.onChange}
             placeholder={localize('com_ui_search')}
             ariaLabel={localize('com_audit_search_label')}
-            className="relative min-w-50 flex-1"
+            className="relative min-w-0 flex-1 basis-50"
           />
 
           <div
             aria-label={localize('com_audit_filter_action_label')}
             role="group"
-            className="flex items-center gap-1.5"
+            className="flex flex-wrap items-center gap-1.5"
           >
             {AUDIT_ACTIONS.map((act) => {
               const selected = actionFilter.includes(act);
@@ -374,7 +404,7 @@ export function AuditLogTab() {
           </div>
 
           <DateFilter
-            id="audit-date-from"
+            id={DATE_FROM_ID}
             label={localize('com_audit_date_from')}
             date={isoDateToDate(dateFrom)}
             resetKey={dateResetNonce}
@@ -403,6 +433,7 @@ export function AuditLogTab() {
               onClick={() => {
                 setDateFrom('');
                 setDateTo('');
+                focusDateFrom.current = true;
                 setDateResetNonce((n) => n + 1);
                 resetToFirstPage();
               }}
@@ -410,14 +441,14 @@ export function AuditLogTab() {
           )}
         </div>
 
-        <div className="flex flex-col items-end gap-1">
-          <Button
+        <div className="flex flex-col items-start gap-1 sm:items-end">
+          <BusyButton
             htmlType="button"
             type="secondary"
             iconLeft="download"
             onClick={() => void handleExport()}
-            disabled={displayTotal === 0 || exporting}
-            loading={exporting}
+            disabled={displayTotal === 0}
+            busy={exporting}
             label={exportLabel}
           />
         </div>
@@ -517,6 +548,10 @@ export function AuditLogTab() {
                   entry={entry}
                   isLast={i === pageEntries.length - 1}
                   onOpen={() => openEntry(entry.id)}
+                  buttonRef={(button) => {
+                    if (button) rowButtons.current.set(entry.id, button);
+                    else rowButtons.current.delete(entry.id);
+                  }}
                 />
               ))}
             {!showLoading && !isError && pageEntries.length === 0 && (
@@ -580,7 +615,9 @@ export function AuditLogTab() {
          */
         loadError={!!entryId && !entryOnPage && entryFetch.isError}
         onClose={closeEntry}
+        returnFocusTo={drawerFallback}
         onCopyPermalink={handleCopyPermalink}
+        onCopied={(field) => announce(localize('com_audit_detail_copied_field', { field }))}
         onCopyFailed={() => announce(localize('com_a11y_copy_failed'))}
       />
     </div>

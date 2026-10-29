@@ -1,14 +1,14 @@
+import { Button, Dialog } from '@clickhouse/click-ui';
 import { PrincipalType } from 'librechat-data-provider';
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Dialog, Icon } from '@clickhouse/click-ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AdminSystemGrant } from '@librechat/data-schemas';
 import type * as t from '@/types';
 import { grantCapabilityFn, principalGrantsQueryOptions, revokeCapabilityFn } from '@/server';
 import { getScopeTypeConfig, SystemCapabilities } from '@/constants';
+import { DecorativeIcon, LoadingState } from '@/components/shared';
 import { cn, notifySuccess, notifyError } from '@/utils';
 import { CapabilityPanel } from './CapabilityPanel';
-import { LoadingState } from '@/components/shared';
 import { useLocalize } from '@/hooks';
 
 function grantsToRecord(grants: AdminSystemGrant[]): Record<string, boolean> {
@@ -118,7 +118,7 @@ export function EditCapabilitiesDialog({
                     principalConfig.badgeClass,
                   )}
                 >
-                  <Icon name={principalConfig.icon} size="xs" />
+                  <DecorativeIcon name={principalConfig.icon} size="xs" />
                   {localize(principalConfig.labelKey)}
                 </span>
                 <span className="text-sm font-medium text-(--cui-color-text-default)">

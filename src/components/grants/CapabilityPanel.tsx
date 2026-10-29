@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Icon, Switch } from '@clickhouse/click-ui';
+import { Switch } from '@clickhouse/click-ui';
 import type { BaseSystemCapability } from '@librechat/data-schemas';
 import type * as t from '@/types';
 import { CapabilityImplications, CAPABILITY_CATEGORIES } from '@/constants';
-import { SelectAllHeader } from '@/components/shared';
+import { DecorativeIcon, SelectAllHeader } from '@/components/shared';
 import { useLocalize } from '@/hooks';
 import { cn } from '@/utils';
 
@@ -118,7 +118,7 @@ export function CapabilityPanel({ capabilities, onChange, disabled }: t.Capabili
                           </span>
                           {isImplied && (
                             <span className="flex items-center gap-1 text-xs text-(--cui-color-text-link)">
-                              <Icon name="information" size="xs" />
+                              <DecorativeIcon name="information" size="xs" />
                               {localize('com_cap_implied_by', {
                                 cap: localize(
                                   `com_cap_${

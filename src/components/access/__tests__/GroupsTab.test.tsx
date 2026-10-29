@@ -30,12 +30,16 @@ vi.mock('@/server/utils/api', () => ({
 vi.mock('@/server', () => vi.importActual('@/server/groups'));
 
 vi.mock('@/hooks', async () => ({
-  useLocalize: () => (key: string) => key,
+  useLocalize: () => (key: string, options?: Record<string, string | number>) =>
+    options ? `${key}(${Object.values(options).join(',')})` : key,
   useCapabilities: () => ({ hasCapability: () => true }),
   useRefreshScopes: () => vi.fn(),
   useClearButtonLabel: vi.fn(),
   useReturnFocus: (await vi.importActual<typeof import('@/hooks/dialogs')>('@/hooks/dialogs'))
     .useReturnFocus,
+  useAnnouncement: (
+    await vi.importActual<typeof import('@/hooks/useAnnouncement')>('@/hooks/useAnnouncement')
+  ).useAnnouncement,
 }));
 
 /** The `search` of every groups list request sent so far. */
@@ -61,5 +65,21 @@ describe('GroupsTab search', () => {
     expect(queryClient.getQueryData(['groups', 1, 'x'.repeat(200)])).toBeDefined();
     const clamped = queryClient.getQueryCache().find({ queryKey: ['groups', 1, 'x'.repeat(250)] });
     expect(clamped).toBeUndefined();
+  });
+});
+
+describe('GroupsTab search announcement', () => {
+  it('announces the match count once a search has loaded, and not on the first load', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GroupsTab onCreateGroup={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    const field = await screen.findByPlaceholderText('com_access_search_groups');
+    const status = screen.getByRole('status');
+    expect(status).toBeEmptyDOMElement();
+    fireEvent.change(field, { target: { value: 'eng' } });
+    await waitFor(() => expect(status).toHaveTextContent('com_a11y_groups_found(1)'));
   });
 });

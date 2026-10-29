@@ -10,6 +10,7 @@ export function SearchInput({
   placeholder,
   className,
   ariaLabel,
+  inputRef,
 }: t.SearchInputProps) {
   const localize = useLocalize();
   const fieldRef = useRef<HTMLDivElement>(null);
@@ -17,6 +18,7 @@ export function SearchInput({
   return (
     <div ref={fieldRef} className={`cui-field ${className ?? ''}`} style={{ maxWidth: 400 }}>
       <SearchField
+        ref={inputRef}
         value={value}
         onChange={onChange}
         placeholder={placeholder}
