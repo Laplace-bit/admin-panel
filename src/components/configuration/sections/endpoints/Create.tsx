@@ -350,32 +350,59 @@ export function EndpointCreator({
 
 function TemplatePicker({ onPick }: { onPick: (template: t.EndpointTemplate) => void }) {
   const localize = useLocalize();
-  const choices = [BLANK_ENDPOINT_TEMPLATE, ...ENDPOINT_TEMPLATES];
+  const chinaTemplates = ENDPOINT_TEMPLATES.filter((template) => template.group === 'china');
+  const otherTemplates = [
+    BLANK_ENDPOINT_TEMPLATE,
+    ...ENDPOINT_TEMPLATES.filter((template) => template.group !== 'china'),
+  ];
+  const renderChoices = (choices: readonly t.EndpointTemplate[]) => (
+    <ul className="m-0 grid list-none grid-cols-1 gap-2 p-0 sm:grid-cols-2">
+      {choices.map((choice) => (
+        <li key={choice.id}>
+          <button
+            type="button"
+            onClick={() => onPick(choice)}
+            className="flex h-full w-full cursor-pointer flex-col items-start gap-1 rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) px-3 py-2.5 text-left transition-colors hover:bg-(--cui-color-background-hover) focus-visible:outline-2 focus-visible:outline-(--cui-color-outline)"
+          >
+            <span className="text-sm font-medium text-(--cui-color-text-default)">
+              {choice.id === BLANK_ENDPOINT_TEMPLATE.id
+                ? localize('com_config_ce_template_blank_name')
+                : choice.name}
+            </span>
+            <span className="text-xs text-(--cui-color-text-muted)">
+              {localize(choice.descriptionKey)}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+
   return (
     <div className="flex flex-col gap-3">
       <h3 className="m-0 text-sm font-semibold text-(--cui-color-text-default)">
         {localize('com_config_ce_template_heading')}
       </h3>
-      <ul className="m-0 grid list-none grid-cols-1 gap-2 p-0 sm:grid-cols-2">
-        {choices.map((choice) => (
-          <li key={choice.id}>
-            <button
-              type="button"
-              onClick={() => onPick(choice)}
-              className="flex h-full w-full cursor-pointer flex-col items-start gap-1 rounded-lg border border-(--cui-color-stroke-default) bg-(--cui-color-background-default) px-3 py-2.5 text-left transition-colors hover:bg-(--cui-color-background-hover) focus-visible:outline-2 focus-visible:outline-(--cui-color-outline)"
-            >
-              <span className="text-sm font-medium text-(--cui-color-text-default)">
-                {choice.id === BLANK_ENDPOINT_TEMPLATE.id
-                  ? localize('com_config_ce_template_blank_name')
-                  : choice.name}
-              </span>
-              <span className="text-xs text-(--cui-color-text-muted)">
-                {localize(choice.descriptionKey)}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
+      {chinaTemplates.length > 0 && (
+        <section aria-labelledby="endpoint-template-china-heading" className="flex flex-col gap-2">
+          <h4
+            id="endpoint-template-china-heading"
+            className="m-0 text-xs font-semibold text-(--cui-color-text-muted)"
+          >
+            {localize('com_config_ce_template_group_china')}
+          </h4>
+          {renderChoices(chinaTemplates)}
+        </section>
+      )}
+      <section aria-labelledby="endpoint-template-other-heading" className="flex flex-col gap-2">
+        <h4
+          id="endpoint-template-other-heading"
+          className="m-0 text-xs font-semibold text-(--cui-color-text-muted)"
+        >
+          {localize('com_config_ce_template_group_other')}
+        </h4>
+        {renderChoices(otherTemplates)}
+      </section>
     </div>
   );
 }

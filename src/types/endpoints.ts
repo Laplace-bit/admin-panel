@@ -251,6 +251,8 @@ export interface EndpointTemplate {
   /** Display name, also the suggested endpoint name. */
   name: string;
   descriptionKey: string;
+  /** Whether the provider belongs in the China-first group or the general catalog. */
+  group?: 'china' | 'other';
   /** The entry the template starts from (name included). */
   entry: ConfigRecord;
 }

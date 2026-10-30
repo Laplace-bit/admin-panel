@@ -1,18 +1,107 @@
 import type * as t from '@/types';
 
 /**
- * Starting points for a new custom endpoint (WS10 CE-10): the base URL, the
- * environment variable the key is usually read from, a few models and the
- * settings each provider is known to need (OpenRouter and Perplexity reject
- * `stop`, Mistral rejects the OpenAI penalty and `user` parameters). Model
- * lists change often: they are examples to edit, and providers that list
- * their models over the API fetch them.
+ * Starting points for a new custom endpoint (WS10 CE-10). China-market providers
+ * come first. Each starts with a short, editable model list so adding a provider
+ * does not publish its entire catalog to users. Model IDs change often; verify
+ * them against the provider's current console and API documentation.
  */
 export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    descriptionKey: 'com_config_ce_template_deepseek',
+    group: 'china',
+    entry: {
+      name: 'DeepSeek',
+      apiKey: '${DEEPSEEK_API_KEY}',
+      baseURL: 'https://api.deepseek.com',
+      models: { default: ['deepseek-flash'], fetch: false },
+      titleConvo: true,
+      titleModel: 'deepseek-flash',
+      modelDisplayLabel: 'DeepSeek',
+    },
+  },
+  {
+    id: 'qwen',
+    name: 'Qwen',
+    descriptionKey: 'com_config_ce_template_qwen',
+    group: 'china',
+    entry: {
+      name: 'Qwen',
+      apiKey: '${DASHSCOPE_API_KEY}',
+      baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      models: { default: ['qwen3.7-plus', 'qwen3.8-max'], fetch: false },
+      titleConvo: true,
+      titleModel: 'qwen3.7-plus',
+      modelDisplayLabel: 'Qwen',
+    },
+  },
+  {
+    id: 'kimi',
+    name: 'Kimi',
+    descriptionKey: 'com_config_ce_template_kimi',
+    group: 'china',
+    entry: {
+      name: 'Kimi',
+      apiKey: '${MOONSHOT_API_KEY}',
+      baseURL: 'https://api.moonshot.cn/v1',
+      models: { default: ['kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed'], fetch: false },
+      titleConvo: true,
+      titleModel: 'kimi-k3.1-pro',
+      modelDisplayLabel: 'Kimi',
+    },
+  },
+  {
+    id: 'glm',
+    name: '智谱 GLM',
+    descriptionKey: 'com_config_ce_template_glm',
+    group: 'china',
+    entry: {
+      name: '智谱 GLM',
+      apiKey: '${ZAI_API_KEY}',
+      baseURL: 'https://open.bigmodel.cn/api/paas/v4/',
+      models: { default: ['glm-5.3', 'glm-5.3-flash'], fetch: false },
+      titleConvo: true,
+      titleModel: 'glm-5.3-flash',
+      modelDisplayLabel: '智谱 GLM',
+    },
+  },
+  {
+    id: 'doubao',
+    name: '火山方舟（豆包）',
+    descriptionKey: 'com_config_ce_template_doubao',
+    group: 'china',
+    entry: {
+      name: '火山方舟',
+      apiKey: '${ARK_API_KEY}',
+      baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
+      models: { default: ['doubao-seed-2-1-pro-260628'], fetch: false },
+      titleConvo: true,
+      titleModel: 'doubao-seed-2-1-pro-260628',
+      modelDisplayLabel: '豆包',
+    },
+  },
+  {
+    id: 'qianfan',
+    name: '百度千帆',
+    descriptionKey: 'com_config_ce_template_qianfan',
+    group: 'china',
+    entry: {
+      name: '百度千帆',
+      apiKey: '${QIANFAN_API_KEY}',
+      baseURL: 'https://qianfan.baidubce.com/v2',
+      models: { default: ['ernie-5.0'], fetch: false },
+      titleConvo: true,
+      titleModel: 'ernie-5.0',
+      modelDisplayLabel: '百度千帆',
+    },
+  },
   {
     id: 'openrouter',
     name: 'OpenRouter',
     descriptionKey: 'com_config_ce_template_openrouter',
+    group: 'other',
     entry: {
       name: 'OpenRouter',
       apiKey: '${OPENROUTER_KEY}',
@@ -28,6 +117,7 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     id: 'groq',
     name: 'Groq',
     descriptionKey: 'com_config_ce_template_groq',
+    group: 'other',
     entry: {
       name: 'Groq',
       apiKey: '${GROQ_API_KEY}',
@@ -42,6 +132,7 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     id: 'mistral',
     name: 'Mistral',
     descriptionKey: 'com_config_ce_template_mistral',
+    group: 'other',
     entry: {
       name: 'Mistral',
       apiKey: '${MISTRAL_API_KEY}',
@@ -54,23 +145,10 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     },
   },
   {
-    id: 'deepseek',
-    name: 'DeepSeek',
-    descriptionKey: 'com_config_ce_template_deepseek',
-    entry: {
-      name: 'DeepSeek',
-      apiKey: '${DEEPSEEK_API_KEY}',
-      baseURL: 'https://api.deepseek.com/v1',
-      models: { default: ['deepseek-chat', 'deepseek-reasoner'], fetch: false },
-      titleConvo: true,
-      titleModel: 'deepseek-chat',
-      modelDisplayLabel: 'DeepSeek',
-    },
-  },
-  {
     id: 'xai',
     name: 'xAI',
     descriptionKey: 'com_config_ce_template_xai',
+    group: 'other',
     entry: {
       name: 'xAI',
       apiKey: '${XAI_API_KEY}',
@@ -85,6 +163,7 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     id: 'together',
     name: 'Together AI',
     descriptionKey: 'com_config_ce_template_together',
+    group: 'other',
     entry: {
       name: 'Together AI',
       apiKey: '${TOGETHERAI_API_KEY}',
@@ -99,6 +178,7 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     id: 'perplexity',
     name: 'Perplexity',
     descriptionKey: 'com_config_ce_template_perplexity',
+    group: 'other',
     entry: {
       name: 'Perplexity',
       apiKey: '${PERPLEXITY_API_KEY}',
@@ -114,6 +194,7 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     id: 'fireworks',
     name: 'Fireworks',
     descriptionKey: 'com_config_ce_template_fireworks',
+    group: 'other',
     entry: {
       name: 'Fireworks',
       apiKey: '${FIREWORKS_API_KEY}',
@@ -129,6 +210,7 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     id: 'ollama',
     name: 'Ollama',
     descriptionKey: 'com_config_ce_template_ollama',
+    group: 'other',
     entry: {
       name: 'Ollama',
       apiKey: 'ollama',
