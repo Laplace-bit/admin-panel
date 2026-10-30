@@ -2,9 +2,10 @@ import type * as t from '@/types';
 
 /**
  * Starting points for a new custom endpoint (WS10 CE-10). China-market providers
- * come first. Each starts with a short, editable model list so adding a provider
- * does not publish its entire catalog to users. Model IDs change often; verify
- * them against the provider's current console and API documentation.
+ * come first. Each starts with per-user credentials and a short, editable model
+ * list so adding a provider does not publish its entire catalog to users. Model
+ * IDs change often; verify them against the provider's current console and API
+ * documentation.
  */
 export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
   {
@@ -14,7 +15,7 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     group: 'china',
     entry: {
       name: 'DeepSeek',
-      apiKey: '${DEEPSEEK_API_KEY}',
+      apiKey: 'user_provided',
       baseURL: 'https://api.deepseek.com',
       models: { default: ['deepseek-flash'], fetch: false },
       titleConvo: true,
@@ -29,7 +30,7 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     group: 'china',
     entry: {
       name: 'Qwen',
-      apiKey: '${DASHSCOPE_API_KEY}',
+      apiKey: 'user_provided',
       baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       models: { default: ['qwen3.7-plus', 'qwen3.8-max'], fetch: false },
       titleConvo: true,
@@ -44,7 +45,7 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     group: 'china',
     entry: {
       name: 'Kimi',
-      apiKey: '${MOONSHOT_API_KEY}',
+      apiKey: 'user_provided',
       baseURL: 'https://api.moonshot.cn/v1',
       models: { default: ['kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed'], fetch: false },
       titleConvo: true,
@@ -59,7 +60,7 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     group: 'china',
     entry: {
       name: '智谱 GLM',
-      apiKey: '${ZAI_API_KEY}',
+      apiKey: 'user_provided',
       baseURL: 'https://open.bigmodel.cn/api/paas/v4/',
       models: { default: ['glm-5.3', 'glm-5.3-flash'], fetch: false },
       titleConvo: true,
@@ -74,7 +75,7 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     group: 'china',
     entry: {
       name: '火山方舟',
-      apiKey: '${ARK_API_KEY}',
+      apiKey: 'user_provided',
       baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
       models: { default: ['doubao-seed-2-1-pro-260628'], fetch: false },
       titleConvo: true,
@@ -89,7 +90,7 @@ export const ENDPOINT_TEMPLATES: readonly t.EndpointTemplate[] = [
     group: 'china',
     entry: {
       name: '百度千帆',
-      apiKey: '${QIANFAN_API_KEY}',
+      apiKey: 'user_provided',
       baseURL: 'https://qianfan.baidubce.com/v2',
       models: { default: ['ernie-5.0'], fetch: false },
       titleConvo: true,
